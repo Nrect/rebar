@@ -1,0 +1,30 @@
+name: Weekly vuln scan
+
+# CVE в go-mail, pgx или x/crypto появится без нашего пуша. Еженедельный прогон
+# по main — единственный способ узнать об этом раньше потребителей.
+on:
+  schedule:
+    - cron: "0 5 * * 1"
+  workflow_dispatch:
+
+env:
+  GOWORK: off
+
+jobs:
+  govulncheck:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - name: govulncheck (all modules)
+        run: |
+          for m in $(find . -name go.mod -not -path './.git/*' -exec dirname {} \; | sort); do
+            echo "== $m"
+            (cd "$m" && go run golang.org/x/vuln/cmd/govulncheck@latest ./...) || exit 1
+          done

@@ -1,0 +1,95 @@
+name: CI
+
+# Репозиторий многомодульный. Каждый модуль гоняется ОТДЕЛЬНО и БЕЗ go.work:
+# так его увидит потребитель, и зависимость, случайно подтянутая из соседнего
+# модуля через workspace, упадёт здесь, а не у него.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GOWORK: off
+
+jobs:
+  modules:
+    name: Discover modules
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      list: ${{ steps.find.outputs.list }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: find
+        run: |
+          list=$(find . -name go.mod -not -path './.git/*' -exec dirname {} \; | sort | jq -R -s -c 'split("\n") | map(select(length > 0))')
+          echo "list=$list" >> "$GITHUB_OUTPUT"
+          echo "modules: $list"
+
+  lint:
+    name: Lint (${{ matrix.module }})
+    needs: modules
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        module: ${{ fromJson(needs.modules.outputs.list) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ matrix.module }}/go.mod
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.12.2
+          working-directory: ${{ matrix.module }}
+          args: --timeout=5m --config=${{ github.workspace }}/.golangci.yml
+
+  test:
+    name: Tests, race (${{ matrix.module }})
+    needs: modules
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        module: ${{ fromJson(needs.modules.outputs.list) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ matrix.module }}/go.mod
+      # Интеграционные тесты (testcontainers: Mailpit, Postgres) идут здесь же:
+      # у ubuntu-latest есть Docker. Без него адаптеры проверялись бы только
+      # двойниками, то есть контракт атомарности — никем.
+      - name: go test -race
+        working-directory: ${{ matrix.module }}
+        run: go test ./... -race -count=1 -coverprofile=cover.out -covermode=atomic -timeout=600s
+
+  govulncheck:
+    name: Vuln scan (${{ matrix.module }})
+    needs: modules
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        module: ${{ fromJson(needs.modules.outputs.list) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ matrix.module }}/go.mod
+      - name: govulncheck
+        working-directory: ${{ matrix.module }}
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...

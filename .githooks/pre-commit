@@ -1,0 +1,8 @@
+#!/bin/sh
+# Секреты не должны попасть даже в приватный репозиторий: тулкит копируется в
+# чужие проекты, и ключ уедет вместе с каталогом.
+if command -v gitleaks >/dev/null 2>&1; then
+    gitleaks protect --staged --redact -v
+else
+    echo "WARNING: gitleaks not installed, skipping secret scan"
+fi
