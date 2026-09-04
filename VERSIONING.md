@@ -6,7 +6,7 @@
 теги вида `mail/v0.3.1`. Потребитель подключает ровно то, что ему нужно:
 
 ```
-go get github.com/lifeurok/ostov/mail@v0.3.1
+go get github.com/nrect/rebar/mail@v0.3.1
 ```
 
 Почему не один модуль на весь репозиторий: у почты есть go-mail и pgx, у

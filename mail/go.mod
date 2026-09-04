@@ -1,4 +1,4 @@
-module github.com/lifeurok/ostov/mail
+module github.com/nrect/rebar/mail
 
 go 1.25.0
 
