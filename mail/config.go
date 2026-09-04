@@ -9,15 +9,13 @@ import (
 )
 
 // UncertainPolicy — что делать со строкой, чья предыдущая попытка не
-// завершилась (аренда истекла, исход неизвестен). См. «Безопасность», п. 5.
+// завершилась (аренда истекла, исход неизвестен).
 type UncertainPolicy string
 
 const (
-	// UncertainRetry — отправить снова. Умолчание: для ссылок подтверждения и
-	// сброса дубль безвреден, потеря — обращение в поддержку.
+	// UncertainRetry — отправить снова; для ссылок подтверждения дубль безвреден.
 	UncertainRetry UncertainPolicy = "retry"
-	// UncertainPark — перевести в failed с FailUncertain на ручной разбор. Для
-	// писем, где дубль — претензия: чеки, счета, уведомления о списании.
+	// UncertainPark — в failed на ручной разбор; для чеков, где дубль — претензия.
 	UncertainPark UncertainPolicy = "park"
 )
 
@@ -28,13 +26,9 @@ func (p UncertainPolicy) valid() bool {
 	return p == UncertainRetry || p == UncertainPark
 }
 
-// Backoff — экспоненциальная задержка между попытками с полным джиттером:
-// delay = random(0, min(Max, Base·2^attempt)). Джиттер обязателен: после
-// сбоя провайдера все застрявшие письма иначе ушли бы одной волной ровно
-// через Base и получили бы 429 той же волной.
-//
-// stdlib, а не cenkalti/backoff: формула — три строки, а внешняя зависимость
-// в переносимом пакете стоит дороже трёх строк.
+// Backoff — экспонента с полным джиттером: delay = random(0, min(Max, Base·2^attempt)).
+// Джиттер обязателен: без него застрявшие письма уходят одной волной и
+// получают 429 той же волной.
 type Backoff struct {
 	Base time.Duration
 	Max  time.Duration
@@ -55,49 +49,36 @@ func (b Backoff) delay(attempt int) time.Duration {
 	return time.Duration(rand.Int64N(int64(ceiling))) //nolint:gosec // джиттер, не криптография
 }
 
-// Config — политика очереди и доставки. Нулевое значение любого поля —
-// отказ на старте, а не «выключено»: у fail-closed пакета забытое поле
-// опаснее вдвойне.
+// Config — политика очереди и доставки. Нулевое значение любого поля — отказ
+// на старте, а не «выключено».
 type Config struct {
-	// From — отправитель всех писем. Задаётся здесь, а не письмом: адрес
-	// отправителя — это домен с SPF/DKIM, и подставлять его из данных значит
-	// подставлять чужой домен.
+	// From задаётся здесь, а не письмом: это домен с SPF/DKIM.
 	From Address
-	// Kinds — закрытый набор типов писем этого потребителя.
+	// Kinds — закрытый набор типов писем потребителя.
 	Kinds []Kind
-	// MessageIDDomain — правая часть Message-ID (<id@domain>). Обычно домен
-	// отправителя.
+	// MessageIDDomain — правая часть Message-ID.
 	MessageIDDomain string
 
-	// MaxAttempts — сколько всего попыток, включая первую, до FailExhausted.
+	// MaxAttempts — всего попыток, включая первую.
 	MaxAttempts int
 	Backoff     Backoff
-	// Lease — аренда строки на одну попытку. СТРОГО БОЛЬШЕ SendTimeout:
-	// аренда короче таймаута означает, что второй воркер заберёт строку,
-	// пока первый ещё шлёт, — два письма без всякого падения.
-	Lease time.Duration
-	// SendTimeout — бюджет одной попытки транспорта.
+	// Lease — аренда строки на попытку; строго больше SendTimeout, иначе второй
+	// воркер заберёт строку, пока первый ещё шлёт.
+	Lease       time.Duration
 	SendTimeout time.Duration
 	// BatchSize — строк за один прогон Deliver.
 	BatchSize int
-	// MinSendGap — пауза между письмами внутри прогона. Квота Postbox по
-	// умолчанию — 1 письмо в секунду; без паузы пачка из 50 уходит залпом и
-	// получает 429, которые считаются попытками.
+	// MinSendGap — пауза между письмами в прогоне (квота Postbox — 1 письмо/с).
 	MinSendGap time.Duration
 
-	// Retention — сколько держать терминальные строки до Purge. Тело к этому
-	// моменту уже стёрто; метаданные нужны для ответа «ушло ли письмо вот
-	// этому учителю».
+	// Retention — сколько держать терминальные строки до Purge.
 	Retention time.Duration
-	// MaxBodyBytes — потолок суммарного размера Text+HTML. Защита от
-	// шаблона, случайно вставившего каталог целиком, и от роста таблицы.
+	// MaxBodyBytes — потолок Text+HTML.
 	MaxBodyBytes int
 
 	Uncertain UncertainPolicy
 }
 
-// validate — все поля, все причины. Паника на старте дешевле письма, которое
-// не ушло из-за нулевого BatchSize.
 func (c Config) validate() error {
 	if err := c.validateIdentity(); err != nil {
 		return err
@@ -105,7 +86,6 @@ func (c Config) validate() error {
 	return c.validateDelivery()
 }
 
-// validateIdentity — отправитель, типы писем, домен Message-ID.
 func (c Config) validateIdentity() error {
 	if _, err := NormalizeAddress(c.From.Email); err != nil {
 		return fmt.Errorf("from address: %w", err)
@@ -132,7 +112,6 @@ func (c Config) validateIdentity() error {
 	return nil
 }
 
-// validateDelivery — политика попыток, аренды и хранения.
 func (c Config) validateDelivery() error {
 	switch {
 	case c.MaxAttempts <= 0:

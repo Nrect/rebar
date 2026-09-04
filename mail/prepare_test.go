@@ -12,9 +12,7 @@ import (
 	"github.com/nrect/rebar/mail"
 )
 
-// nopStore и nopTransport — минимальные реализации портов, чтобы собрать
-// Service для Prepare. Полноценные двойники появятся в mailtest вместе с
-// Enqueue/Deliver.
+// nopStore и nopTransport — минимум, чтобы собрать Service для Prepare.
 type nopStore struct{}
 
 func (nopStore) Enqueue(context.Context, mail.Envelope) (mail.EnqueueResult, error) {
@@ -88,8 +86,7 @@ func TestPrepare_NormalizesAndFingerprints(t *testing.T) {
 	assert.Nil(t, env.NotAfter)
 }
 
-// Отпечаток — контракт идемпотентности: он обязан совпадать между попытками
-// с тем же содержимым и различаться при любой смене содержимого.
+// Отпечаток совпадает для того же письма и различается при смене содержимого.
 func TestPrepare_FingerprintStableAndSensitive(t *testing.T) {
 	t.Parallel()
 	svc := newService(t)
@@ -106,8 +103,7 @@ func TestPrepare_FingerprintStableAndSensitive(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEqual(t, a.Fingerprint, c.Fingerprint, "другая тема — другой отпечаток")
 
-	// Регистр адреса и порядок заголовков отпечаток менять НЕ должны: это
-	// одно письмо, а ErrKeyReused на нём был бы ложным конфликтом.
+	// Регистр адреса и порядок заголовков — то же письмо.
 	same := validMessage()
 	same.To.Email = "teacher@school.ru"
 	same.Headers = map[string]string{"X-Trace": "t-1", "Reply-To": "support@example.ru"}
@@ -212,8 +208,7 @@ func TestNewService_PanicsOnBadConfig(t *testing.T) {
 	assert.NotPanics(t, func() { mail.NewService(nopStore{}, nopTransport{}, nil, validConfig()) })
 }
 
-// Закрытые наборы обязаны перечислять все свои значения: по ним строятся
-// CHECK-ограничения адаптера и метки метрик.
+// Закрытые наборы перечисляют все значения: по ним CHECK адаптера и метки метрик.
 func TestClosedSetsAreComplete(t *testing.T) {
 	t.Parallel()
 	assert.Len(t, mail.AllStatuses, 6)

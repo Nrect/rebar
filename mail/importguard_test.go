@@ -11,22 +11,11 @@ import (
 	"testing"
 )
 
-// TestPackageImportsAreWhitelisted — страж переносимости.
-//
-// Инвариант ДВУСТОРОННИЙ: (1) ни одного импорта из модуля-потребителя и (2)
-// у каждого каталога — свой белый список внешних зависимостей плюс stdlib.
-// Ядро и mailtest — только uuid; адаптеры — uuid и ровно та библиотека, ради
-// которой адаптер существует. Список БЕЛЫЙ, а не чёрный — см.
-// lifeurok-backend/internal/payment/importguard_test.go, откуда он взят:
-// чёрный список одного префикса пропустил бы pgtype в порту и выключился бы
-// целиком после переезда в другой модуль.
-//
-// Путь модуля читается из go.mod, а не из литерала: после копирования
-// каталога в чужой проект литерал не совпал бы ни с чем, и страж молчал бы
-// ровно тогда, когда нужен.
-//
-// _test.go не проверяются: в чужой проект едет код, а не тестовый стенд.
-// В .golangci.yml нет depguard — второй линии обороны нет, стережём тестом.
+// TestPackageImportsAreWhitelisted — страж переносимости: ни одного импорта
+// из модуля-потребителя, у каждого каталога свой белый список внешних
+// зависимостей плюс stdlib. Список белый, а не чёрный, и путь модуля читается
+// из go.mod, а не из литерала — иначе страж выключается после копирования
+// каталога в чужой проект. _test.go не проверяются.
 func TestPackageImportsAreWhitelisted(t *testing.T) {
 	t.Parallel()
 
@@ -66,9 +55,8 @@ func TestPackageImportsAreWhitelisted(t *testing.T) {
 	}
 }
 
-// allowedByDir — белый список внешних импортов по каталогу (относительно
-// корня пакета). Новый подпакет добавляется сюда ТЕМ ЖЕ коммитом, что и
-// каталог, иначе страж падает на первом файле.
+// allowedByDir — белый список внешних импортов по каталогу. Новый подпакет
+// добавляется сюда тем же коммитом, что и каталог.
 var allowedByDir = map[string][]string{
 	".":        {"github.com/google/uuid"},
 	"mailtest": {"github.com/google/uuid"},
@@ -78,11 +66,9 @@ var allowedByDir = map[string][]string{
 	"mailotel": {"github.com/google/uuid", "go.opentelemetry.io/otel/metric", "go.opentelemetry.io/otel/attribute"},
 }
 
-// allowedImport — stdlib отличается от внешнего мира по первому сегменту:
-// у stdlib он не доменное имя, точки в нём нет. Правило грубое, но ошибается
-// только в сторону строгости. Собственный модуль проверяется ОТДЕЛЬНО и ДО
-// этого правила: путь модуля может не содержать точки, и эвристика приняла
-// бы за stdlib весь проект.
+// allowedImport — stdlib узнаётся по первому сегменту без точки; собственный
+// модуль проверяется до этого правила, потому что его путь тоже может быть
+// без точки.
 func allowedImport(importPath, module, selfImport string, allowed []string) bool {
 	switch {
 	case importPath == selfImport, strings.HasPrefix(importPath, selfImport+"/"):
@@ -99,8 +85,7 @@ func allowedImport(importPath, module, selfImport string, allowed []string) bool
 	return !strings.Contains(segment, ".")
 }
 
-// selfImportPath собирает путь модуля и импорт-путь пакета из go.mod и
-// положения каталога.
+// selfImportPath — путь модуля и импорт-путь пакета из go.mod и положения каталога.
 func selfImportPath(t *testing.T) (module, selfImport string) {
 	t.Helper()
 

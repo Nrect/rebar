@@ -11,13 +11,11 @@ import (
 	"unicode/utf8"
 )
 
-// Kind — тип письма: verify, reset, receipt. Закрытый набор объявляет
-// ПОТРЕБИТЕЛЬ в Config.Kinds, потому что только он знает свои письма; пакет
-// проверяет принадлежность и синтаксис. Значение попадает в метку метрики и
-// в колонку с CHECK, поэтому синтаксис жёсткий: [a-z0-9_], до 32 байт.
+// Kind — тип письма (verify, reset, receipt). Набор объявляет потребитель в
+// Config.Kinds; синтаксис [a-z0-9_]{1,32}, потому что это метка метрики.
 type Kind string
 
-// MaxKindLen — потолок длины Kind. Метка метрики, а не свободный текст.
+// MaxKindLen — потолок длины Kind.
 const MaxKindLen = 32
 
 func (k Kind) valid() bool {
@@ -32,24 +30,19 @@ func (k Kind) valid() bool {
 	return true
 }
 
-// Address — получатель или отправитель. Name — display-name, может быть пуст.
+// Address — получатель или отправитель; Name может быть пуст.
 type Address struct {
 	Email string
 	Name  string
 }
 
-// MaxAddressLen — максимум легитимного адреса (RFC 5321). Без потолка
-// враждебный ввод раздувает строку outbox и индекс дедупа.
+// MaxAddressLen — максимум легитимного адреса (RFC 5321).
 const MaxAddressLen = 254
 
-// NormalizeAddress — ЕДИНСТВЕННАЯ точка нормализации адреса: обрезка
-// пробелов, нижний регистр, синтаксис RFC 5322 без display-name и без угловых
-// скобок.
-//
-// Нижний регистр целиком, включая локальную часть. По RFC она чувствительна к
-// регистру, на практике ни один живой провайдер её не различает, а стоп-лист и
-// дедуп обязаны считать "User@mail.ru" и "user@mail.ru" одним адресом — иначе
-// стоп-лист обходится сменой регистра.
+// NormalizeAddress — единственная точка нормализации адреса: обрезка, нижний
+// регистр (включая локальную часть: провайдеры её регистр не различают, а
+// стоп-лист обязан считать User@ и user@ одним адресом), синтаксис RFC 5322
+// без display-name.
 func NormalizeAddress(raw string) (string, error) {
 	addr := strings.ToLower(strings.TrimSpace(raw))
 	switch {
@@ -60,9 +53,7 @@ func NormalizeAddress(raw string) (string, error) {
 	case !utf8.ValidString(addr):
 		return "", fmt.Errorf("%w: address is not valid UTF-8", ErrInvalidMessage)
 	}
-	// Перевод строки и угловые скобки отсекаются ДО ParseAddress: он принял бы
-	// "Name <a@b>" и вернул бы адрес без имени, то есть молча выкинул бы часть
-	// ввода, а инъекцию через "\r\nBcc:" некоторые версии парсера прощают.
+	// До ParseAddress: он принял бы "Name <a@b>" и молча выкинул бы имя.
 	for _, r := range addr {
 		if r == '\r' || r == '\n' || r == '<' || r == '>' || r == ',' || r == ';' || unicode.IsSpace(r) {
 			return "", fmt.Errorf("%w: address contains a forbidden character", ErrInvalidMessage)
@@ -75,40 +66,28 @@ func NormalizeAddress(raw string) (string, error) {
 	return addr, nil
 }
 
-// Message — письмо, как его отдаёт потребитель. Тема и тела уже отрендерены.
+// Message — письмо от потребителя; тема и тела уже отрендерены.
 type Message struct {
 	Kind Kind
-	// To — ровно один получатель; см. «Безопасность», п. 1.
+	// To — ровно один получатель.
 	To Address
-	// Subject обязателен. Text обязателен; HTML — необязательная альтернатива
-	// (multipart/alternative: клиенты без HTML откатываются на текст).
+	// Subject и Text обязательны; HTML — необязательная альтернатива.
 	Subject string
 	Text    string
 	HTML    string
-	// Headers — дополнительные заголовки из белого списка (AllowedHeaders) либо
-	// с префиксом X-. From, To, Subject, Content-* и прочие структурные сюда
-	// не принимаются: их собирает транспорт.
+	// Headers — только из AllowedHeaders либо с префиксом X-.
 	Headers map[string]string
-	// DedupKey — ключ идемпотентности постановки в очередь. Обязателен и
-	// глобален; см. «Безопасность», п. 4. Потребитель выводит его из факта,
-	// породившего письмо: "verify:" + хэш токена, "receipt:" + id платежа.
+	// DedupKey — глобальный ключ идемпотентности, обязателен. Выводится из
+	// факта: "verify:" + хэш токена, "receipt:" + id платежа.
 	DedupKey string
-	// NotAfter — срок годности письма: после этого момента оно не отправляется
-	// и получает статус expired. Нулевое значение — без срока. Для ссылок
-	// подтверждения и сброса это TTL токена: протухшая ссылка не должна
-	// доехать.
+	// NotAfter — после этого момента письмо не отправляется (TTL токена).
+	// Нулевое значение — без срока.
 	NotAfter time.Time
 }
 
-// AllowedHeaders — белый список заголовков, которые потребитель может задать
-// сам. Канонические имена (textproto.CanonicalMIMEHeaderKey). Всё
-// структурное — From, To, Cc, Bcc, Subject, Date, Message-ID, MIME-Version,
-// Content-*, Return-Path, Sender, Received, DKIM-Signature — собирает
-// транспорт, и попытка задать их письмом это ErrInvalidMessage: разрешить
-// хотя бы одно означало бы разрешить Bcc через тему.
-//
-// Помимо списка разрешён любой заголовок с префиксом X-: он не меняет
-// маршрутизацию и нужен для трассировки у провайдера.
+// AllowedHeaders — заголовки, которые потребитель может задать сам, плюс
+// любой X-*. Структурные (From, To, Bcc, Subject, Content-*, ...) собирает
+// транспорт: разрешить хотя бы один значило бы разрешить Bcc через тему.
 var AllowedHeaders = map[string]struct{}{
 	"Reply-To":              {},
 	"List-Unsubscribe":      {},
@@ -119,14 +98,10 @@ var AllowedHeaders = map[string]struct{}{
 	"References":            {},
 }
 
-// MaxHeaderValueLen — предел значения заголовка. 998 — максимум строки по
-// RFC 5322; свёртка длинных строк — забота транспорта, но принимать сюда
-// килобайты незачем.
+// MaxHeaderValueLen — максимум строки по RFC 5322.
 const MaxHeaderValueLen = 998
 
-// validateHeaders проверяет имена по белому списку и значения на CR/LF.
-// Возвращает карту с каноническими именами: "reply-to" и "Reply-To" — один
-// заголовок, и отпечаток обязан это видеть.
+// validateHeaders канонизирует имена и проверяет значения на CR/LF.
 func validateHeaders(in map[string]string) (map[string]string, error) {
 	out := make(map[string]string, len(in))
 	for name, value := range in {
@@ -145,9 +120,8 @@ func validateHeaders(in map[string]string) (map[string]string, error) {
 	return out, nil
 }
 
-// checkLine — значение однострочное, печатное, не длиннее MaxHeaderValueLen.
-// Одна проверка на тему, display-name и значения заголовков: инъекция везде
-// одна и та же.
+// checkLine — однострочное, печатное, не длиннее MaxHeaderValueLen. Одна
+// проверка на тему, display-name и значения заголовков.
 func checkLine(s string) error {
 	switch {
 	case len(s) > MaxHeaderValueLen:
@@ -166,12 +140,8 @@ func checkLine(s string) error {
 // MaxKeyLen — потолок длины ключа дедупа в байтах.
 const MaxKeyLen = 200
 
-// NormalizeKey — единственная точка нормализации ключа идемпотентности.
-// Перенесено из payment.NormalizeKey без изменений: при переезде payment в
-// тулкит эти две функции — кандидат в общий крошечный пакет.
-//
-// Без единой точки " k" и "k " — разные ключи: они разъезжаются мимо
-// уникального индекса, и двойной вызов становится двойным письмом.
+// NormalizeKey — единственная точка нормализации ключа идемпотентности
+// (перенесено из payment.NormalizeKey). Без неё " k" и "k " — разные ключи.
 func NormalizeKey(raw string) (string, error) {
 	key := strings.TrimSpace(raw)
 	switch {

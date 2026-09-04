@@ -17,11 +17,9 @@ type Service struct {
 	newID     func() uuid.UUID
 }
 
-// NewService строит сервис; паникует на nil store/transport и негодном Config.
-// supp может быть nil — стоп-лист тогда живёт у провайдера.
-//
-// Ошибка конфигурации обязана падать на старте, а не на первом письме:
-// первое письмо — это регистрация первого учителя.
+// NewService паникует на nil store/transport и негодном Config: ошибка
+// конфигурации обязана падать на старте, а не на первом письме. supp может
+// быть nil.
 func NewService(store Store, transport Transport, supp Suppressor, cfg Config) *Service {
 	switch {
 	case store == nil:
@@ -43,16 +41,12 @@ func NewService(store Store, transport Transport, supp Suppressor, cfg Config) *
 	}
 }
 
-// SetClock подменяет источник времени. Только для тестов и только до начала
-// обслуживания: поле читается из каждого вызова, подмена под нагрузкой — гонка.
+// SetClock подменяет источник времени; только для тестов, до начала обслуживания.
 func (s *Service) SetClock(now func() time.Time) { s.now = now }
 
-// Prepare — чистая половина Enqueue: валидация, нормализация, отпечаток, id,
-// Message-ID. Ни хранилища, ни времени внешнего мира здесь нет, и это
-// сделано ради одного сценария: потребитель, которому нужна вставка В СВОЕЙ
-// транзакции, зовёт Prepare, а строку кладёт адаптером (mailpg.Store.WithTx).
-// Оба пути — Enqueue и Prepare+адаптер — проходят одну и ту же проверку,
-// потому что она здесь одна.
+// Prepare — чистая половина Enqueue: валидация, нормализация, отпечаток, id.
+// Вынесена отдельно, чтобы потребитель мог вставить строку в свою транзакцию
+// адаптером (mailpg.Store.WithTx) через ту же проверку.
 //
 // Ошибки: ErrBadKind, ErrInvalidMessage, ErrKeyInvalid.
 func (s *Service) Prepare(msg Message) (Envelope, error) {
@@ -74,9 +68,8 @@ func (s *Service) Prepare(msg Message) (Envelope, error) {
 	case msg.Subject == "":
 		return Envelope{}, fmt.Errorf("%w: subject is empty", ErrInvalidMessage)
 	case msg.Text == "":
-		// Text обязателен, а не «Text или HTML»: часть клиентов и все
-		// спам-фильтры читают текстовую часть, и письмо из одного HTML
-		// доезжает хуже.
+		// Text обязателен: спам-фильтры читают текстовую часть, письмо из
+		// одного HTML доезжает хуже.
 		return Envelope{}, fmt.Errorf("%w: text body is empty", ErrInvalidMessage)
 	case len(msg.Text)+len(msg.HTML) > s.cfg.MaxBodyBytes:
 		return Envelope{}, fmt.Errorf("%w: body is %d bytes, max is %d",
@@ -117,5 +110,5 @@ func (s *Service) Prepare(msg Message) (Envelope, error) {
 	return env, nil
 }
 
-// Transport — имя транспорта, с которым собран сервис: метка метрики и лог.
+// Transport — имя транспорта, с которым собран сервис.
 func (s *Service) Transport() TransportName { return s.transport.Name() }

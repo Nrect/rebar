@@ -5,9 +5,8 @@ import (
 	"time"
 )
 
-// Пустой сохранённый отпечаток — не законный повтор. Адаптер, потерявший
-// колонку в SELECT, иначе превращал бы любое письмо под тем же ключом в
-// «уже в очереди», и юнит-тесты на двойнике этого не увидели бы.
+// Пустой сохранённый отпечаток — не законный повтор (адаптер, потерявший
+// колонку, иначе превращал бы любое письмо в «уже в очереди»).
 func TestSameMessage_EmptyStoredIsNotARepeat(t *testing.T) {
 	t.Parallel()
 	fp := fingerprint("verify", Address{Email: "a@b.ru"}, "s", "t", "", nil)
@@ -19,8 +18,7 @@ func TestSameMessage_EmptyStoredIsNotARepeat(t *testing.T) {
 	}
 }
 
-// Задержка растёт экспоненциально, но не выше Max, и не паникует на больших
-// номерах попыток: сдвиг на 63 переполнил бы int64.
+// Задержка не выше Max и не паникует на больших номерах попыток.
 func TestBackoff_DelayIsBoundedAndSafe(t *testing.T) {
 	t.Parallel()
 	b := Backoff{Base: time.Second, Max: time.Minute}

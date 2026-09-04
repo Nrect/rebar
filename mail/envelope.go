@@ -10,27 +10,18 @@ import (
 	"github.com/google/uuid"
 )
 
-// Status — состояние строки outbox. Закрытый набор: колонка с CHECK и метка
-// гейджа.
+// Status — состояние строки outbox (закрытый набор: CHECK и метка гейджа).
 type Status string
 
 const (
-	// StatusPending — ждёт отправки (в том числе повторной, после
-	// next_attempt_at).
 	StatusPending Status = "pending"
-	// StatusSending — взята воркером, аренда до locked_until. Строка с
-	// истёкшей арендой — это упавший посреди отправки процесс, и Claim
-	// забирает её снова (см. «Безопасность», п. 5).
+	// StatusSending — взята воркером, аренда до locked_until; истёкшая аренда
+	// означает упавший посреди отправки процесс, Claim заберёт строку снова.
 	StatusSending Status = "sending"
-	// StatusSent — транспорт подтвердил приём. Тело стёрто.
-	StatusSent Status = "sent"
-	// StatusFailed — терминальный отказ: RejectedError провайдера, исчерпаны
-	// MaxAttempts либо неопределённый исход при Config.Uncertain = Park.
-	// Причина — в LastError и в FailReason.
-	StatusFailed Status = "failed"
-	// StatusExpired — NotAfter наступил раньше отправки.
-	StatusExpired Status = "expired"
-	// StatusSuppressed — адрес в стоп-листе на момент отправки.
+	StatusSent    Status = "sent"
+	// StatusFailed — терминальный отказ, причина в FailReason.
+	StatusFailed     Status = "failed"
+	StatusExpired    Status = "expired"
 	StatusSuppressed Status = "suppressed"
 )
 
@@ -50,59 +41,46 @@ func (s Status) Terminal() bool {
 	return false
 }
 
-// FailReason — почему строка ушла в failed. Закрытый набор: метка счётчика
-// отказов; код провайдера в неё не попадает.
+// FailReason — почему строка ушла в failed (закрытый набор: метка счётчика).
 type FailReason string
 
 const (
-	// FailRejected — провайдер отказал определённо (RejectedError).
-	FailRejected FailReason = "rejected"
-	// FailExhausted — исчерпаны MaxAttempts временных сбоев.
-	FailExhausted FailReason = "exhausted"
-	// FailUncertain — исход последней попытки неизвестен (аренда истекла),
-	// а Config.Uncertain = UncertainPark.
-	FailUncertain FailReason = "uncertain"
+	FailRejected  FailReason = "rejected"  // провайдер отказал определённо
+	FailExhausted FailReason = "exhausted" // исчерпаны MaxAttempts
+	FailUncertain FailReason = "uncertain" // аренда истекла при Config.Uncertain = Park
 )
 
 // AllFailReasons — полный список; держит guard-тест.
 var AllFailReasons = []FailReason{FailRejected, FailExhausted, FailUncertain}
 
-// TransportName — имя транспорта: метка метрики и колонка. Закрытый набор
-// объявляют адаптеры; ядро знает только, что строка непуста.
+// TransportName — имя транспорта: метка метрики и колонка.
 type TransportName string
 
-// Envelope — строка outbox: письмо плюс состояние доставки. Всё, что нужно
-// транспорту, здесь есть; в Store ничего дополнительно не читается.
+// Envelope — строка outbox: письмо плюс состояние доставки.
 type Envelope struct {
 	ID   uuid.UUID
 	Kind Kind
 	To   Address
-	// From — снапшот отправителя на момент постановки в очередь. Смена
-	// Config.From между Enqueue и Deliver не должна менять уже написанное
-	// письмо: ответ на него придёт на тот адрес, что был в нём.
+	// From — снапшот Config.From на момент постановки в очередь.
 	From    Address
 	Subject string
 	Text    string
 	HTML    string
 	Headers map[string]string
 
-	// DedupKey — УЖЕ нормализованный (NormalizeKey). Fingerprint — sha256
-	// содержимого, 32 байта; адаптер хранит и возвращает байт в байт. Пустой
-	// отпечаток законным повтором НЕ считается — см. sameMessage.
+	// DedupKey — уже нормализованный; Fingerprint — sha256 содержимого, 32
+	// байта, адаптер хранит байт в байт.
 	DedupKey    string
 	Fingerprint []byte
-	// MessageID — RFC 5322 Message-ID, детерминирован от ID и
-	// Config.MessageIDDomain. Один и тот же при повторной отправке той же
-	// строки: единственное, что даёт почтовому клиенту шанс схлопнуть дубль.
+	// MessageID — детерминирован от ID: при повторной отправке тот же, что даёт
+	// почтовому клиенту шанс схлопнуть дубль.
 	MessageID string
 
-	Status   Status
-	Attempts int
-	// NextAttemptAt — раньше этого момента Claim строку не отдаёт.
+	Status        Status
+	Attempts      int
 	NextAttemptAt time.Time
-	// LockedUntil непусто только в sending.
-	LockedUntil *time.Time
-	// LastError — текст последней ошибки транспорта, усечённый и без тела.
+	LockedUntil   *time.Time
+	// LastError — усечённый текст ошибки транспорта без тела.
 	LastError  string
 	FailReason FailReason
 
@@ -115,19 +93,10 @@ type Envelope struct {
 	SentAt    *time.Time
 }
 
-// fingerprint — каноническая сигнатура письма: отвечает на один вопрос «тот же
-// ключ — то же письмо?».
-//
-// Кодирование то же, что у payment.startFingerprint: sha256, префикс длины
-// перед каждой переменной секцией. Без префиксов ("ab","c") и ("a","bc")
-// склеиваются, и письмо с другой темой выглядело бы законным повтором.
-// Заголовки идут в отсортированном порядке: карта Go итерируется случайно, а
-// отпечаток обязан совпасть между попытками.
-//
-// From в отпечаток НЕ входит: он берётся из Config, а не из письма, и смена
-// адреса отправителя в конфиге не должна превращать повтор в ErrKeyReused.
-// NotAfter не входит по той же причине, что и время у payment: сигнатура
-// должна совпасть между попытками, разделёнными секундами.
+// fingerprint — сигнатура письма для вопроса «тот же ключ — то же письмо?».
+// sha256 с префиксом длины перед каждой секцией (иначе ("ab","c") и ("a","bc")
+// склеиваются); заголовки в отсортированном порядке. From и NotAfter не
+// входят: они не содержимое письма.
 func fingerprint(kind Kind, to Address, subject, text, html string, headers map[string]string) []byte {
 	var b bytes.Buffer
 	writeLenPrefixed(&b, string(kind))
@@ -157,20 +126,18 @@ func writeLenPrefixed(b *bytes.Buffer, s string) {
 	b.WriteString(s)
 }
 
-// writeInt64 — канонический big-endian. Ошибку игнорируем осознанно: запись в
-// bytes.Buffer не может не удаться.
+// writeInt64 — канонический big-endian; запись в bytes.Buffer не может не удаться.
 func writeInt64(b *bytes.Buffer, v int64) {
 	_ = binary.Write(b, binary.BigEndian, v)
 }
 
-// sameMessage — законный ли это повтор. Пустая сохранённая сигнатура повтором
-// НЕ считается: адаптер, потерявший колонку, превращал бы любое письмо под тем
-// же ключом в «уже отправлено». Пусть лучше 409, чем молчание.
+// sameMessage — законный ли повтор. Пустой сохранённый отпечаток повтором не
+// считается: адаптер, потерявший колонку, иначе превращал бы любое письмо под
+// тем же ключом в «уже в очереди».
 func sameMessage(stored, current []byte) bool {
 	return len(stored) > 0 && bytes.Equal(stored, current)
 }
 
-// messageID — детерминированный Message-ID строки.
 func messageID(id uuid.UUID, domain string) string {
 	return "<" + id.String() + "@" + domain + ">"
 }
