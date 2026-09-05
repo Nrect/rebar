@@ -45,3 +45,20 @@
   провайдера (`Message-ID`, `Reply-To`, `From`, …) и второго получателя,
   `RejectFor`/`ThrottleFor` по адресу, `Sent()` с разобранным письмом.
   Потокобезопасен; станет ядром `cmd/sesfake`.
+- Адаптер `mailpg` — `mail.Store` на pgx/v5 и `schema.sql` для goose (таблица
+  `email_outbox`, CHECK'и `email_outbox_body_cleared_chk` и
+  `email_outbox_lock_chk`, индексы `ux_email_outbox_dedup`,
+  `ix_email_outbox_due`, `ix_email_outbox_terminal`); файл копируется в каталог
+  миграций потребителя как есть, раннера миграций в пакете нет. `New(pool)` —
+  для фоновой доставки, `WithTx(tx)` — вставка письма в транзакции
+  бизнес-факта (доказано `TestStore_WithTx_IsAtomic`). Повтор по `dedup_key`
+  разбирается через `ON CONFLICT DO NOTHING` и возвращает существующую строку
+  с отпечатком байт в байт: перехват 23505 переводил бы транзакцию потребителя
+  в aborted, и законный повтор ронял бы её бизнес-факт. `Claim` — CTE с
+  `FOR UPDATE SKIP LOCKED`, аренда до `now+lease` и `Reclaimed` по прежнему
+  статусу (тест гонки на четырёх воркерах); `Finish` стирает тему, тела и
+  заголовки тем же UPDATE и требует `status = 'sending'` — ноль строк даёт
+  `mail.ErrUnavailable`. Ошибки Postgres сворачиваются до SQLSTATE и Message:
+  в `pgconn.PgError.Detail` лежит «Failing row contains (…)» со всей строкой,
+  включая тело письма. Интеграционные тесты на Postgres 16 (testcontainers,
+  своя схема на тест, пропуск по `-short`).
