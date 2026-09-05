@@ -274,6 +274,40 @@ func TestMemStore_PurgeRemovesOldTerminalRowsOnly(t *testing.T) {
 	assert.Equal(t, mail.OutcomeInserted, res.Outcome)
 }
 
+// Непозитивный лимит — пустая выборка, а не паника на срезе: mailpg на такой
+// LIMIT отдаёт пусто, а ошибка Claim остановила бы весь прогон Deliver.
+func TestMemStore_ClaimWithNonPositiveLimitTakesNothing(t *testing.T) {
+	t.Parallel()
+	store := mailtest.NewMemStore()
+	env := put(t, store, envelope("verify:a", storeBase))
+
+	for _, limit := range []int{0, -1} {
+		claimed, err := store.Claim(context.Background(), storeBase, storeLease, limit)
+		require.NoError(t, err)
+		assert.Empty(t, claimed, "limit %d", limit)
+	}
+
+	row := mustGet(t, store, env.ID)
+	assert.Equal(t, mail.StatusPending, row.Status, "строка не тронута")
+	assert.Equal(t, 0, row.Attempts, "попытка не потрачена")
+	assert.Nil(t, row.LockedUntil)
+}
+
+func TestMemStore_PurgeWithNonPositiveLimitDeletesNothing(t *testing.T) {
+	t.Parallel()
+	store := mailtest.NewMemStore()
+	env := put(t, store, envelope("verify:a", storeBase))
+	claim(t, store, storeBase)
+	finishSent(t, store, env.ID, storeBase)
+
+	for _, limit := range []int{0, -1} {
+		deleted, err := store.Purge(context.Background(), storeBase.Add(time.Hour), limit)
+		require.NoError(t, err)
+		assert.Equal(t, 0, deleted, "limit %d", limit)
+	}
+	assert.Len(t, store.Rows(), 1, "терминальная строка на месте")
+}
+
 func mustGet(t *testing.T, store *mailtest.MemStore, id uuid.UUID) mail.Envelope {
 	t.Helper()
 

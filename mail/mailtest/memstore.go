@@ -62,12 +62,16 @@ func (m *MemStore) Enqueue(_ context.Context, env mail.Envelope) (mail.EnqueueRe
 
 // Claim забирает до limit строк в порядке (NextAttemptAt, ID) и переводит их в
 // sending с арендой до now+lease. Строка из sending возвращается с Reclaimed:
-// исход её прошлой попытки неизвестен.
+// исход её прошлой попытки неизвестен. Непозитивный limit (здесь и в Purge) —
+// пустая выборка без ошибки, как у mailpg: ошибка Claim остановила бы прогон.
 func (m *MemStore) Claim(_ context.Context, now time.Time, lease time.Duration, limit int) ([]mail.Envelope, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.Err != nil {
 		return nil, m.Err
+	}
+	if limit <= 0 {
+		return []mail.Envelope{}, nil
 	}
 	due := m.dueIDs(now)
 	if len(due) > limit {
@@ -215,6 +219,9 @@ func (m *MemStore) Purge(_ context.Context, before time.Time, limit int) (int, e
 	defer m.mu.Unlock()
 	if m.Err != nil {
 		return 0, m.Err
+	}
+	if limit <= 0 {
+		return 0, nil
 	}
 	stale := make([]uuid.UUID, 0, len(m.rows))
 	for id, row := range m.rows {
