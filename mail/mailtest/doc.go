@@ -12,5 +12,5 @@
 //     FailFor (временный сбой), SendHook (таймауты), Sent для «ровно один раз».
 //   - MemSuppressor — mail.Suppressor: карта адресов и Err.
 //   - SESServer — httptest-фейк SES v2-совместимого API для адаптера sesv2 без
-//     Docker; он же станет ядром cmd/sesfake.
+//     Docker: обёртка над internal/sesfake, тем же обработчиком живёт cmd/sesfake.
 package mailtest

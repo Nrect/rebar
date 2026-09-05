@@ -72,9 +72,9 @@ type Stats struct {
 // как адаптер попадает в транзакцию потребителя — его дело (mailpg.WithTx).
 type Store interface {
 	// Enqueue вставляет строку в pending. Реализация обязана иметь
-	// UNIQUE (dedup_key) и на его нарушение (по имени индекса, не по коду 23505)
-	// вернуть OutcomeDuplicate с существующей строкой и её Fingerprint байт в
-	// байт.
+	// UNIQUE (dedup_key) и на конфликт именно по нему (ON CONFLICT (dedup_key)
+	// либо имя индекса, не любой 23505) вернуть OutcomeDuplicate с существующей
+	// строкой и её Fingerprint байт в байт, не роняя транзакцию вызывающего.
 	Enqueue(ctx context.Context, env Envelope) (EnqueueResult, error)
 
 	// Claim забирает до limit строк к отправке и переводит их в sending с
