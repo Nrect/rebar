@@ -14,7 +14,8 @@
 
 | Пакет | Модуль | Что | Статус |
 |---|---|---|---|
-| `mail/` | `github.com/nrect/rebar/mail` | транзакционная почта: outbox, доставка с ретраями, транспорт за портом (SMTP, SES-совместимый HTTP), стоп-лист, метрики декоратором (`mailotel`) | проектируется, см. [ADR-0001](docs/adr/0001-mail.md) |
+| `mail/` | `github.com/nrect/rebar/mail` | транзакционная почта: outbox, доставка с ретраями, транспорт за портом (SMTP, SES-совместимый HTTP), стоп-лист | проектируется, см. [ADR-0001](docs/adr/0001-mail.md) |
+| `mail/mailotel/` | подпакет `mail` | наблюдаемость почты: декоратор `mail.Transport` со счётчиком `emails_sent{type,result}` и три гейджа очереди со снимком `Stats` (OpenTelemetry metric API) | реализован |
 | `payment/` | — | покупка: намерение, зачисление по вебхуку, возврат, сверка | переезжает из `lifeurok-backend/internal/payment` отдельной задачей |
 | `entitlement/` | — | права доступа с кэшем и fail-closed | переезжает из `lifeurok-backend/internal/entitlement` отдельной задачей |
 
