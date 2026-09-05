@@ -178,3 +178,19 @@ func TestStore_Claim_TwoWorkersRace(t *testing.T) {
 	assert.Equal(t, rows, total, "выдано ровно столько строк, сколько было")
 	assert.Len(t, seen, rows, "пересечений между воркерами нет")
 }
+
+// limit <= 0 — не сбой хранилища: строк не берём, очередь не трогаем.
+func TestStore_Claim_NonPositiveLimitTakesNothing(t *testing.T) {
+	t.Parallel()
+	store, pool := newStore(t)
+	now := testNow()
+	env := pendingAt(t, store, now)
+
+	for _, limit := range []int{0, -1} {
+		claimed, err := store.Claim(context.Background(), now, testLease, limit)
+
+		require.NoError(t, err, "limit %d", limit)
+		assert.Empty(t, claimed, "limit %d", limit)
+	}
+	assert.Equal(t, string(mail.StatusPending), readRow(t, pool, env.ID).Status, "строка осталась в очереди")
+}

@@ -37,6 +37,11 @@ SELECT ` + envelopeColumns + `, prev_status FROM claimed ORDER BY next_attempt_a
 func (s *Store) Claim(
 	ctx context.Context, now time.Time, lease time.Duration, limit int,
 ) ([]mail.Envelope, error) {
+	if limit <= 0 {
+		// Брать нечего. Отрицательный LIMIT Postgres отверг бы ошибкой, а
+		// ошибка Claim по контракту Deliver останавливает весь прогон.
+		return nil, nil
+	}
 	rows, err := s.db.Query(ctx, claimSQL, now.UTC(), now.Add(lease).UTC(), limit)
 	if err != nil {
 		return nil, storeError("claim", err)
