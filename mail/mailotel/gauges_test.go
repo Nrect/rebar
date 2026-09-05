@@ -107,3 +107,24 @@ func TestGauges_ConcurrentSetAndCollect(t *testing.T) {
 		require.NoError(t, collectErr)
 	}
 }
+
+// Unregister снимает ряды со scrape и остаётся безвредным при повторе: тому,
+// кто пересобирает сервис на лету, иначе пришлось бы считать свои вызовы.
+func TestGauges_Unregister(t *testing.T) {
+	t.Parallel()
+	reader, meter := newMeter(t)
+	g, err := mailotel.NewGauges(meter)
+	require.NoError(t, err)
+
+	g.Set(mail.Stats{Pending: 5})
+	require.Len(t, collect(t, reader), 3)
+
+	require.NoError(t, g.Unregister())
+
+	var rm metricdata.ResourceMetrics
+	require.NoError(t, reader.Collect(context.Background(), &rm))
+	assert.Empty(t, rm.ScopeMetrics, "снятый коллбэк рядов не даёт")
+
+	require.NoError(t, g.Unregister(), "идемпотентен")
+	assert.NotPanics(t, func() { g.Set(mail.Stats{Pending: 9}) }, "Set после снятия безвреден")
+}

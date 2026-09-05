@@ -31,8 +31,9 @@
   `NewGauges` — три observable gauge на одном коллбэке (`email_outbox_pending`,
   `email_outbox_oldest_pending_age` в секундах, `email_outbox_failed`), читающие
   снимок `mail.Stats`: снимок кладёт потребитель через `Gauges.Set` после
-  прогона `Deliver`, запроса в БД на scrape нет (CONVENTIONS §6). Nil-порт и
-  nil-метр — паника в конструкторе.
+  прогона `Deliver`, запроса в БД на scrape нет (CONVENTIONS §6);
+  `Gauges.Unregister` снимает коллбэк (идемпотентен). Nil-порт и nil-метр —
+  паника в конструкторе.
 - Адаптер `smtp` — `mail.Transport` на go-mail v0.8.1. TLS по умолчанию
   mandatory; `TLSNone` и пароль по открытому соединению — только с
   `AllowPlaintext`. SMTP 5xx на любой стадии и конверт без адреса →

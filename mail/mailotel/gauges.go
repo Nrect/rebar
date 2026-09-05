@@ -25,6 +25,7 @@ const (
 type Gauges struct {
 	mu    sync.RWMutex
 	stats mail.Stats
+	reg   metric.Registration
 }
 
 // NewGauges паникует на nil-метре (как mail.NewService) и возвращает ошибку
@@ -57,16 +58,28 @@ func NewGauges(meter metric.Meter) (*Gauges, error) {
 	}
 
 	g := &Gauges{}
-	if _, err = meter.RegisterCallback(func(_ context.Context, obs metric.Observer) error {
+	g.reg, err = meter.RegisterCallback(func(_ context.Context, obs metric.Observer) error {
 		s := g.snapshot()
 		obs.ObserveInt64(pending, s.Pending)
 		obs.ObserveFloat64(oldest, s.OldestPendingAge.Seconds())
 		obs.ObserveInt64(failed, s.Failed)
 		return nil
-	}, pending, oldest, failed); err != nil {
+	}, pending, oldest, failed)
+	if err != nil {
 		return nil, fmt.Errorf("mailotel: коллбэк гейджей очереди: %w", err)
 	}
 	return g, nil
+}
+
+// Unregister снимает коллбэк: гейджи перестают попадать в scrape, Set после
+// этого безвреден. Нужен тому, кто пересобирает сервис в живом процессе;
+// долгоживущему воркеру звать его незачем. Идемпотентен и потокобезопасен —
+// это контракт metric.Registration.
+func (g *Gauges) Unregister() error {
+	if err := g.reg.Unregister(); err != nil {
+		return fmt.Errorf("mailotel: снять коллбэк гейджей очереди: %w", err)
+	}
+	return nil
 }
 
 // Set кладёт новый снимок; зовётся потребителем после прогона Deliver, а не
