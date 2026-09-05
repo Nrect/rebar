@@ -49,3 +49,11 @@
   `mailtest.SESServer` (теперь тонкая обёртка над `httptest.Server`) и бинаря
   стенда. Добавлены `StoreLimit` (хранить последние N писем) и `Reset()`.
   Публичный API `mailtest` не изменился.
+- `cmd/sesfake` — SES v2-фейк для dev/stage с релеем принятых писем в Mailpit по
+  SMTP (plain, без AUTH и TLS): цепочка стенда `backend → sesv2 → sesfake → SMTP
+  → Mailpit`. Флаги `-listen`, `-secret`, `-region`, `-relay`, `-reject
+  email=Code`, `-store-limit` дублируются переменными `SESFAKE_*`; ручки
+  `POST /v2/email/outbound-emails`, `GET`/`DELETE /store`, `GET /healthz`;
+  таймауты `http.Server` и graceful shutdown по SIGINT/SIGTERM. Лог релея — id
+  письма и ошибка, без адреса и тела. Multi-stage `Dockerfile`
+  (distroless/static:nonroot); образ никуда не публикуется.

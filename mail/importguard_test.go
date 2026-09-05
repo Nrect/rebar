@@ -64,6 +64,7 @@ var allowedByDir = map[string][]string{
 	"smtp":             {"github.com/google/uuid", "github.com/wneessen/go-mail"},
 	"sesv2":            {"github.com/google/uuid"},
 	"internal/sesfake": {"github.com/google/uuid"},
+	"cmd/sesfake":      {},
 	"mailotel":         {"github.com/google/uuid", "go.opentelemetry.io/otel/metric", "go.opentelemetry.io/otel/attribute"},
 }
 
