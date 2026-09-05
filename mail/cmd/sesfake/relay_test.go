@@ -39,7 +39,7 @@ func sample() sesfake.SentEmail {
 // relayTo — релей в мини-сервер; возвращает принятое им соединение.
 func relayTo(t *testing.T, e sesfake.SentEmail) delivery {
 	t.Helper()
-	srv := startFakeSMTP(t)
+	srv := startFakeSMTP(t, scenario{})
 	r := newRelayer(srv.addr, newDiscardLogger())
 	r.now = func() time.Time { return time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC) }
 	r.enqueue(e)
@@ -149,6 +149,22 @@ func TestRelayer_FailureLogsIDOnly(t *testing.T) {
 	for _, secret := range []string{e.To, e.From, e.Subject, e.Text, "teacher@school.ru", "секрет"} {
 		assert.NotContains(t, out, secret, "письмо в лог не попадает")
 	}
+}
+
+// Отказ сервера называет адрес получателя — в лог уходят только стадия и код.
+func TestRelayer_ServerRejectionKeepsRecipientOutOfLog(t *testing.T) {
+	t.Parallel()
+	srv := startFakeSMTP(t, scenario{rcptReply: "550 5.1.1 <teacher@school.ru>: Recipient address rejected"})
+
+	var logged bytes.Buffer
+	r := newRelayer(srv.addr, log.New(&logged, "", 0))
+	r.enqueue(sample())
+	r.wait()
+
+	out := logged.String()
+	assert.Contains(t, out, "relay failed: id=mid-1 err=rcpt: smtp 550")
+	assert.NotContains(t, out, "teacher@school.ru")
+	assert.NotContains(t, out, "Recipient address rejected")
 }
 
 func TestBuildMessage_KeepsASCIISubjectAsIs(t *testing.T) {

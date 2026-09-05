@@ -204,6 +204,35 @@ func TestHandler_RejectsRestrictedHeadersAndExtraRecipients(t *testing.T) {
 	assert.Equal(t, map[string]string{"X-Trace": "ok"}, h.Sent()[0].Headers)
 }
 
+// Инъекция заголовков: имя-не-token и управляющие в значении — 400, как у
+// провайдера. Иначе релей стенда собрал бы MIME со скрытой копией.
+func TestHandler_RejectsHeaderInjection(t *testing.T) {
+	t.Parallel()
+	h, url := newServer(t)
+
+	for _, header := range []map[string]string{
+		{"X-Trace\r\nBcc": "attacker@example.ru"},
+		{"X-Trace\nBcc": "attacker@example.ru"},
+		{"X-Trace: extra": "ok"},
+		{"X Trace": "ok"},
+		{"X-Тrace": "ok"},
+		{"X-Trace": "ok\r\nBcc: attacker@example.ru"},
+		{"X-Trace": "ok\nBcc: attacker@example.ru"},
+		{"X-Trace": "ok\x00"},
+	} {
+		status, code, raw := post(t, url, simpleBody("teacher@school.ru", header), "", nil)
+		assert.Equal(t, http.StatusBadRequest, status, raw)
+		assert.Equal(t, codeBadRequest, code, raw)
+	}
+	assert.Empty(t, h.Sent())
+
+	// TAB в значении законен: сворачивание длинных заголовков им и живёт.
+	status, _, raw := post(t, url, simpleBody("teacher@school.ru", map[string]string{"X-Trace": "a\tb"}), "", nil)
+	require.Equal(t, http.StatusOK, status, raw)
+	require.Len(t, h.Sent(), 1)
+	assert.Equal(t, "a\tb", h.Sent()[0].Headers["X-Trace"])
+}
+
 func TestHandler_UnknownRouteIs404(t *testing.T) {
 	t.Parallel()
 	_, url := newServer(t)

@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"log"
 	"maps"
@@ -120,23 +122,39 @@ func dialSMTP(ctx context.Context, addr string) (net.Conn, error) {
 }
 
 func sendSession(client *smtp.Client, from, to string, msg []byte) error {
-	if err := client.Mail(from); err != nil {
+	if err := stageErr("mail", client.Mail(from)); err != nil {
 		return err
 	}
-	if err := client.Rcpt(to); err != nil {
+	if err := stageErr("rcpt", client.Rcpt(to)); err != nil {
 		return err
 	}
 	body, dataErr := client.Data()
 	if dataErr != nil {
-		return dataErr
+		return stageErr("data", dataErr)
 	}
 	if _, err := body.Write(msg); err != nil {
+		return stageErr("write", err)
+	}
+	if err := stageErr("close", body.Close()); err != nil {
 		return err
 	}
-	if err := body.Close(); err != nil {
-		return err
+	return stageErr("quit", client.Quit())
+}
+
+// stageErr — стадия и код вместо текста сервера. ОТКАЗ SMTP НАЗЫВАЕТ АДРЕС:
+// «550 5.1.1 <teacher@school.ru>: Recipient address rejected» уехал бы в лог
+// целиком, а обещано только id письма и ошибка. Код провайдера остаётся — по
+// нему и разбираются.
+func stageErr(stage string, err error) error {
+	var protoErr *textproto.Error
+	switch {
+	case err == nil:
+		return nil
+	case errors.As(err, &protoErr):
+		return fmt.Errorf("%s: smtp %d", stage, protoErr.Code)
+	default:
+		return fmt.Errorf("%s: %w", stage, err)
 	}
-	return client.Quit()
 }
 
 // buildMessage — MIME из принятого письма: те же заголовки, что поставил бы

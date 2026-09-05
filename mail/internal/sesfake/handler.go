@@ -273,10 +273,33 @@ func collectHeaders(in []nameValue) (map[string]string, *apiError) {
 			return nil, badRequest("header Name and Value are required")
 		case restrictedHeaders[strings.ToLower(h.Name)]:
 			return nil, badRequest(h.Name + ": " + restrictedHeaderReason)
+		case !validHeaderName(h.Name):
+			return nil, badRequest("header Name is not a valid RFC 5322 token")
+		case !validHeaderValue(h.Value):
+			return nil, badRequest("header Value contains control characters")
 		}
 		out[h.Name] = h.Value
 	}
 	return out, nil
+}
+
+// validHeaderName — token RFC 5322: печатный ASCII без пробела и двоеточия.
+//
+// ИНЪЕКЦИЯ ЗАГОЛОВКОВ: провайдер отвечает 400 на имя или значение с CR/LF, и
+// двойник обязан вести себя так же. Иначе «X-Trace\r\nBcc» доехал бы до релея
+// стенда, тот собрал бы MIME со скрытой копией, и тест был бы зелёным.
+func validHeaderName(name string) bool {
+	return !strings.ContainsFunc(name, func(r rune) bool {
+		return r <= ' ' || r >= 0x7f || r == ':'
+	})
+}
+
+// validHeaderValue — без управляющих, кроме TAB; не-ASCII провайдер отвергнет
+// сам (sesv2 их не кодирует — это записано в его doc.go).
+func validHeaderValue(value string) bool {
+	return !strings.ContainsFunc(value, func(r rune) bool {
+		return r != '\t' && (r < ' ' || r == 0x7f)
+	})
 }
 
 func badRequest(message string) *apiError {

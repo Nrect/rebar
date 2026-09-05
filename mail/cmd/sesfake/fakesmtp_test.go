@@ -16,17 +16,24 @@ type delivery struct {
 	message  string
 }
 
+// scenario — ответы мини-сервера; задаётся до старта, иначе гонка с горутиной
+// соединения.
+type scenario struct {
+	rcptReply string // ответ на RCPT TO; пусто — 250
+}
+
 // fakeSMTP — минимальный ESMTP без TLS и AUTH: ящик стенда глазами релея.
 type fakeSMTP struct {
 	addr       string
+	sc         scenario
 	deliveries chan delivery
 }
 
-func startFakeSMTP(t *testing.T) *fakeSMTP {
+func startFakeSMTP(t *testing.T, sc scenario) *fakeSMTP {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
-	s := &fakeSMTP{addr: ln.Addr().String(), deliveries: make(chan delivery, 8)}
+	s := &fakeSMTP{addr: ln.Addr().String(), sc: sc, deliveries: make(chan delivery, 8)}
 	go s.serve(ln)
 	t.Cleanup(func() { _ = ln.Close() })
 	return s
@@ -60,8 +67,10 @@ func (s *fakeSMTP) handle(conn net.Conn) {
 		case "EHLO", "HELO":
 			_ = tp.PrintfLine("250-fake greets you")
 			_ = tp.PrintfLine("250 8BITMIME")
-		case "MAIL", "RCPT", "RSET", "NOOP":
+		case "MAIL", "RSET", "NOOP":
 			_ = tp.PrintfLine("250 2.0.0 Ok")
+		case "RCPT":
+			_ = tp.PrintfLine("%s", orDefault(s.sc.rcptReply, "250 2.1.5 Ok"))
 		case "DATA":
 			_ = tp.PrintfLine("354 End data with <CR><LF>.<CR><LF>")
 			raw, readErr := io.ReadAll(tp.DotReader())
@@ -77,4 +86,11 @@ func (s *fakeSMTP) handle(conn net.Conn) {
 			_ = tp.PrintfLine("502 5.5.1 Command not implemented")
 		}
 	}
+}
+
+func orDefault(v, def string) string {
+	if v == "" {
+		return def
+	}
+	return v
 }

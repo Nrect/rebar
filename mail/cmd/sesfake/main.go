@@ -93,15 +93,32 @@ func run(ctx context.Context, opts options, logger *log.Logger) error {
 	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
 	defer cancel()
 	err := srv.Shutdown(shutdownCtx)
-	if relay != nil {
-		relay.wait() // письмо принято — доставим; каждый релей ограничен relayTimeout
-	}
+	drainRelays(shutdownCtx, relay, logger)
 	if err != nil {
 		logger.Printf("sesfake stopped: %v", err)
 		return err
 	}
 	logger.Print("sesfake stopped")
 	return nil
+}
+
+// drainRelays — письмо принято, значит доставим; но не дольше остатка
+// shutdownCtx: docker stop убивает процесс через 10 с, а очередь на восьми
+// слотах ждёт дольше — лучше сказать об этом строкой, чем быть убитым молча.
+func drainRelays(ctx context.Context, relay *relayer, logger *log.Logger) {
+	if relay == nil {
+		return
+	}
+	drained := make(chan struct{})
+	go func() {
+		relay.wait()
+		close(drained)
+	}()
+	select {
+	case <-drained:
+	case <-ctx.Done():
+		logger.Print("relay drain timed out")
+	}
 }
 
 // newMux — маршруты стенда; всё неизвестное уходит в обработчик SES, чтобы

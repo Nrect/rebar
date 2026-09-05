@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -90,7 +93,7 @@ func TestMux_StoreHealthzAndSESRoutes(t *testing.T) {
 // доставки, поэтому тест ждёт релей сам.
 func TestMux_RelaysAcceptedEmail(t *testing.T) {
 	t.Parallel()
-	smtpSrv := startFakeSMTP(t)
+	smtpSrv := startFakeSMTP(t, scenario{})
 	relay := newRelayer(smtpSrv.addr, newDiscardLogger())
 	handler := sesfake.NewHandler()
 	handler.OnAccepted = relay.enqueue
@@ -99,12 +102,31 @@ func TestMux_RelaysAcceptedEmail(t *testing.T) {
 
 	status, _ := request(t, http.MethodPost, srv.URL+sesfake.SendEmailPath, sendEmailBody)
 	require.Equal(t, http.StatusOK, status)
-	relay.wait()
 
+	// Синхронизация — приём из канала: OnAccepted зовётся после ответа клиенту,
+	// поэтому relay.wait() успел бы отработать до enqueue.
 	d := <-smtpSrv.deliveries
 	assert.Equal(t, []string{"EHLO", "MAIL", "RCPT", "DATA", "QUIT"}, d.commands)
 	assert.Contains(t, d.message, "X-Trace: trace-42")
 	assert.Contains(t, d.message, "Reply-To: <support@example.ru>")
+}
+
+// Ожидание релеев ограничено контекстом завершения: висящая доставка не должна
+// пережить shutdownTimeout и дождаться kill от docker stop.
+func TestDrainRelays_StopsOnDeadline(t *testing.T) {
+	t.Parallel()
+	relay := newRelayer("127.0.0.1:0", log.New(io.Discard, "", 0))
+
+	var logged bytes.Buffer
+	drainRelays(t.Context(), relay, log.New(&logged, "", 0))
+	assert.Empty(t, logged.String(), "нечего ждать — нечего и логировать")
+
+	relay.wg.Add(1) // релей «в полёте»
+	defer relay.wg.Done()
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+	drainRelays(ctx, relay, log.New(&logged, "", 0))
+	assert.Contains(t, logged.String(), "relay drain timed out")
 }
 
 func TestParseFlags_RejectRepeatsAndFormat(t *testing.T) {
