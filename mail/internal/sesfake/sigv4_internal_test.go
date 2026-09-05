@@ -1,4 +1,4 @@
-package mailtest
+package sesfake
 
 import (
 	"net/http"

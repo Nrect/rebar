@@ -1,4 +1,4 @@
-package mailtest
+package sesfake
 
 import (
 	"crypto/hmac"
@@ -32,7 +32,7 @@ type authorization struct {
 
 // authenticate — проверка подписи глазами провайдера; nil — принято. Форма
 // проверяется всегда, подпись — при заданном Secret; отказы — 403 с кодами SES.
-func (s *SESServer) authenticate(r *http.Request, body []byte) *apiError {
+func (h *Handler) authenticate(r *http.Request, body []byte) *apiError {
 	raw := r.Header.Get("Authorization")
 	if raw == "" {
 		return &apiError{http.StatusForbidden, codeMissingAuth, "Missing Authentication Token"}
@@ -46,9 +46,9 @@ func (s *SESServer) authenticate(r *http.Request, body []byte) *apiError {
 		return &apiError{http.StatusForbidden, codeIncompleteSig, "X-Amz-Date is missing or not in ISO 8601 basic format"}
 	}
 
-	s.mu.Lock()
-	secret, region := s.Secret, s.Region
-	s.mu.Unlock()
+	h.mu.Lock()
+	secret, region := h.Secret, h.Region
+	h.mu.Unlock()
 	switch {
 	case !strings.HasPrefix(amzDate, auth.date):
 		return &apiError{http.StatusForbidden, codeInvalidSignature, "Date in Credential scope does not match X-Amz-Date"}
