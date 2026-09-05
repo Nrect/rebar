@@ -58,12 +58,13 @@ func TestPackageImportsAreWhitelisted(t *testing.T) {
 // allowedByDir — белый список внешних импортов по каталогу. Новый подпакет
 // добавляется сюда тем же коммитом, что и каталог.
 var allowedByDir = map[string][]string{
-	".":        {"github.com/google/uuid"},
-	"mailtest": {"github.com/google/uuid"},
-	"mailpg":   {"github.com/google/uuid", "github.com/jackc/pgx/v5"},
-	"smtp":     {"github.com/google/uuid", "github.com/wneessen/go-mail"},
-	"sesv2":    {"github.com/google/uuid"},
-	"mailotel": {"github.com/google/uuid", "go.opentelemetry.io/otel/metric", "go.opentelemetry.io/otel/attribute"},
+	".":                {"github.com/google/uuid"},
+	"mailtest":         {"github.com/google/uuid"},
+	"mailpg":           {"github.com/google/uuid", "github.com/jackc/pgx/v5"},
+	"smtp":             {"github.com/google/uuid", "github.com/wneessen/go-mail"},
+	"sesv2":            {"github.com/google/uuid"},
+	"internal/sesfake": {"github.com/google/uuid"},
+	"mailotel":         {"github.com/google/uuid", "go.opentelemetry.io/otel/metric", "go.opentelemetry.io/otel/attribute"},
 }
 
 // allowedImport — stdlib узнаётся по первому сегменту без точки; собственный
