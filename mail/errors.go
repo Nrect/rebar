@@ -17,6 +17,8 @@ var (
 	ErrSuppressed = errors.New("recipient is suppressed")
 	// ErrUnavailable — сбой хранилища или стоп-листа; письмо остаётся в очереди.
 	ErrUnavailable = errors.New("mail operation could not be completed")
+	// ErrTransportUnconfigured — Send у Unconfigured: провайдера нет, письмо ждёт в очереди.
+	ErrTransportUnconfigured = errors.New("mail transport is not configured")
 )
 
 // RejectedError — постоянный отказ провайдера: повтор бессмысленен и вреден,

@@ -79,8 +79,9 @@ type Store interface {
 
 	// Claim забирает до limit строк к отправке и переводит их в sending с
 	// арендой до now+lease, увеличивая Attempts. Кандидаты: pending с
-	// next_attempt_at <= now и sending с locked_until < now; порядок
-	// (next_attempt_at, id); блокировка SKIP LOCKED или эквивалент.
+	// next_attempt_at <= now и sending с locked_until < now — этим реализация
+	// ставит Reclaimed; порядок (next_attempt_at, id); блокировка SKIP LOCKED
+	// или эквивалент.
 	Claim(ctx context.Context, now time.Time, lease time.Duration, limit int) ([]Envelope, error)
 
 	// Finish записывает исход. В терминальном статусе реализация ОБЯЗАНА

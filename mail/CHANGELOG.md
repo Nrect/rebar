@@ -15,7 +15,12 @@
 - Каркас пакета: типы (`Message`, `Envelope`, закрытые наборы `Status`,
   `FailReason`, `SuppressReason`), порты (`Store`, `Transport`, `Suppressor`),
   `Config` с panic-валидацией, чистый `Service.Prepare`, страж импортов.
-- ADR-0001 с проектом outbox, транспортов и двойников.
+- ADR-0001 с проектом outbox, транспортов и двойников; 2026-09-05 принят
+  (вопросы 2–10 закрыты владельцем).
+- `Unconfigured` — транспорт для прода без провайдера: `Deliver` с ним очередь
+  не трогает, письма ждут в pending; прямой `Send` — `ErrTransportUnconfigured`
+  (временный сбой). `Envelope.Reclaimed` — транзитный флаг строки, взятой из
+  sending с истёкшей арендой (политика `Uncertain`).
 - Адаптер `smtp` — `mail.Transport` на go-mail v0.8.1. TLS по умолчанию
   mandatory; `TLSNone` и пароль по открытому соединению — только с
   `AllowPlaintext`. SMTP 5xx на любой стадии и конверт без адреса →

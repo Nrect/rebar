@@ -80,6 +80,9 @@ type Envelope struct {
 	Attempts      int
 	NextAttemptAt time.Time
 	LockedUntil   *time.Time
+	// Reclaimed — Claim взял строку из sending с истёкшей арендой: исход прошлой
+	// попытки неизвестен (Config.Uncertain). Ставит Claim, в хранилище не пишется.
+	Reclaimed bool
 	// LastError — усечённый текст ошибки транспорта без тела.
 	LastError  string
 	FailReason FailReason
