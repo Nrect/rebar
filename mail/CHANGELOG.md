@@ -21,6 +21,19 @@
   не трогает, письма ждут в pending; прямой `Send` — `ErrTransportUnconfigured`
   (временный сбой). `Envelope.Reclaimed` — транзитный флаг строки, взятой из
   sending с истёкшей арендой (политика `Uncertain`).
+- Ядро outbox: `Service.Enqueue` (Prepare + вставка; повтор ключа с тем же
+  отпечатком — успех, с другим — `ErrKeyReused`), `Service.Deliver` (пачка с
+  арендой, стоп-лист, отправка с `SendTimeout`, исходы sent/failed/expired/
+  suppressed/retry, пауза `MinSendGap`, остановка пачки по отмене `ctx` и по
+  сбою `Finish`), `Service.Purge`, `Service.Stats`, `Service.Suppress`.
+  Транспорт `Unconfigured` очередь не трогает — попытки не тратятся.
+  `LastError` усекается до `MaxErrorLen` = 500 байт по границе руны;
+  новый sentinel `ErrNoSuppressor`.
+- Двойники `mailtest`: `MemStore` (уникальность `DedupKey`, аренда и
+  SKIP-LOCKED-семантика с `Reclaimed`, стирание тела в терминальном статусе,
+  `Err`/`FinishErr`, снимки `Rows`/`Get`), `Transport` (`RejectFor`,
+  `FailFor`, `SendHook`, `Sent`), `MemSuppressor`. Ошибки двойников
+  (`ErrIDReused`, `ErrSendFailed`) отличимы от доменных.
 - Адаптер `smtp` — `mail.Transport` на go-mail v0.8.1. TLS по умолчанию
   mandatory; `TLSNone` и пароль по открытому соединению — только с
   `AllowPlaintext`. SMTP 5xx на любой стадии и конверт без адреса →
