@@ -1,0 +1,30 @@
+# Стенд dev/stage для пакета mail: backend → sesv2 → sesfake → SMTP → Mailpit.
+# Только стенд, наружу не выставлять: sesfake отдаёт тела писем по /store без
+# аутентификации и релеит в SMTP без TLS, Mailpit хранит письма открыто.
+# Порты привязаны к 127.0.0.1 намеренно.
+#
+# Запуск из этого каталога:  docker compose -f docker-compose.example.yml up --build
+# Письма читаются в Mailpit: http://127.0.0.1:8025
+# Транспорт backend'а в docker-сети: sesv2.Config{Endpoint: "http://sesfake:8080",
+# Region: "ru-central1", AllowInsecureEndpoint: true} — README, «Стенд».
+services:
+  mailpit:
+    # Тот же образ и digest, что в интеграционном тесте smtp.
+    image: axllent/mailpit:v1.21@sha256:81370195cd4a0eab9604d17c2617a7525b0486f9365555253b6c5376c6350f1a
+    ports:
+      - "127.0.0.1:8025:8025" # веб-ящик
+      - "127.0.0.1:1025:1025" # SMTP; нужен только backend'у вне docker-сети
+
+  sesfake:
+    # Контекст сборки — каталог mail (Dockerfile копирует go.mod модуля).
+    build:
+      context: ../..
+      dockerfile: cmd/sesfake/Dockerfile
+    environment:
+      SESFAKE_RELAY: mailpit:1025 # релей принятых писем в Mailpit
+      SESFAKE_REGION: ru-central1 # регион в Credential подписи, как у Postbox
+      # SESFAKE_SECRET: задайте вместе с SecretAccessKey backend'а — включит проверку подписи
+    ports:
+      - "127.0.0.1:8080:8080" # POST /v2/email/outbound-emails, GET /store, GET /healthz
+    depends_on:
+      - mailpit

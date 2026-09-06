@@ -25,4 +25,6 @@
 //
 //	go build ./cmd/sesfake
 //	docker build -f cmd/sesfake/Dockerfile .
+//
+// Стенд целиком (sesfake + Mailpit) — docker-compose.example.yml в этом каталоге.
 package main
