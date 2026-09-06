@@ -103,3 +103,6 @@
   в `pgconn.PgError.Detail` лежит «Failing row contains (…)» со всей строкой,
   включая тело письма. Интеграционные тесты на Postgres 16 (testcontainers,
   своя схема на тест, пропуск по `-short`).
+- Паники `mail.NewService` называют поле `Config` и правило
+  («Config.Lease must be longer than Config.SendTimeout»): ошибка конфигурации
+  читается без исходников пакета. Логика проверок не менялась.

@@ -23,11 +23,11 @@ type Service struct {
 func NewService(store Store, transport Transport, supp Suppressor, cfg Config) *Service {
 	switch {
 	case store == nil:
-		panic("mail.NewService: nil store")
+		panic("mail.NewService: store must not be nil")
 	case transport == nil:
-		panic("mail.NewService: nil transport")
+		panic("mail.NewService: transport must not be nil")
 	case transport.Name() == "":
-		panic("mail.NewService: transport has an empty name")
+		panic("mail.NewService: transport.Name() must not be empty")
 	}
 	if err := cfg.validate(); err != nil {
 		panic("mail.NewService: " + err.Error())

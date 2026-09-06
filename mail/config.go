@@ -88,26 +88,26 @@ func (c Config) validate() error {
 
 func (c Config) validateIdentity() error {
 	if _, err := NormalizeAddress(c.From.Email); err != nil {
-		return fmt.Errorf("from address: %w", err)
+		return fmt.Errorf("Config.From.Email must be a valid address: %w", err)
 	}
 	if err := checkLine(c.From.Name); err != nil {
-		return fmt.Errorf("from name: %w", err)
+		return fmt.Errorf("Config.From.Name must be a single printable line: %w", err)
 	}
 	if len(c.Kinds) == 0 {
-		return errors.New("kinds must not be empty")
+		return errors.New("Config.Kinds must not be empty")
 	}
 	seen := make(map[Kind]bool, len(c.Kinds))
 	for _, k := range c.Kinds {
 		switch {
 		case !k.valid():
-			return fmt.Errorf("kind %q must match [a-z0-9_]{1,%d}", k, MaxKindLen)
+			return fmt.Errorf("Config.Kinds: kind %q must match [a-z0-9_]{1,%d}", k, MaxKindLen)
 		case seen[k]:
-			return fmt.Errorf("kind %q listed twice", k)
+			return fmt.Errorf("Config.Kinds: kind %q is listed twice", k)
 		}
 		seen[k] = true
 	}
 	if c.MessageIDDomain == "" || strings.ContainsAny(c.MessageIDDomain, " <>@\r\n") {
-		return errors.New("message-id domain must be a bare domain")
+		return errors.New("Config.MessageIDDomain must be a bare domain (no spaces, @, < or >)")
 	}
 	return nil
 }
@@ -115,25 +115,25 @@ func (c Config) validateIdentity() error {
 func (c Config) validateDelivery() error {
 	switch {
 	case c.MaxAttempts <= 0:
-		return errors.New("max attempts must be positive")
+		return errors.New("Config.MaxAttempts must be positive")
 	case c.Backoff.Base <= 0:
-		return errors.New("backoff base must be positive")
+		return errors.New("Config.Backoff.Base must be positive")
 	case c.Backoff.Max < c.Backoff.Base:
-		return errors.New("backoff max must be at least backoff base")
+		return errors.New("Config.Backoff.Max must be at least Config.Backoff.Base")
 	case c.SendTimeout <= 0:
-		return errors.New("send timeout must be positive")
+		return errors.New("Config.SendTimeout must be positive")
 	case c.Lease <= c.SendTimeout:
-		return errors.New("lease must be longer than send timeout")
+		return errors.New("Config.Lease must be longer than Config.SendTimeout")
 	case c.BatchSize <= 0:
-		return errors.New("batch size must be positive")
+		return errors.New("Config.BatchSize must be positive")
 	case c.MinSendGap < 0:
-		return errors.New("min send gap must not be negative")
+		return errors.New("Config.MinSendGap must not be negative")
 	case c.Retention <= 0:
-		return errors.New("retention must be positive")
+		return errors.New("Config.Retention must be positive")
 	case c.MaxBodyBytes <= 0:
-		return errors.New("max body bytes must be positive")
+		return errors.New("Config.MaxBodyBytes must be positive")
 	case !c.Uncertain.valid():
-		return fmt.Errorf("uncertain policy must be one of %v", AllUncertainPolicies)
+		return fmt.Errorf("Config.Uncertain must be one of %v", AllUncertainPolicies)
 	}
 	return nil
 }

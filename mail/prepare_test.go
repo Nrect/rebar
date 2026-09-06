@@ -32,6 +32,11 @@ func (nopTransport) Send(context.Context, mail.Envelope) (mail.SendResult, error
 	return mail.SendResult{}, nil
 }
 
+// namelessTransport — транспорт с пустым именем: NewService обязан его отвергнуть.
+type namelessTransport struct{ nopTransport }
+
+func (namelessTransport) Name() mail.TransportName { return "" }
+
 func validConfig() mail.Config {
 	return mail.Config{
 		From:            mail.Address{Email: "noreply@example.ru", Name: "Пример"},
@@ -178,33 +183,100 @@ func TestPrepare_KeepsNotAfterInUTC(t *testing.T) {
 	assert.True(t, env.NotAfter.Equal(msg.NotAfter))
 }
 
+// Паника называет поле Config и правило: ошибка конфигурации читается без
+// исходников пакета.
 func TestNewService_PanicsOnBadConfig(t *testing.T) {
 	t.Parallel()
 
-	cases := map[string]func(*mail.Config){
-		"пустой From":                func(c *mail.Config) { c.From.Email = "" },
-		"нет типов":                  func(c *mail.Config) { c.Kinds = nil },
-		"тип с заглавной":            func(c *mail.Config) { c.Kinds = []mail.Kind{"Verify"} },
-		"тип дважды":                 func(c *mail.Config) { c.Kinds = []mail.Kind{"verify", "verify"} },
-		"домен Message-ID с @":       func(c *mail.Config) { c.MessageIDDomain = "a@b" },
-		"ноль попыток":               func(c *mail.Config) { c.MaxAttempts = 0 },
-		"аренда не длиннее таймаута": func(c *mail.Config) { c.Lease = c.SendTimeout },
-		"Max меньше Base":            func(c *mail.Config) { c.Backoff.Max = c.Backoff.Base - 1 },
-		"нулевой батч":               func(c *mail.Config) { c.BatchSize = 0 },
-		"нулевая retention":          func(c *mail.Config) { c.Retention = 0 },
-		"неизвестная политика":       func(c *mail.Config) { c.Uncertain = "maybe" },
+	cases := map[string]struct {
+		mutate func(*mail.Config)
+		want   string
+	}{
+		"пустой From": {
+			func(c *mail.Config) { c.From.Email = "" },
+			"Config.From.Email must be a valid address: message is invalid: address is empty",
+		},
+		"CRLF в имени From": {
+			func(c *mail.Config) { c.From.Name = "Пример\r\nBcc: x@y.ru" },
+			"Config.From.Name must be a single printable line: value contains a control character",
+		},
+		"нет типов": {
+			func(c *mail.Config) { c.Kinds = nil },
+			"Config.Kinds must not be empty",
+		},
+		"тип с заглавной": {
+			func(c *mail.Config) { c.Kinds = []mail.Kind{"Verify"} },
+			`Config.Kinds: kind "Verify" must match [a-z0-9_]{1,32}`,
+		},
+		"тип дважды": {
+			func(c *mail.Config) { c.Kinds = []mail.Kind{"verify", "verify"} },
+			`Config.Kinds: kind "verify" is listed twice`,
+		},
+		"домен Message-ID с @": {
+			func(c *mail.Config) { c.MessageIDDomain = "a@b" },
+			"Config.MessageIDDomain must be a bare domain (no spaces, @, < or >)",
+		},
+		"ноль попыток": {
+			func(c *mail.Config) { c.MaxAttempts = 0 },
+			"Config.MaxAttempts must be positive",
+		},
+		"нулевая база backoff": {
+			func(c *mail.Config) { c.Backoff.Base = 0 },
+			"Config.Backoff.Base must be positive",
+		},
+		"Max меньше Base": {
+			func(c *mail.Config) { c.Backoff.Max = c.Backoff.Base - 1 },
+			"Config.Backoff.Max must be at least Config.Backoff.Base",
+		},
+		"нулевой таймаут отправки": {
+			func(c *mail.Config) { c.SendTimeout = 0 },
+			"Config.SendTimeout must be positive",
+		},
+		"аренда не длиннее таймаута": {
+			func(c *mail.Config) { c.Lease = c.SendTimeout },
+			"Config.Lease must be longer than Config.SendTimeout",
+		},
+		"нулевой батч": {
+			func(c *mail.Config) { c.BatchSize = 0 },
+			"Config.BatchSize must be positive",
+		},
+		"отрицательная пауза": {
+			func(c *mail.Config) { c.MinSendGap = -time.Second },
+			"Config.MinSendGap must not be negative",
+		},
+		"нулевая retention": {
+			func(c *mail.Config) { c.Retention = 0 },
+			"Config.Retention must be positive",
+		},
+		"нулевой потолок тела": {
+			func(c *mail.Config) { c.MaxBodyBytes = 0 },
+			"Config.MaxBodyBytes must be positive",
+		},
+		"неизвестная политика": {
+			func(c *mail.Config) { c.Uncertain = "maybe" },
+			"Config.Uncertain must be one of [retry park]",
+		},
 	}
-	for name, mutate := range cases {
+	for name, tt := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			cfg := validConfig()
-			mutate(&cfg)
-			assert.Panics(t, func() { mail.NewService(nopStore{}, nopTransport{}, nil, cfg) })
+			tt.mutate(&cfg)
+			assert.PanicsWithValue(t, "mail.NewService: "+tt.want, func() {
+				mail.NewService(nopStore{}, nopTransport{}, nil, cfg)
+			})
 		})
 	}
 
-	assert.Panics(t, func() { mail.NewService(nil, nopTransport{}, nil, validConfig()) })
-	assert.Panics(t, func() { mail.NewService(nopStore{}, nil, nil, validConfig()) })
+	assert.PanicsWithValue(t, "mail.NewService: store must not be nil", func() {
+		mail.NewService(nil, nopTransport{}, nil, validConfig())
+	})
+	assert.PanicsWithValue(t, "mail.NewService: transport must not be nil", func() {
+		mail.NewService(nopStore{}, nil, nil, validConfig())
+	})
+	assert.PanicsWithValue(t, "mail.NewService: transport.Name() must not be empty", func() {
+		mail.NewService(nopStore{}, namelessTransport{}, nil, validConfig())
+	})
 	assert.NotPanics(t, func() { mail.NewService(nopStore{}, nopTransport{}, nil, validConfig()) })
 }
 
