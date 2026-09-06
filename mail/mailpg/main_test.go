@@ -92,6 +92,15 @@ func startPostgres(ctx context.Context) (testcontainers.Container, string, error
 // schema.sql, чтобы тестировался артефакт, а не его копия в коде.
 func newStore(t *testing.T) (*mailpg.Store, *pgxpool.Pool) {
 	t.Helper()
+	pool := newSchemaPool(t)
+	_, err := pool.Exec(context.Background(), schemaUp(t))
+	require.NoError(t, err, "применение -- +goose Up из schema.sql")
+	return mailpg.New(pool), pool
+}
+
+// newSchemaPool — пул в пустую схему теста: миграция ещё не применена.
+func newSchemaPool(t *testing.T) *pgxpool.Pool {
+	t.Helper()
 	if testing.Short() {
 		t.Skip("интеграционный тест: нужен Docker (Postgres)")
 	}
@@ -103,10 +112,7 @@ func newStore(t *testing.T) (*mailpg.Store, *pgxpool.Pool) {
 	pool, err := newPool(ctx, adminPool.Config().ConnString(), schema)
 	require.NoError(t, err)
 	t.Cleanup(pool.Close)
-
-	_, err = pool.Exec(ctx, schemaUp(t))
-	require.NoError(t, err, "применение -- +goose Up из schema.sql")
-	return mailpg.New(pool), pool
+	return pool
 }
 
 // newPool — пул к базе контейнера, при непустой schema — с search_path в неё.

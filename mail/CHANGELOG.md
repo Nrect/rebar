@@ -106,3 +106,12 @@
 - Паники `mail.NewService` называют поле `Config` и правило
   («Config.Lease must be longer than Config.SendTimeout»): ошибка конфигурации
   читается без исходников пакета. Логика проверок не менялась.
+- `mailpg.CheckSchema` — проверка таблицы `email_outbox` на старте
+  потребителя, без изменений схемы: колонки и типы (`information_schema`),
+  CHECK `email_outbox_body_cleared_chk` и `email_outbox_lock_chk`, индексы
+  `ux_email_outbox_dedup` (уникальный), `ix_email_outbox_due`,
+  `ix_email_outbox_terminal`. Расхождения — одной ошибкой (`errors.Join`),
+  первая строка говорит, что делать; лишние колонки потребителя не считаются
+  расхождением; сбой каталога — `mail.ErrUnavailable`. `mailpg.Schema` —
+  `schema.sql` через `embed` для тех, кто применяет миграции из кода (тест
+  держит равенство файлу). Автомиграции в пакете нет и не будет.
