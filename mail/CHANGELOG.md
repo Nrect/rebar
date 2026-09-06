@@ -129,3 +129,5 @@
 - `cmd/sesfake/docker-compose.example.yml` — стенд из sesfake (сборка из
   `cmd/sesfake/Dockerfile`, релей в `mailpit:1025`, регион `ru-central1`) и
   Mailpit; порты только на 127.0.0.1, наружу не выставлять.
+- `docs/CHECKLIST.md` — чек-лист встраивания из десяти шагов от `go get` до
+  алертов; таблица «Жители» корневого README перечисляет подпакеты `mail`.
