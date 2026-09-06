@@ -120,3 +120,9 @@
   (inserted → duplicate → `ErrKeyReused`), `ExampleService_Deliver` (sent,
   тело стёрто, `Stats`), `ExampleUnconfigured` (очередь ждёт провайдера). Все с
   проверяемым `// Output:` на двойниках `mailtest`.
+- `README.md` — quickstart для потребителя: установка, миграция (копия
+  `schema.sql` + `CheckSchema` на старте), проводка `pgxpool → mailpg → sesv2
+  → mailotel → NewService` с рекомендованным `Config`, отправка (ключ из
+  факта, `NotAfter`, разбор ошибок, путь `Prepare` + `WithTx`), два фоновых
+  задания, прод без провайдера, стенд с sesfake, тесты на двойниках, таблицы
+  метрик и алертов из ADR-0001. Фрагменты проверены компиляцией.
