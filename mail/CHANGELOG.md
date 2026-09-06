@@ -115,3 +115,8 @@
   расхождением; сбой каталога — `mail.ErrUnavailable`. `mailpg.Schema` —
   `schema.sql` через `embed` для тех, кто применяет миграции из кода (тест
   держит равенство файлу). Автомиграции в пакете нет и не будет.
+- Примеры для pkg.go.dev (`example_test.go`, `example_config_test.go`):
+  `ExampleNewService` с рекомендованным `Config`, `ExampleService_Enqueue`
+  (inserted → duplicate → `ErrKeyReused`), `ExampleService_Deliver` (sent,
+  тело стёрто, `Stats`), `ExampleUnconfigured` (очередь ждёт провайдера). Все с
+  проверяемым `// Output:` на двойниках `mailtest`.
