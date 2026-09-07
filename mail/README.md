@@ -14,7 +14,7 @@ AWS SES одним адаптером) и повторяет по экспоне
 ## Установка
 
 ```bash
-go get github.com/nrect/rebar/mail@main   # после тега — @v0.1.0
+go get github.com/nrect/rebar/mail@v0.1.0
 ```
 
 Модуль на пакет: в проект приезжают зависимости только почты, а бамп версии

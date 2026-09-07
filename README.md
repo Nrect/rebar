@@ -14,7 +14,7 @@
 
 | Пакет | Модуль | Что | Статус |
 |---|---|---|---|
-| `mail/` | `github.com/nrect/rebar/mail` | транзакционная почта: outbox в Postgres потребителя, доставка с ретраями, транспорт за портом, стоп-лист; quickstart — [mail/README.md](mail/README.md) | реализован, готовится тег v0.1.0; проект — [ADR-0001](docs/adr/0001-mail.md) |
+| `mail/` | `github.com/nrect/rebar/mail` | транзакционная почта: outbox в Postgres потребителя, доставка с ретраями, транспорт за портом, стоп-лист; quickstart — [mail/README.md](mail/README.md) | v0.1.0; проект — [ADR-0001](docs/adr/0001-mail.md) |
 | &nbsp;&nbsp;`mail/smtp/` | подпакет `mail` | транспорт SMTP на go-mail, STARTTLS обязателен по умолчанию | реализован |
 | &nbsp;&nbsp;`mail/sesv2/` | подпакет `mail` | транспорт SES v2-совместимого HTTP API (Yandex Cloud Postbox, AWS SES), SigV4 на stdlib | реализован |
 | &nbsp;&nbsp;`mail/mailpg/` | подпакет `mail` | хранилище outbox на pgx/v5: `schema.sql`, `WithTx`, `CheckSchema` на старте | реализован |

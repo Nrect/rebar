@@ -5,6 +5,10 @@
 
 ## Unreleased
 
+(пусто)
+
+## [0.1.0] — 2026-09-07
+
 ### Security
 - Toolchain go1.26.6: закрывает GO-2026-5026, GO-2026-5972, GO-2026-6089,
   GO-2026-6090, GO-2026-6218 в stdlib (net/http, crypto/tls, net/url,
