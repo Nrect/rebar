@@ -25,16 +25,44 @@ jobs:
     outputs:
       list: ${{ steps.find.outputs.list }}
     steps:
+      # fetch-depth: 0 — иначе не с чем сравнивать PR: origin/<base> недоступен.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # На PR гоняются только тронутые модули: одиннадцать модулей × три джоба —
+      # 33 ожидания ради правки в одном каталоге. Правка корневого файла
+      # (конфиг линтера, go.work, Makefile, workflow) касается всех, поэтому
+      # возвращает полный список. На main и по кнопке — всегда полный.
       - id: find
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
         run: |
-          list=$(find . -name go.mod -not -path './.git/*' -exec dirname {} \; | sort | jq -R -s -c 'split("\n") | map(select(length > 0))')
+          all=$(find . -name go.mod -not -path './.git/*' -exec dirname {} \; | sort)
+          selected="$all"
+          if [ "$EVENT_NAME" = pull_request ]; then
+            git fetch --no-tags --quiet origin "+refs/heads/$BASE_REF:refs/remotes/origin/$BASE_REF"
+            changed=$(git diff --name-only "origin/$BASE_REF...HEAD")
+            echo "changed files:"; echo "$changed" | sed 's/^/  /'
+            if echo "$changed" | grep -qE '^(\.golangci\.yml|go\.work|Makefile|\.github/)'; then
+              echo "тронут корневой файл — полный список модулей"
+            else
+              selected=$(printf '%s\n' "$all" | while IFS= read -r m; do
+                prefix="${m#./}/"
+                if printf '%s\n' "$changed" | awk -v p="$prefix" 'index($0, p) == 1 { hit = 1 } END { exit !hit }'; then
+                  printf '%s\n' "$m"
+                fi
+              done)
+            fi
+          fi
+          list=$(echo "$selected" | jq -R -s -c 'split("\n") | map(select(length > 0))')
           echo "list=$list" >> "$GITHUB_OUTPUT"
           echo "modules: $list"
 
   lint:
     name: Lint (${{ matrix.module }})
     needs: modules
+    if: needs.modules.outputs.list != '[]'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -56,6 +84,7 @@ jobs:
   test:
     name: Tests, race (${{ matrix.module }})
     needs: modules
+    if: needs.modules.outputs.list != '[]'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -78,6 +107,7 @@ jobs:
   govulncheck:
     name: Vuln scan (${{ matrix.module }})
     needs: modules
+    if: needs.modules.outputs.list != '[]'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -93,3 +123,42 @@ jobs:
       - name: govulncheck
         working-directory: ${{ matrix.module }}
         run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+  lockstep:
+    name: Lockstep (go, toolchain, общие зависимости)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: go и toolchain одинаковые во всех go.mod
+        run: ./scripts/toolchain-lockstep.sh
+      - name: общие зависимости одной версии
+        run: ./scripts/deps-lockstep.sh
+
+  # Пример — гейт тегов: модуль, который не собирается вместе с соседями,
+  # тега не получает. На PR не гоняется (каталог трогают редко), на main и по
+  # кнопке — обязателен.
+  examples:
+    name: Examples build
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    continue-on-error: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.work
+      - name: go build examples
+        run: |
+          if [ ! -d examples ]; then
+            echo "examples/ ещё нет — шаг пропущен"
+            exit 0
+          fi
+          for m in examples/*/; do
+            [ -f "$m/go.mod" ] || continue
+            echo "== $m"
+            (cd "$m" && go build ./...)
+          done

@@ -30,6 +30,8 @@ formatters:
 linters:
   enable:
     - govet
+    - depguard
+    - gomodguard_v2
     - staticcheck
     - errcheck
     - ineffassign
@@ -73,6 +75,53 @@ linters:
     - thelper
 
   settings:
+    # Вторая линия обороны переносимости: importguard_test.go переживает
+    # копирование каталога, а этот — ловит раньше, прямо в редакторе.
+    # CONVENTIONS §1.
+    depguard:
+      rules:
+        # Драйвер живёт в адаптерах; ядру положен порт Store. Каталоги
+        # адаптеров: <pkg>pg, модуль postgres, будущий pglock.
+        pgx-only-in-adapters:
+          files:
+            - "$all"
+            - "!$test"
+            - "!**/*pg/**"
+            - "!**/postgres/**"
+            - "!**/pglock/**"
+          deny:
+            - pkg: github.com/jackc/pgx
+              desc: "pgx — только в адаптерах (<pkg>pg, postgres, pglock); ядру порт Store"
+        # Ядро метрик не пишет: наблюдаемость — декоратор или порт Observer
+        # в <pkg>otel. CONVENTIONS §6.
+        otel-only-in-adapters:
+          files:
+            - "$all"
+            - "!$test"
+            - "!**/*otel/**"
+            - "!**/otelboot/**"
+            - "!**/errtrack/**"
+          deny:
+            - pkg: go.opentelemetry.io
+              desc: "otel — только в <pkg>otel, otelboot, errtrack; ядру порт Observer или декоратор"
+    # Библиотеки, которых в тулките не будет: замена есть, а разнобой в
+    # одиннадцати модулях стоит дороже привычки.
+    gomodguard_v2:
+      blocked:
+        - module: github.com/lib/pq
+          reason: "database/sql-драйвер без поддержки; адаптеры на pgx/v5"
+          recommendations:
+            - github.com/jackc/pgx/v5
+        - module: github.com/sirupsen/logrus
+          reason: "логирование — log/slog stdlib; порт логгера у потребителя"
+          recommendations:
+            - log/slog
+        - module: github.com/pkg/errors
+          reason: "обёртки и Is/As — stdlib errors с %w; errorlint следит за приведением"
+          recommendations:
+            - errors
+        - module: github.com/golang/mock
+          reason: "заброшен, и моков в тулките нет: порты проверяются двойниками в <pkg>test (CONVENTIONS §3)"
     errcheck:
       exclude-functions:
         - (io.Closer).Close

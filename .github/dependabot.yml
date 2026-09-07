@@ -1,0 +1,43 @@
+# CVE в pgx, go-mail или x/crypto появляется без нашего пуша; еженедельный
+# vuln-scan о нём скажет, а этот файл — предложит правку.
+#
+# Каталоги заданы глобом: модуль на пакет, все они лежат первым уровнем, и
+# новый модуль подхватывается без правки этого файла. Обратная сторона —
+# Dependabot бампает зависимость в одном каталоге, а общие версии обязаны
+# совпадать во всех (VERSIONING, «Единая версия Go и общих зависимостей»):
+# такой PR валит джоб lockstep, и это правильный сигнал — версия
+# догоняется в остальных модулях тем же PR.
+version: 2
+
+updates:
+  - package-ecosystem: gomod
+    directories:
+      - "/*"
+      - "/examples/*"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      # Минор и патч — одним PR на каталог: их разбор стоит дороже, чем сам
+      # бамп. Мажоры приходят по одному: у них ломающие изменения.
+      gomod-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      actions-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
