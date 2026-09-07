@@ -202,5 +202,10 @@ linters:
         linters: [errcheck, dupl, funlen, goconst, gocyclo, gocognit, copyloopvar, gosec, noctx]
 
 issues:
+  # По умолчанию golangci-lint оставляет одну находку на строку, и находка
+  # линтера-стража молча проигрывает соседней: на `_ "github.com/jackc/pgx/v5"`
+  # в ядре побеждает revive с blank-imports, а запрет depguard исчезает. Страж,
+  # который молчит, хуже отсутствующего, поэтому склейка по строке выключена.
+  uniq-by-line: false
   max-issues-per-linter: 0
   max-same-issues: 0
