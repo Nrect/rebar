@@ -103,3 +103,31 @@
   в `pgconn.PgError.Detail` лежит «Failing row contains (…)» со всей строкой,
   включая тело письма. Интеграционные тесты на Postgres 16 (testcontainers,
   своя схема на тест, пропуск по `-short`).
+- Паники `mail.NewService` называют поле `Config` и правило
+  («Config.Lease must be longer than Config.SendTimeout»): ошибка конфигурации
+  читается без исходников пакета. Логика проверок не менялась.
+- `mailpg.CheckSchema` — проверка таблицы `email_outbox` на старте
+  потребителя, без изменений схемы: колонки и типы (`information_schema`),
+  CHECK `email_outbox_body_cleared_chk` и `email_outbox_lock_chk`, индексы
+  `ux_email_outbox_dedup` (уникальный), `ix_email_outbox_due`,
+  `ix_email_outbox_terminal`. Расхождения — одной ошибкой (`errors.Join`),
+  первая строка говорит, что делать; лишние колонки потребителя не считаются
+  расхождением; сбой каталога — `mail.ErrUnavailable`. `mailpg.Schema` —
+  `schema.sql` через `embed` для тех, кто применяет миграции из кода (тест
+  держит равенство файлу). Автомиграции в пакете нет и не будет.
+- Примеры для pkg.go.dev (`example_test.go`, `example_config_test.go`):
+  `ExampleNewService` с рекомендованным `Config`, `ExampleService_Enqueue`
+  (inserted → duplicate → `ErrKeyReused`), `ExampleService_Deliver` (sent,
+  тело стёрто, `Stats`), `ExampleUnconfigured` (очередь ждёт провайдера). Все с
+  проверяемым `// Output:` на двойниках `mailtest`.
+- `README.md` — quickstart для потребителя: установка, миграция (копия
+  `schema.sql` + `CheckSchema` на старте), проводка `pgxpool → mailpg → sesv2
+  → mailotel → NewService` с рекомендованным `Config`, отправка (ключ из
+  факта, `NotAfter`, разбор ошибок, путь `Prepare` + `WithTx`), два фоновых
+  задания, прод без провайдера, стенд с sesfake, тесты на двойниках, таблицы
+  метрик и алертов из ADR-0001. Фрагменты проверены компиляцией.
+- `cmd/sesfake/docker-compose.example.yml` — стенд из sesfake (сборка из
+  `cmd/sesfake/Dockerfile`, релей в `mailpit:1025`, регион `ru-central1`) и
+  Mailpit; порты только на 127.0.0.1, наружу не выставлять.
+- `docs/CHECKLIST.md` — чек-лист встраивания из десяти шагов от `go get` до
+  алертов; таблица «Жители» корневого README перечисляет подпакеты `mail`.

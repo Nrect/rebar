@@ -14,8 +14,13 @@
 
 | Пакет | Модуль | Что | Статус |
 |---|---|---|---|
-| `mail/` | `github.com/nrect/rebar/mail` | транзакционная почта: outbox, доставка с ретраями, транспорт за портом (SMTP, SES-совместимый HTTP), стоп-лист | проектируется, см. [ADR-0001](docs/adr/0001-mail.md) |
-| `mail/mailotel/` | подпакет `mail` | наблюдаемость почты: декоратор `mail.Transport` со счётчиком `emails_sent{type,result}` и три гейджа очереди со снимком `Stats` (OpenTelemetry metric API) | реализован |
+| `mail/` | `github.com/nrect/rebar/mail` | транзакционная почта: outbox в Postgres потребителя, доставка с ретраями, транспорт за портом, стоп-лист; quickstart — [mail/README.md](mail/README.md) | реализован, готовится тег v0.1.0; проект — [ADR-0001](docs/adr/0001-mail.md) |
+| &nbsp;&nbsp;`mail/smtp/` | подпакет `mail` | транспорт SMTP на go-mail, STARTTLS обязателен по умолчанию | реализован |
+| &nbsp;&nbsp;`mail/sesv2/` | подпакет `mail` | транспорт SES v2-совместимого HTTP API (Yandex Cloud Postbox, AWS SES), SigV4 на stdlib | реализован |
+| &nbsp;&nbsp;`mail/mailpg/` | подпакет `mail` | хранилище outbox на pgx/v5: `schema.sql`, `WithTx`, `CheckSchema` на старте | реализован |
+| &nbsp;&nbsp;`mail/mailotel/` | подпакет `mail` | наблюдаемость: декоратор транспорта со счётчиком `emails_sent{type,result}` и три гейджа очереди (OpenTelemetry metric API) | реализован |
+| &nbsp;&nbsp;`mail/mailtest/` | подпакет `mail` | двойники портов для тестов потребителя и фейк SES v2 без Docker | реализован |
+| &nbsp;&nbsp;`mail/cmd/sesfake/` | подпакет `mail` | SES v2-фейк для dev/stage с релеем в Mailpit | реализован |
 | `payment/` | — | покупка: намерение, зачисление по вебхуку, возврат, сверка | переезжает из `lifeurok-backend/internal/payment` отдельной задачей |
 | `entitlement/` | — | права доступа с кэшем и fail-closed | переезжает из `lifeurok-backend/internal/entitlement` отдельной задачей |
 
@@ -24,6 +29,7 @@
 - [CONVENTIONS.md](CONVENTIONS.md) — как оформляется пакет и что в нём обязательно.
 - [VERSIONING.md](VERSIONING.md) — модуль на пакет, теги `<pkg>/vX.Y.Z`, что считается ломающим.
 - [SECURITY.md](SECURITY.md) — как чинится уязвимость и как она доезжает до проектов.
+- [docs/CHECKLIST.md](docs/CHECKLIST.md) — чек-лист встраивания пакета `mail` в проект: от `go get` до алертов.
 
 ## Команды
 
