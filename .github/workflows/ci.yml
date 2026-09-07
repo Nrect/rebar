@@ -26,7 +26,7 @@ jobs:
       list: ${{ steps.find.outputs.list }}
     steps:
       # fetch-depth: 0 — иначе не с чем сравнивать PR: origin/<base> недоступен.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       # На PR гоняются только тронутые модули: одиннадцать модулей × три джоба —
@@ -71,7 +71,7 @@ jobs:
       matrix:
         module: ${{ fromJson(needs.modules.outputs.list) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v5
         with:
           go-version-file: ${{ matrix.module }}/go.mod
@@ -93,7 +93,7 @@ jobs:
       matrix:
         module: ${{ fromJson(needs.modules.outputs.list) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v5
         with:
           go-version-file: ${{ matrix.module }}/go.mod
@@ -116,7 +116,7 @@ jobs:
       matrix:
         module: ${{ fromJson(needs.modules.outputs.list) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v5
         with:
           go-version-file: ${{ matrix.module }}/go.mod
@@ -130,7 +130,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: go и toolchain одинаковые во всех go.mod
         run: ./scripts/toolchain-lockstep.sh
       - name: общие зависимости одной версии
@@ -147,7 +147,7 @@ jobs:
       contents: read
     continue-on-error: false
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.work
