@@ -33,8 +33,8 @@ func New(pool *pgxpool.Pool, cfg Config) *Runner {
 }
 
 // InTx проводит fn через транзакцию: BeginTx → SET LOCAL таймауты → fn →
-// commit или rollback. Ошибка наружу
-// проходит через Sanitize — потребитель никогда не увидит Detail.
+// commit или rollback. Ошибка наружу проходит через Sanitize — потребитель
+// никогда не увидит Detail.
 func (r *Runner) InTx(ctx context.Context, fn TxFunc) error {
 	return Sanitize(r.once(ctx, fn))
 }
@@ -48,12 +48,13 @@ func (r *Runner) InTxRetry(ctx context.Context, fn TxFunc) error {
 	var last error
 	for attempt := 1; ; attempt++ {
 		last = r.once(ctx, fn)
-		switch {
-		case last == nil:
+		if last == nil {
 			return nil
-		case !IsRetryable(last):
+		}
+		if !IsRetryable(last) {
 			return Sanitize(last)
-		case attempt >= r.cfg.MaxAttempts:
+		}
+		if attempt >= r.cfg.MaxAttempts {
 			return &attemptsError{attempts: r.cfg.MaxAttempts, err: Sanitize(last)}
 		}
 		if err := sleep(ctx, backoff(r.cfg.RetryBase, attempt, rand.Float64())); err != nil { //nolint:gosec // джиттер повтора, не секрет
@@ -130,10 +131,10 @@ func millis(d time.Duration) string {
 func backoff(base time.Duration, attempt int, frac float64) time.Duration {
 	limit := 10 * base
 	d := limit
-	if attempt <= 62 {
-		if grown := base << (attempt - 1); grown > 0 && grown < limit {
-			d = grown
-		}
+	// Сдвиг на длинной серии повторов переполняется и даёт ноль или минус —
+	// тогда пауза берётся потолком, а не пропадает.
+	if grown := base << (attempt - 1); grown > 0 {
+		d = min(grown, limit)
 	}
 	return time.Duration(frac * float64(d))
 }

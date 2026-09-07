@@ -98,12 +98,28 @@ func TestIsLowerAlnum(t *testing.T) {
 	t.Parallel()
 
 	assert.True(t, isLowerAlnum("ab12"))
+	assert.True(t, isLowerAlnum("az09"), "края допустимых диапазонов")
 	assert.True(t, isLowerAlnum("0"))
 	assert.False(t, isLowerAlnum(""))
 	assert.False(t, isLowerAlnum("AB"))
 	assert.False(t, isLowerAlnum("a-b"))
 	assert.False(t, isLowerAlnum("a_b"))
 	assert.False(t, isLowerAlnum("аб"))
+}
+
+func TestOptions_WithDefaults(t *testing.T) {
+	t.Parallel()
+
+	filled := Options{}.withDefaults()
+	assert.Equal(t, DefaultImage, filled.Image)
+	assert.Equal(t, defaultMaxConns, filled.MaxConns)
+
+	own := Options{Image: "postgres:17", MaxConns: 2}.withDefaults()
+	assert.Equal(t, "postgres:17", own.Image)
+	assert.Equal(t, int32(2), own.MaxConns)
+
+	assert.Equal(t, defaultMaxConns, Options{MaxConns: -1}.withDefaults().MaxConns)
+	assert.Contains(t, DefaultImage, "@sha256:", "образ обязан быть пинован digest'ом")
 }
 
 func TestWithDatabase(t *testing.T) {

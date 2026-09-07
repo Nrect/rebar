@@ -78,6 +78,8 @@ func TestWithRuntimeParam(t *testing.T) {
 		{name: "значение с кавычкой", dsn: "host=localhost user=u", param: "app.tenant", val: `it's`},
 		{name: "значение с обратным слэшем", dsn: "host=localhost user=u", param: "app.tenant", val: `a\b`},
 		{name: "значение пустое", dsn: "host=localhost user=u", param: "app.tenant", val: ""},
+		{name: "имя GUC в верхнем регистре", dsn: "host=localhost user=u", param: "TimeZone", val: "UTC"},
+		{name: "имя по краям допустимых диапазонов", dsn: "host=localhost user=u", param: "AZaz_09.x", val: "1"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

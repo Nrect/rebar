@@ -47,6 +47,7 @@ func TestRunner_InTx_RollsBackOnError(t *testing.T) {
 	})
 
 	require.ErrorIs(t, err, sentinel, "причина отката обязана дойти до вызывающего")
+	assert.Equal(t, sentinel, err, "ошибка fn доходит как есть: удавшийся rollback к ней ничего не добавляет")
 	assert.Zero(t, countRows(t, pool))
 }
 
@@ -70,6 +71,46 @@ func TestRunner_InTx_PanicRollsBackAndRepanics(t *testing.T) {
 		return execErr
 	}))
 	assert.Equal(t, 1, countRows(t, pool))
+}
+
+// fn имеет право закоммитить сам и всё-таки вернуть ошибку. Транзакция уже
+// закрыта, rollback вернёт pgx.ErrTxClosed — и это не новость, которую стоит
+// присоединять к причине.
+func TestRunner_InTx_ClosedTxIsNotAnError(t *testing.T) {
+	t.Parallel()
+	run, pool := newRunner(t, testConfig())
+	sentinel := errors.New("проверка после коммита не прошла")
+
+	err := run.InTx(t.Context(), func(ctx context.Context, tx pgx.Tx) error {
+		if _, execErr := tx.Exec(ctx, `INSERT INTO counter (id, n) VALUES (1, 42)`); execErr != nil {
+			return execErr
+		}
+		if commitErr := tx.Commit(ctx); commitErr != nil {
+			return commitErr
+		}
+		return sentinel
+	})
+
+	require.ErrorIs(t, err, sentinel)
+	assert.Equal(t, sentinel, err, "pgx.ErrTxClosed присоединился к причине")
+	assert.Equal(t, 1, countRows(t, pool), "коммит внутри fn остаётся коммитом")
+}
+
+// Сорванный откат не проглатывается: причина и сбой отката приходят вместе,
+// иначе «транзакция откачена» было бы неправдой, о которой никто не узнал.
+func TestRunner_InTx_JoinsRollbackFailure(t *testing.T) {
+	t.Parallel()
+	run, _ := newRunner(t, testConfig())
+	sentinel := errors.New("бизнес-правило не выполнено")
+
+	err := run.InTx(t.Context(), func(ctx context.Context, tx pgx.Tx) error {
+		// Соединение убивает сам сервер: после этого ROLLBACK уже не доедет.
+		_, _ = tx.Exec(ctx, `SELECT pg_terminate_backend(pg_backend_pid())`)
+		return sentinel
+	})
+
+	require.ErrorIs(t, err, sentinel, "причина обязана дожить до вызывающего")
+	assert.NotEqual(t, sentinel, err, "сбой отката потерян")
 }
 
 func TestRunner_InTx_CancelledContextRollsBack(t *testing.T) {

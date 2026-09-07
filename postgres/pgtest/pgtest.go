@@ -47,6 +47,18 @@ type Options struct {
 	MaxConns int32
 }
 
+// withDefaults — нулевое значение Options годно: образ и потолок соединений
+// подставляются здесь.
+func (o Options) withDefaults() Options {
+	if o.Image == "" {
+		o.Image = DefaultImage
+	}
+	if o.MaxConns <= 0 {
+		o.MaxConns = defaultMaxConns
+	}
+	return o
+}
+
 // DB — база на прогон тестового бинаря: пул, DSN и способ убрать за собой.
 type DB struct {
 	pool *pgxpool.Pool
@@ -61,12 +73,7 @@ type DB struct {
 // чужого не трогаем никогда — у разработчика по этому DSN рабочая база.
 // Не задан → поднимается контейнер, один на бинарь.
 func Start(ctx context.Context, opts Options) (*DB, error) {
-	if opts.Image == "" {
-		opts.Image = DefaultImage
-	}
-	if opts.MaxConns <= 0 {
-		opts.MaxConns = defaultMaxConns
-	}
+	opts = opts.withDefaults()
 
 	var (
 		db  *DB

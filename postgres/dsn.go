@@ -112,12 +112,11 @@ func checkParamName(name string) error {
 // gucRune — идентификатор GUC: первым буква или '_', дальше ещё цифры и точка
 // (точкой отделяется пространство имён приложения: app.role).
 func gucRune(r rune, first bool) bool {
-	switch {
-	case r == '_' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z':
+	if r == '_' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' {
 		return true
-	case first:
-		return false
-	default:
-		return r == '.' || r >= '0' && r <= '9'
 	}
+	if first {
+		return false
+	}
+	return r == '.' || r >= '0' && r <= '9'
 }

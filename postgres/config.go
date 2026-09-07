@@ -25,14 +25,16 @@ type Config struct {
 // validate паникует с указанием поля: ошибка конфигурации обязана падать на
 // старте потребителя, а не на первой транзакции.
 func (c Config) validate() {
-	switch {
-	case c.LockTimeout <= 0:
+	if c.LockTimeout <= 0 {
 		panic("postgres.New: Config.LockTimeout must be > 0")
-	case c.StatementTimeout <= 0:
+	}
+	if c.StatementTimeout <= 0 {
 		panic("postgres.New: Config.StatementTimeout must be > 0")
-	case c.MaxAttempts < 1:
+	}
+	if c.MaxAttempts < 1 {
 		panic("postgres.New: Config.MaxAttempts must be >= 1")
-	case c.RetryBase <= 0:
+	}
+	if c.RetryBase <= 0 {
 		panic("postgres.New: Config.RetryBase must be > 0")
 	}
 }

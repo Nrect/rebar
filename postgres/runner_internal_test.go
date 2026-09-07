@@ -57,7 +57,9 @@ func TestBackoff(t *testing.T) {
 		{name: "четвёртая — восьмикратно", attempt: 4, frac: 1, want: 8 * base},
 		{name: "пятая упирается в потолок 10×", attempt: 5, frac: 1, want: 10 * base},
 		{name: "сотая тоже в потолке", attempt: 100, frac: 1, want: 10 * base},
-		{name: "переполнение сдвига — потолок", attempt: 64, frac: 1, want: 10 * base},
+		{name: "сдвиг обнулился переполнением — потолок", attempt: 57, frac: 1, want: 10 * base},
+		{name: "сдвиг длиннее слова — потолок", attempt: 64, frac: 1, want: 10 * base},
+		{name: "сдвиг ушёл в минус — потолок", attempt: 60, frac: 1, want: 10 * base},
 		{name: "джиттер режет пополам", attempt: 2, frac: 0.5, want: base},
 		{name: "нулевой джиттер — без сна", attempt: 3, frac: 0, want: 0},
 	}
@@ -67,15 +69,4 @@ func TestBackoff(t *testing.T) {
 			assert.Equal(t, tt.want, backoff(base, tt.attempt, tt.frac))
 		})
 	}
-}
-
-// Полный джиттер: сон равномерен на [0, потолок], а не «потолок минус чуть-чуть».
-// Две транзакции, подравшиеся за одни строки, обязаны разойтись во времени.
-func TestBackoff_FullJitterSpansWholeInterval(t *testing.T) {
-	t.Parallel()
-
-	const base = time.Second
-	assert.Equal(t, time.Duration(0), backoff(base, 3, 0))
-	assert.Equal(t, 2*time.Second, backoff(base, 3, 0.5))
-	assert.Equal(t, 4*time.Second, backoff(base, 3, 1))
 }
