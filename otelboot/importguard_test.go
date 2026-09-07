@@ -69,6 +69,7 @@ var allowedByDir = map[string][]string{
 		"go.opentelemetry.io/contrib",
 		"github.com/prometheus/client_golang",
 	},
+	"errtrack": {"github.com/getsentry/sentry-go"},
 }
 
 // allowedImport — stdlib узнаётся по первому сегменту без точки; собственный

@@ -28,13 +28,26 @@
   `SampleRatio` 0 → 1.0. Сам адрес приёмника в текст ошибки не попадает.
 - `Providers.Shutdown` — идемпотентен (`sync.Once`), сначала сбрасывает батч
   спанов, затем гасит провайдер метрик.
+- Подпакет `errtrack` — трекер ошибок, совместимый с Sentry: `Init(dsn,
+  environment, release)` (пустой DSN → полный no-op без ошибки),
+  `CaptureException`, `CapturePanic(rec, stack)` (стек снимается в defer
+  потребителя: собственный стек sentry указывает на middleware, а не на место
+  паники), `WrapLogger` (записи уровня Error уходят событием вместе с
+  bound-атрибутами `Logger.With`), `SkipKey` / `Skip()` для записей, событие по
+  которым уже отправлено. Трекер держит собственный хаб, а не
+  `sentry.CurrentHub()`, — глобальное состояние sentry у потребителя не
+  трогается.
 - Страж импортов `importguard_test.go`: корню разрешены три префикса на одну
   причину «бутстрап otel» (`go.opentelemetry.io/otel`,
   `go.opentelemetry.io/contrib`, `github.com/prometheus/client_golang`),
-  `github.com/prometheus/client_golang`).
-- `doc.go` со списками «Безопасность:» и «Чего нет».
+  `errtrack` — `github.com/getsentry/sentry-go`.
+- `doc.go` со списками «Безопасность:» и «Чего нет» в обоих пакетах,
+  `README.md` с quickstart.
 
 ### Security
+- DSN трекера не попадает ни в лог, ни в ошибку: `sentry.NewClient` возвращает
+  ошибку разбора с URL целиком (`url.Error`), а в DSN лежит ключ проекта;
+  `errtrack.Init` подменяет её своей.
 - `/metrics` отдаётся без авторизации — обработчик вешает потребитель, на
   отдельный порт во внутренней сети (`doc.go`, пункт 1; README).
 - Toolchain go1.26.6 — та же патч-версия stdlib, что в `mail`: govulncheck

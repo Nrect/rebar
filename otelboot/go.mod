@@ -7,6 +7,7 @@ go 1.25.0
 toolchain go1.26.6
 
 require (
+	github.com/getsentry/sentry-go v0.47.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/stretchr/testify v1.12.1
 	go.opentelemetry.io/contrib/instrumentation/runtime v0.69.0
