@@ -1,4 +1,3 @@
-// Package pwzxcvbn — адаптер порта password.StrengthChecker на zxcvbn.
 package pwzxcvbn
 
 import (
