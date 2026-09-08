@@ -148,10 +148,13 @@ type Handler interface { Handle(ctx context.Context, d Delivery) error }
 
 - `Enqueue` **сырой**: он вставляет строку и возвращает исход
   (`inserted | duplicate`) вместе со строкой — новой либо уже существующей, с её
-  отпечатком байт в байт. Конфликт разбирается через `ON CONFLICT` **по имени
-  уникального индекса** плюс `SELECT`, а не перехватом `23505`: ошибка Postgres
-  переводит транзакцию потребителя в aborted, и законный повтор события ронял бы
-  его бизнес-факт;
+  отпечатком байт в байт. Конфликт разбирается через `ON CONFLICT` **по индексу
+  дедупа** плюс `SELECT`, а не перехватом `23505`: ошибка Postgres переводит
+  транзакцию потребителя в aborted, и законный повтор события ронял бы его
+  бизнес-факт. Индекс частичный, а `ON CONSTRAINT` умеет только ограничения,
+  поэтому арбитр называется колонками и предикатом (`(kind, dedup_key) WHERE
+  dedup_key <> ''`); на тот же индекс это указывает точно, а конфликт по
+  первичному ключу остаётся ошибкой, как и должен;
 - `Claim` отдаёт только строки с `Kind` из переданного набора, берёт `pending`
   по сроку и `processing` с истёкшей арендой `FOR UPDATE SKIP LOCKED`, переводит
   в `processing`, увеличивает `attempts`, пишет токен и срок аренды и возвращает
@@ -340,7 +343,8 @@ CREATE TABLE outbox_messages (
         (status = 'processing') = (claim_token IS NOT NULL AND locked_until IS NOT NULL)),
     CONSTRAINT outbox_messages_fail_chk CHECK ((status = 'failed') = (fail_reason <> ''))
 );
--- имя индекса — часть контракта Store.Enqueue: конфликт разбирается по имени
+-- индекс дедупа — часть контракта Store.Enqueue: по нему разбирается конфликт
+-- (колонками и предикатом: ON CONSTRAINT частичный индекс назвать не умеет)
 CREATE UNIQUE INDEX ux_outbox_messages_dedup ON outbox_messages (kind, dedup_key) WHERE dedup_key <> '';
 CREATE INDEX ix_outbox_messages_due ON outbox_messages (available_at, id) WHERE status IN ('pending','processing');
 CREATE INDEX ix_outbox_messages_terminal ON outbox_messages (updated_at) WHERE status IN ('done','expired');

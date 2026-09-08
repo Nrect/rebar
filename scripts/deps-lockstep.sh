@@ -16,7 +16,10 @@ go.opentelemetry.io/otel
 github.com/google/uuid
 github.com/stretchr/testify
 github.com/testcontainers/testcontainers-go
-github.com/pressly/goose/v3"
+github.com/pressly/goose/v3
+golang.org/x/crypto
+golang.org/x/text
+golang.org/x/sys"
 
 pairs=""
 for f in $(find . -name go.mod -not -path './.git/*' -not -path './.claude/*' | sort); do
