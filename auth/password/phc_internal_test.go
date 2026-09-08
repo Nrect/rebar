@@ -33,6 +33,7 @@ func FuzzDecode(f *testing.F) {
 		"$argon2id$v=19$m=8,t=1,p=1$$",
 		"$$$$$",
 		"$argon2id$v=19$m=8192,t=1,p=1$\x00\xff$\x00\xff",
+		strings.Repeat("$", 4096),
 	} {
 		f.Add(seed)
 	}
@@ -113,4 +114,44 @@ func TestParseHeader_IsStrict(t *testing.T) {
 			t.Fatalf("%s: заголовок %q принят", name, header)
 		}
 	}
+}
+
+// Строка длиннее потолка отвергается ДО деления по '$': содержимое колонки
+// задаёт не пакет, и мегабайтная строка иначе стоила бы миллиона срезов на
+// одну попытку входа.
+func TestDecode_RejectsOverlongString(t *testing.T) {
+	t.Parallel()
+
+	// Законная строка на всех потолках обязана в этот потолок помещаться.
+	p := params{memoryKiB: MaxVerifyMemoryKiB, time: MaxVerifyTime, threads: MaxVerifyThreads,
+		keyLen: MaxKeyLen, saltLen: MaxSaltLen}
+	longest := encode(p, make([]byte, MaxSaltLen), make([]byte, MaxKeyLen))
+	if len(longest) > MaxEncodedLen {
+		t.Fatalf("самая длинная законная строка (%d байт) не влезает в потолок %d", len(longest), MaxEncodedLen)
+	}
+	if _, err := decode(longest); err != nil {
+		t.Fatalf("самая длинная законная строка отвергнута: %v", err)
+	}
+
+	// Граница с обеих сторон. Строку ровно в потолок отличить от строки за
+	// потолком можно только по причине отказа: обе — ErrHashInvalid, но первая
+	// обязана дойти до разбора, а вторая — нет. Сдвиг границы на единицу иначе
+	// проходит незамеченным.
+	if reason := refusal(t, strings.Repeat("x", MaxEncodedLen)); strings.Contains(reason, "maximum is") {
+		t.Fatalf("строка ровно в потолок отвергнута по длине: %s", reason)
+	}
+	if reason := refusal(t, strings.Repeat("x", MaxEncodedLen+1)); !strings.Contains(reason, "maximum is") {
+		t.Fatalf("строка за потолком дошла до разбора: %s", reason)
+	}
+}
+
+// refusal — текст, которым разбор отказал; принятая строка роняет тест.
+func refusal(t *testing.T, encoded string) string {
+	t.Helper()
+
+	_, err := decode(encoded)
+	if !errors.Is(err, ErrHashInvalid) {
+		t.Fatalf("ожидался ErrHashInvalid, получено %v", err)
+	}
+	return err.Error()
 }

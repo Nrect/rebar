@@ -29,6 +29,12 @@ const (
 	// из базы, а argon2 выделяет keyLen байт под результат.
 	MaxSaltLen = 64
 	MaxKeyLen  = 64
+	// MaxEncodedLen — потолок длины самой строки. Законная строка на всех
+	// потолках короче двухсот двадцати байт; разбор начинается с деления по
+	// '$', и мегабайтная колонка иначе стоила бы миллиона срезов на одну
+	// попытку входа. Тот же класс угрозы, что и параметры выше потолка:
+	// содержимое колонки задаёт не пакет.
+	MaxEncodedLen = 256
 )
 
 // params — cost-параметры argon2id. Кодируются в каждую строку хэша, поэтому
@@ -71,6 +77,9 @@ type decoded struct {
 // ErrHashInvalid: битая колонка отличается от неверного пароля, потому что
 // первое чинят, а второе нет.
 func decode(encoded string) (decoded, error) {
+	if len(encoded) > MaxEncodedLen {
+		return decoded{}, fmt.Errorf("%w: %d bytes, maximum is %d", ErrHashInvalid, len(encoded), MaxEncodedLen)
+	}
 	parts := strings.Split(encoded, "$")
 	if len(parts) != 6 || parts[0] != "" || parts[1] != "argon2id" {
 		return decoded{}, fmt.Errorf("%w: not an argon2id PHC string", ErrHashInvalid)
