@@ -16,8 +16,9 @@
 // Точка подключения entitlement — хук Policy. Проект и причины —
 // docs/adr/0003-auth-authz-entitlement.md.
 //
-// Ядро — только stdlib; authzpg (назначения ролей в Postgres) и authzhttp
-// (middleware) — подпакеты со своим белым списком импортов.
+// Ядро — только stdlib; authzpg (назначения ролей в Postgres: pgx и граница
+// ошибки postgres.Sanitize) и authzhttp (middleware, stdlib) — подпакеты со
+// своим белым списком импортов.
 //
 // Безопасность:
 //

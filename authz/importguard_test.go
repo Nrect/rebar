@@ -18,7 +18,10 @@ var allowedByDir = map[string][]string{
 	".":         {},
 	"authztest": {},
 	"authzhttp": {},
-	"authzpg":   {"github.com/jackc/pgx/v5"},
+	// postgres — граница ошибки (postgres.Sanitize), разрешённая адаптерам
+	// хранилища с 2026-09-09: ADR-0005, «Межмодульные зависимости». Ядру
+	// authz она по-прежнему запрещена — там нет SQL.
+	"authzpg": {"github.com/jackc/pgx/v5", "github.com/nrect/rebar/postgres"},
 }
 
 // TestPackageImportsAreWhitelisted — страж переносимости: ни одного импорта
@@ -41,11 +44,17 @@ func TestImportGuardFires(t *testing.T) {
 	t.Parallel()
 
 	found := scanImports(t, "testdata/badimports", map[string][]string{".": {}})
-	if len(found) != 1 {
-		t.Fatalf("на корпусе с запрещённым импортом ожидалась одна находка, получено %d: %v", len(found), found)
+	if len(found) != 2 {
+		t.Fatalf("на корпусе с двумя запрещёнными импортами ожидалось две находки, получено %d: %v", len(found), found)
 	}
-	if !strings.Contains(found[0], "github.com/jackc/pgx/v5") {
-		t.Errorf("находка не называет запрещённый импорт: %s", found[0])
+	all := strings.Join(found, "\n")
+	// Второй — соседний модуль тулкита: он не stdlib и не «свой», и списком
+	// каталога не разрешён, значит обязан попасть в находки наравне с чужой
+	// библиотекой.
+	for _, want := range []string{"github.com/jackc/pgx/v5", "github.com/nrect/rebar/postgres"} {
+		if !strings.Contains(all, want) {
+			t.Errorf("находки не называют запрещённый импорт %s: %s", want, all)
+		}
 	}
 }
 

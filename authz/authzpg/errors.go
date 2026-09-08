@@ -4,9 +4,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/jackc/pgx/v5/pgconn"
-
 	"github.com/nrect/rebar/authz"
+	"github.com/nrect/rebar/postgres"
 )
 
 // ErrInvalidAssignment — назначение не прошло проверку до запроса: аноним,
@@ -18,18 +17,17 @@ var ErrInvalidAssignment = errors.New("authzpg: assignment is invalid")
 // errors.Is(err, authz.ErrUnavailable) означает «решение не принято», то есть
 // 503, а не 403.
 //
-// СТРОКА ТАБЛИЦЫ НЕ ПОПАДАЕТ В ОШИБКУ. У pgconn.PgError на нарушении CHECK в
-// Detail лежит «Failing row contains (…)» — вся строка вместе с
-// идентификатором субъекта и тем, кто выдал роль. Поэтому *PgError не
-// заворачивается в цепочку (иначе Detail достаётся через errors.As ниже по
-// стеку), от него остаются SQLSTATE и Message.
+// ГРАНИЦА СОДЕРЖИМОГО СТРОКИ — postgres.Sanitize, ОДНА НА ВЕСЬ ТУЛКИТ. В
+// Detail ошибки Postgres лежит «Failing row contains (…)» — вся строка вместе
+// с идентификатором субъекта и тем, кто выдал роль. Своей копии этой проверки
+// здесь нет намеренно: пять копий в пяти адаптерах — пять шансов разойтись
+// ровно там, где расхождение стоит утечки (ADR-0005, «Межмодульные
+// зависимости»). Sanitize оставляет SQLSTATE, Message и имя ограничения и не
+// заворачивает *pgconn.PgError в цепочку, поэтому Detail не достаётся и через
+// errors.As ниже по стеку.
 func storeError(op string, err error) error {
 	if err == nil {
 		return nil
 	}
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) {
-		return fmt.Errorf("%w: authzpg: %s: SQLSTATE %s: %s", authz.ErrUnavailable, op, pgErr.Code, pgErr.Message)
-	}
-	return fmt.Errorf("%w: authzpg: %s: %w", authz.ErrUnavailable, op, err)
+	return fmt.Errorf("%w: authzpg: %s: %w", authz.ErrUnavailable, op, postgres.Sanitize(err))
 }
