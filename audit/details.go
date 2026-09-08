@@ -2,6 +2,7 @@ package audit
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -31,18 +32,27 @@ const (
 // нельзя отличить от целого, и расследование сравнивает не то с не тем.
 const Truncated = "…"
 
-// ForbiddenDetailKeys — подстроки, при которых ключ подробности отвергается:
+// forbiddenDetailKeys — подстроки, при которых ключ подробности отвергается:
 // пароль, токен, секрет, заголовок авторизации, кука. Сравнение идёт по
 // ключу в нижнем регистре и без разделителей, поэтому «X-Auth-Token» и
 // «authToken» ловятся одинаково. Русские слова здесь потому, что ключ пишет
 // человек, а не протокол.
-var ForbiddenDetailKeys = []string{
+var forbiddenDetailKeys = []string{
 	"password", "passwd", "pwd", "пароль",
 	"token", "bearer", "токен",
 	"secret", "apikey", "privatekey", "credential", "секрет",
 	"authorization",
 	"cookie", "кука",
 }
+
+// ForbiddenDetailKeys — копия списка запрещённых подстрок для документации и
+// тестов потребителя.
+//
+// ФУНКЦИЯ, А НЕ ПЕРЕМЕННАЯ. Экспортированный срез укорачивается одной строкой
+// в чужом init, и это был бы флаг, выключающий инвариант, — только без имени,
+// по которому его нашли бы на ревью. Список нужен потребителю, чтобы назвать
+// поле иначе, а не чтобы его сократить.
+func ForbiddenDetailKeys() []string { return slices.Clone(forbiddenDetailKeys) }
 
 // checkDetailKey — ключ подробности пишет код вызывающего, поэтому негодный
 // ключ это ошибка, а не молчаливая правка.
@@ -66,7 +76,7 @@ func checkDetailKey(key string) error {
 		}
 	}
 	norm := normalizeDetailKey(key)
-	for _, bad := range ForbiddenDetailKeys {
+	for _, bad := range forbiddenDetailKeys {
 		if strings.Contains(norm, bad) {
 			return fmt.Errorf("%w: key %q matches %q", ErrForbiddenDetail, key, bad)
 		}

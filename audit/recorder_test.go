@@ -118,6 +118,24 @@ func TestPrepare_ForbiddenDetailKeys(t *testing.T) {
 	}
 }
 
+// Список запрещённых подстрок отдаётся копией: укоротив его из чужого init,
+// можно было бы выключить инвариант, и на ревью это выглядело бы как правка
+// одной строки.
+func TestForbiddenDetailKeys_IsACopy(t *testing.T) {
+	t.Parallel()
+
+	first := audit.ForbiddenDetailKeys()
+	require.NotEmpty(t, first)
+	clear(first)
+
+	rec, _ := newRecorder(t)
+	_, err := rec.Prepare(userCtx(t), entry(func(e *audit.Entry) {
+		e.Details = map[string]string{"password": "hunter2"}
+	}))
+	require.ErrorIs(t, err, audit.ErrForbiddenDetail, "правка отданного списка на проверку не влияет")
+	assert.NotEmpty(t, audit.ForbiddenDetailKeys())
+}
+
 // Соседние по буквам, но безопасные ключи проходят: страж не должен запирать
 // журнал целиком.
 func TestPrepare_AllowsInnocentDetailKeys(t *testing.T) {
