@@ -72,6 +72,22 @@ func TestCheckSchema_ReportsEveryMismatchByName(t *testing.T) {
 			ddl:  []string{`DROP TRIGGER audit_events_append_only_trg ON audit_events`},
 			want: []string{"триггера audit_events_append_only_trg нет: журнал перестал быть append-only"},
 		},
+		{
+			// DISABLE не трогает ни одной строки каталога, которую заметил бы
+			// поиск по имени: триггер на месте, а append-only уже нет.
+			name: "триггер выключен",
+			ddl:  []string{`ALTER TABLE audit_events DISABLE TRIGGER audit_events_append_only_trg`},
+			want: []string{"триггер audit_events_append_only_trg не в режиме ENABLE ALWAYS: журнал правится при репликации и после DISABLE TRIGGER"},
+		},
+		{
+			// Режим по умолчанию после восстановления дампа: триггер молчит
+			// на реплике, то есть там, где журнал и правят руками.
+			name: "триггер в режиме по умолчанию",
+			ddl: []string{
+				`ALTER TABLE audit_events ENABLE TRIGGER audit_events_append_only_trg`,
+			},
+			want: []string{"триггер audit_events_append_only_trg не в режиме ENABLE ALWAYS: журнал правится при репликации и после DISABLE TRIGGER"},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
