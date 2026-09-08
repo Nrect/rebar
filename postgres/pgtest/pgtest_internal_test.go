@@ -1,6 +1,7 @@
 package pgtest
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -214,5 +215,49 @@ func TestGooseSection(t *testing.T) {
 			assert.NotContains(t, body, tt.notWant, "секции не перетекают друг в друга")
 			assert.NotContains(t, body, "-- заголовок", "текст до первого маркера не в секции")
 		})
+	}
+}
+
+// Тело функции внутри StatementBegin/End обязано попасть в секцию: раньше
+// маркер считался сменой секции, тело выпадало, схема применялась без триггера
+// неизменяемости, и тест на append-only зеленел на схеме, где его нет.
+func TestGooseSection_KeepsStatementBlocks(t *testing.T) {
+	t.Parallel()
+
+	const doc = "-- +goose Up\n" +
+		"CREATE TABLE t (id INT);\n" +
+		"-- +goose StatementBegin\n" +
+		"CREATE FUNCTION deny_update() RETURNS trigger AS $$\n" +
+		"BEGIN\n" +
+		"  RAISE EXCEPTION 'append-only';\n" +
+		"END;\n" +
+		"$$ LANGUAGE plpgsql;\n" +
+		"-- +goose StatementEnd\n" +
+		"CREATE TRIGGER t_trg BEFORE UPDATE ON t FOR EACH ROW EXECUTE FUNCTION deny_update();\n" +
+		"-- +goose Down\n" +
+		"DROP TABLE t;\n"
+
+	up, ok := gooseSection(doc, GooseUpMarker)
+	if !ok {
+		t.Fatal("секция Up не найдена")
+	}
+	for _, want := range []string{"CREATE TABLE t", "RAISE EXCEPTION 'append-only'", "LANGUAGE plpgsql", "CREATE TRIGGER t_trg"} {
+		if !strings.Contains(up, want) {
+			t.Errorf("в секции Up нет %q", want)
+		}
+	}
+	if strings.Contains(up, "+goose") {
+		t.Error("директивы goose не должны попадать в тело секции")
+	}
+	if strings.Contains(up, "DROP TABLE") {
+		t.Error("секции не должны перетекать друг в друга")
+	}
+
+	down, ok := gooseSection(doc, GooseDownMarker)
+	if !ok {
+		t.Fatal("секция Down не найдена")
+	}
+	if !strings.Contains(down, "DROP TABLE t") || strings.Contains(down, "CREATE TABLE") {
+		t.Errorf("секция Down разобрана неверно: %q", down)
 	}
 }

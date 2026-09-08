@@ -20,14 +20,22 @@ func gooseSection(sql, marker string) (body string, ok bool) {
 	var out strings.Builder
 	inside := false
 	for line := range strings.SplitSeq(sql, "\n") {
-		if directive := strings.TrimSpace(line); strings.HasPrefix(directive, "-- +goose") {
-			inside = directive == marker
-			ok = ok || inside
+		directive := strings.TrimSpace(line)
+		if !strings.HasPrefix(directive, "-- +goose") {
+			if inside {
+				out.WriteString(line)
+				out.WriteString("\n")
+			}
 			continue
 		}
-		if inside {
-			out.WriteString(line)
-			out.WriteString("\n")
+		// СЕКЦИЮ ПЕРЕКЛЮЧАЮТ ТОЛЬКО Up И Down. Прочие директивы goose
+		// (StatementBegin/StatementEnd вокруг тела функции, NO TRANSACTION)
+		// — часть секции: если считать их сменой секции, тело функции
+		// триггера молча выпадает из разбора, схема применяется без
+		// триггера, и тест на неизменяемость журнала зеленеет впустую.
+		if directive == gooseUp || directive == gooseDown {
+			inside = directive == marker
+			ok = ok || inside
 		}
 	}
 	return out.String(), ok
