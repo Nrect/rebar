@@ -1,7 +1,9 @@
 # Репозиторий многомодульный: каждый пакет — свой go.mod. Все цели обходят
+# .claude/worktrees исключён: в основном checkout'е там лежат рабочие копии
+# незавершённых веток, и гейт линтовал бы чужую работу вместо своей.
 # модули по одному, как их увидит потребитель; go.work нужен только редактору
 # и локальной сборке между модулями.
-MODULES := $(shell find . -name go.mod -not -path './.git/*' -exec dirname {} \; | sort)
+MODULES := $(shell find . -name go.mod -not -path './.git/*' -not -path './.claude/*' -exec dirname {} \; | sort)
 
 # Цели одного модуля: MODULE=mail. MUTANTS_EXCLUDE — список -E для gremlins
 # (адаптеры и cmd мутируются впустую: их держат интеграционные тесты).

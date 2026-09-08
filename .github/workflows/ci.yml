@@ -38,7 +38,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           BASE_REF: ${{ github.base_ref }}
         run: |
-          all=$(find . -name go.mod -not -path './.git/*' -exec dirname {} \; | sort)
+          all=$(find . -name go.mod -not -path './.git/*' -not -path './.claude/*' -exec dirname {} \; | sort)
           selected="$all"
           if [ "$EVENT_NAME" = pull_request ]; then
             git fetch --no-tags --quiet origin "+refs/heads/$BASE_REF:refs/remotes/origin/$BASE_REF"

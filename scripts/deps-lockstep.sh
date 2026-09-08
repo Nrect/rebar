@@ -19,7 +19,7 @@ github.com/testcontainers/testcontainers-go
 github.com/pressly/goose/v3"
 
 pairs=""
-for f in $(find . -name go.mod -not -path './.git/*' | sort); do
+for f in $(find . -name go.mod -not -path './.git/*' -not -path './.claude/*' | sort); do
 	requires=$(awk -f "$awk_script" "$f" | awk '$1 == "require" { print $2, $3 }')
 	while read -r module version; do
 		[ -n "$module" ] || continue

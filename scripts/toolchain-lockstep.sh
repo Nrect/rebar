@@ -10,7 +10,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 awk_script="scripts/gomod-fields.awk"
 
-files=$(find . -name go.mod -not -path './.git/*' | sort)
+files=$(find . -name go.mod -not -path './.git/*' -not -path './.claude/*' | sort)
 if [ -f go.work ]; then
 	files="./go.work
 $files"
