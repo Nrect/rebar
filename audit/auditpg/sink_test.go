@@ -5,11 +5,13 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/nrect/rebar/audit"
 	"github.com/nrect/rebar/audit/auditpg"
+	"github.com/nrect/rebar/postgres"
 )
 
 // Nil-пул и nil-транзакция — паника на старте: ошибка сборки не должна ждать
@@ -129,6 +131,10 @@ func TestSink_Write_ChecksRejectValuesOutsideClosedSets(t *testing.T) {
 
 // В тексте ошибки нет ни строки таблицы, ни персональных данных: PgError.Detail
 // до вызывающего не доходит (doc.go, п. 1).
+//
+// Проверяется И ТИП, а не только текст: пройти границу postgres.Sanitize
+// обязана каждая ошибка адаптера, а собранный руками текст без Detail выглядел
+// бы так же — до первого места, где ошибку разворачивают через errors.As.
 func TestSink_Write_ErrorHasNoRowContents(t *testing.T) {
 	t.Parallel()
 
@@ -140,6 +146,15 @@ func TestSink_Write_ErrorHasNoRowContents(t *testing.T) {
 	assert.NotContains(t, err.Error(), secretName)
 	assert.NotContains(t, err.Error(), "Failing row contains")
 	assert.NotContains(t, err.Error(), ev.Details["reason"])
+	assert.NotContains(t, err.Error(), ev.Actor.ID)
+
+	var sanitized *postgres.Error
+	require.ErrorAs(t, err, &sanitized, "ошибка обязана пройти границу postgres.Sanitize")
+	assert.Equal(t, "23514", sanitized.Code, "нарушение CHECK")
+	assert.Equal(t, "audit_events_outcome_chk", sanitized.Constraint, "имя ограничения — не данные")
+
+	var pgErr *pgconn.PgError
+	assert.NotErrorAs(t, err, &pgErr, "*pgconn.PgError в цепочку не заворачивается: в нём Detail")
 }
 
 // Сбой Postgres — audit.ErrUnavailable: вызывающий ветвится по классу, а не

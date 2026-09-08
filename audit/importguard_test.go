@@ -60,7 +60,9 @@ func TestPackageImportsAreWhitelisted(t *testing.T) {
 var allowedByDir = map[string][]string{
 	".":         {"github.com/google/uuid"},
 	"audittest": {},
-	"auditpg":   {"github.com/jackc/pgx/v5"},
+	// postgres — только здесь: у адаптеров хранилища это третья разрешённая
+	// межмодульная зависимость (ADR-0005), ядру она закрыта.
+	"auditpg":   {"github.com/jackc/pgx/v5", "github.com/nrect/rebar/postgres"},
 	"auditotel": {"go.opentelemetry.io/otel/metric", "go.opentelemetry.io/otel/attribute"},
 }
 
