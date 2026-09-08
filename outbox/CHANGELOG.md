@@ -67,6 +67,59 @@
   `SkipFor`, `PanicFor` по `AggregateID` или `Kind`, `Hook`, `Handled`),
   `Clock`. Ошибки двойников (`ErrIDReused`, `ErrHandlerFailed`) отличимы от
   доменных.
+- Адаптер `outboxpg`: `Store` на pgx/v5 с `New(pool)` и `WithTx(tx)`,
+  `schema.sql` с goose-маркерами и обеими сторонами. Таблица
+  `outbox_messages`, именованные ограничения `outbox_messages_claim_chk`
+  (аренда существует ровно у `processing`) и `outbox_messages_fail_chk`
+  (причина непуста ровно у `failed`), частичный уникальный индекс
+  `ux_outbox_messages_dedup (kind, dedup_key) WHERE dedup_key <> ''` и
+  индексы `ix_outbox_messages_due`, `_terminal`, `_failed`, `_aggregate` —
+  имена контрактные. Без имени схемы, без FK на таблицы потребителя, без
+  `DEFAULT now()`.
+- Конфликт дедупа разбирается `ON CONFLICT (kind, dedup_key) WHERE dedup_key
+  <> '' DO NOTHING` плюс `SELECT`, а не перехватом `23505`: ошибка Postgres
+  перевела бы транзакцию бизнес-факта в aborted, и законный повтор события
+  ронял бы сам факт. `ON CONSTRAINT` здесь неприменим — индекс частичный, а
+  эта форма умеет только ограничения.
+- `Claim` — CTE с `FOR UPDATE SKIP LOCKED`: возвращает прежний статус и по
+  нему ставит `Reclaimed`, считает попытку при захвате, фильтрует по списку
+  типов. `Finish` условный по `claim_token` — ноль строк даёт `ErrClaimLost`
+  и не меняет ничего. `Stats` считает возраст по строкам, чей срок уже
+  наступил, и `Unhandled` по переданному списку типов; `Purge` не трогает
+  `failed`; `Redrive` работает только из `failed` и сохраняет `last_error`.
+  Ошибки — через границу, оставляющую SQLSTATE и Message: `PgError.Detail`
+  с payload наружу не уходит.
+- Пакетная `outboxpg.Enqueue(ctx, tx, env)` — путь потребителя: вставка и
+  сверка отпечатка одним вызовом. Сырой `Store.Enqueue` остаётся воркеру,
+  контрактным тестам и своей обёртке. `CheckSchema` сверяет колонки,
+  именованные CHECK и индексы, возвращает все расхождения одной ошибкой и
+  схему НЕ применяет.
+- `outboxtest.Enqueue` — тот же вызов поверх двойника: без него тест
+  потребителя писал бы два шага там, где прод пишет один, и расходился бы с
+  ним на «громкой идемпотентности».
+- Адаптер `outboxotel`: декоратор реестра со счётчиком
+  `outbox_handled{kind,result}` (закрытый набор из семи исходов, guard-тест),
+  гистограммой `outbox_handle_duration{kind}` и span'ом доставки, связанным с
+  породившим запросом ССЫЛКОЙ на `traceparent` из заголовков. `Gauges.Set`
+  отдаёт пять величин из одного снимка `Stats` одним коллбэком; в базу гейджи
+  не ходят. Паника считается исходом и летит дальше — recover в декораторе
+  ослепил бы `Drain`; ошибка next уходит без изменений, иначе классы,
+  читаемые по методам, не пережили бы обёртку.
+- Тесты адаптера: `TestEnqueue_WithTx_IsAtomic` (откат уносит и строку, и
+  ключ дедупа), `TestEnqueue_DuplicateDoesNotAbortTx`,
+  `TestStore_Claim_FourWorkersRace` (каждая строка ровно одному),
+  `TestStore_Finish_StaleTokenAffectsNoRows`,
+  `TestStore_Claim_SkipsUnknownKinds`, `TestStore_Redrive_OnlyFromFailed`,
+  `TestStore_Purge_KeepsFailed`,
+  `TestStore_Stats_OldestDueIgnoresDeferredAndClaimed`, `TestCheckSchema_*`.
+  Плюс контрактный набор из двенадцати сценариев, который гоняется в одном
+  бинаре и по `outboxtest.MemStore`, и по `outboxpg.Store`: двойник и адаптер
+  не имеют права разойтись.
+- Известное свойство колонки, сказанное вслух: `payload` лежит в `JSONB` и
+  переживает круг через базу как значение, а не как байты (нормализуются
+  пробелы и порядок ключей). Тождество сообщения от этого не страдает —
+  отпечаток лежит отдельной колонкой `BYTEA` и возвращается байт в байт;
+  именно поэтому ядро хранит его, а не пересчитывает по прочитанному payload.
 - Тесты ядра на управляемых часах: таблица решений `Drain`, гонка двух воркеров
   на 200 строках («каждая ровно один раз»), `TestDrain_CrashBetweenHandleAndFinish`
   (эффект случился, исход не записан — после аренды повтор с `Reclaimed`),
