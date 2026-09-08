@@ -13,8 +13,6 @@ import (
 	"github.com/nrect/rebar/postgres/pgtest"
 )
 
-const gooseDown = "-- +goose Down"
-
 // Schema — то, что потребитель применит из кода: обязан совпадать с файлом,
 // который он же может скопировать в миграции.
 func TestSchema_EmbedEqualsFile(t *testing.T) {
@@ -28,8 +26,12 @@ func TestSchema_EmbedEqualsFile(t *testing.T) {
 // проверяются в файле, а не в его копии.
 func TestSchemaFile_HoldsContract(t *testing.T) {
 	t.Parallel()
-	up, down, ok := strings.Cut(outboxpg.Schema, gooseDown)
-	require.True(t, ok, "в schema.sql нет маркера %s", gooseDown)
+	// Секцию Up всегда берёт pgtest.GooseUp — исправленный разбор, который не
+	// теряет тело функции на StatementBegin. Здесь схема делится по маркеру
+	// обратной секции: в ней нет ни триггеров, ни тел функций, и обе половины
+	// нужны целиком, вместе с директивами.
+	up, down, ok := strings.Cut(outboxpg.Schema, pgtest.GooseDownMarker)
+	require.True(t, ok, "в schema.sql нет маркера %s", pgtest.GooseDownMarker)
 
 	for _, want := range []string{
 		"CREATE TABLE outbox_messages",
@@ -64,7 +66,7 @@ func TestSchemaFile_BothDirectionsApply(t *testing.T) {
 	pgtest.Apply(t, pool, pgtest.GooseUp(t, "schema.sql"))
 	require.NoError(t, outboxpg.New(pool).CheckSchema(t.Context()))
 
-	_, down, ok := strings.Cut(outboxpg.Schema, gooseDown)
+	_, down, ok := strings.Cut(outboxpg.Schema, pgtest.GooseDownMarker)
 	require.True(t, ok)
 	pgtest.Apply(t, pool, down)
 	require.Error(t, outboxpg.New(pool).CheckSchema(t.Context()), "после Down таблицы нет")

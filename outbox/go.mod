@@ -10,7 +10,7 @@ toolchain go1.26.6
 require (
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.10.0
-	github.com/nrect/rebar/postgres v0.0.0-20260908204614-af7aa512121e
+	github.com/nrect/rebar/postgres v0.0.0-20260908221018-051fd21c2237
 	github.com/stretchr/testify v1.12.1
 	go.opentelemetry.io/otel v1.44.0
 	go.opentelemetry.io/otel/metric v1.44.0

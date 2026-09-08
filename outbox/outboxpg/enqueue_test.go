@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -102,23 +103,37 @@ func TestStore_Enqueue_SameIDIsError(t *testing.T) {
 	require.ErrorIs(t, err, outbox.ErrUnavailable)
 	assert.NotEqual(t, outbox.OutcomeDuplicate, res.Outcome)
 	assert.Contains(t, err.Error(), "23505")
+	// Различение ПО ИМЕНИ переживает границу: приняв любой 23505 за дубль,
+	// пакет похоронил бы настоящую ошибку.
+	assert.True(t, postgres.IsUniqueViolation(err, "outbox_messages_pkey"))
+	assert.False(t, postgres.IsUniqueViolation(err, "ux_outbox_messages_dedup"),
+		"конфликт первичного ключа не должен выглядеть повтором по ключу дедупа")
 }
 
 // Отвергнутая строка целиком уезжает в PgError.Detail вместе с payload:
 // самый честный тест на утечку — INSERT, потому что payload в ней ещё есть.
 //
-// ГЛАВНАЯ ПРОВЕРКА ЗДЕСЬ — НЕ ТЕКСТ, А ДОСЯГАЕМОСТЬ *pgconn.PgError ЧЕРЕЗ
-// errors.As. Detail не входит в PgError.Error(), поэтому тест, который ищет
-// секрет только в тексте, зелен и на адаптере БЕЗ границы: утечка происходит
-// ниже по стеку, там, где кто-то достаёт *PgError и логирует его целиком.
-// Ровно это и закрывает postgres.Sanitize, не заворачивая *PgError в цепочку.
+// ПРОВЕРКА ПО ТИПУ, А НЕ ПО ТЕКСТУ. Detail не входит в PgError.Error(),
+// поэтому тест, ищущий секрет только в тексте, зелен и на адаптере БЕЗ
+// границы: подробности достаются ниже по стеку разворачиванием ошибки, и
+// проверка текста прошла бы даже на строке, собранной руками. Поэтому здесь
+// требуется, чтобы ошибка разворачивалась в тип границы (*postgres.Error с
+// кодом, сообщением и именем ограничения) и НЕ разворачивалась в ошибку
+// драйвера (*pgconn.PgError), в которой лежит Detail.
 func TestStore_Enqueue_ErrorHidesPayload(t *testing.T) {
 	t.Parallel()
 	store, pool := newStore(t)
-	bad := envelope(func(e *outbox.Envelope) { e.SchemaVersion = 0 })
+	// Нарушается ИМЕНОВАННОЕ ограничение контракта: аренда у строки в pending.
+	// Так проверяется и то, что имя ограничения границу переживает, — по нему
+	// вызывающий отличает один конфликт от другого.
+	token := uuid.New()
+	lockedUntil := pgtest.Now().Add(time.Minute)
+	bad := envelope(func(e *outbox.Envelope) {
+		e.ClaimToken, e.LockedUntil = &token, &lockedUntil
+	})
 
 	// Сначала — что утекать есть чему: сырая ошибка того же INSERT несёт
-	// payload в Detail. Без этой половины тест не доказывал бы ничего.
+	// payload в Detail. Без этой половины вторая ничего не доказывала бы.
 	raw := rawInsertError(t, pool, bad)
 	var rawPg *pgconn.PgError
 	require.ErrorAs(t, raw, &rawPg)
@@ -128,19 +143,22 @@ func TestStore_Enqueue_ErrorHidesPayload(t *testing.T) {
 
 	require.Error(t, err)
 	require.ErrorIs(t, err, outbox.ErrUnavailable)
+
 	var leaked *pgconn.PgError
 	assert.NotErrorAs(t, err, &leaked,
-		"*pgconn.PgError достаётся через errors.As — вместе с ним достаётся и Detail со всей строкой")
+		"ошибка драйвера достаётся разворачиванием — вместе с ней достаётся и Detail со всей строкой")
+
+	// Классификация границу переживает: SQLSTATE, сообщение и имя ограничения —
+	// это имена схемы, а не данные.
+	var sanitized *postgres.Error
+	require.ErrorAs(t, err, &sanitized, "ошибка обязана разворачиваться в тип границы")
+	assert.Equal(t, "23514", sanitized.Code)
+	assert.Equal(t, "outbox_messages_claim_chk", sanitized.Constraint,
+		"имя ограничения — контракт: по нему вызывающий отличает конфликты")
+	assert.NotEmpty(t, sanitized.Message, "сообщение Postgres остаётся: по нему чинят")
+
 	assert.NotContains(t, err.Error(), secretPayload)
 	assert.NotContains(t, err.Error(), "Failing row")
-
-	// Классификация после границы жива: SQLSTATE и имя ограничения — это
-	// имена схемы, а не данные, и они обязаны пережить Sanitize.
-	var sanitized *postgres.Error
-	require.ErrorAs(t, err, &sanitized)
-	assert.Equal(t, "23514", sanitized.Code)
-	assert.NotEmpty(t, sanitized.Message, "сообщение Postgres остаётся: по нему чинят")
-	assert.Contains(t, err.Error(), "23514")
 }
 
 // rawInsertError — та же вставка мимо адаптера: сырая ошибка Postgres со всем,
@@ -149,9 +167,10 @@ func rawInsertError(t *testing.T, pool *pgxpool.Pool, env outbox.Envelope) error
 	t.Helper()
 	_, err := pool.Exec(t.Context(),
 		`INSERT INTO outbox_messages (id, kind, payload, schema_version, fingerprint, status,
-			available_at, occurred_at, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, 'pending', $6, $6, $6, $6)`,
-		env.ID, env.Kind, env.Payload, env.SchemaVersion, env.Fingerprint, env.CreatedAt)
+			available_at, occurred_at, created_at, updated_at, claim_token, locked_until)
+		 VALUES ($1, $2, $3, $4, $5, 'pending', $6, $6, $6, $6, $7, $8)`,
+		env.ID, env.Kind, env.Payload, env.SchemaVersion, env.Fingerprint, env.CreatedAt,
+		env.ClaimToken, env.LockedUntil)
 	require.Error(t, err, "вставка обязана быть отвергнута CHECK")
 	return err
 }
