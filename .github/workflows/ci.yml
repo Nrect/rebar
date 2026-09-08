@@ -72,7 +72,7 @@ jobs:
         module: ${{ fromJson(needs.modules.outputs.list) }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: ${{ matrix.module }}/go.mod
       - uses: golangci/golangci-lint-action@v9
@@ -94,7 +94,7 @@ jobs:
         module: ${{ fromJson(needs.modules.outputs.list) }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: ${{ matrix.module }}/go.mod
       # Интеграционные тесты (testcontainers: Mailpit, Postgres) идут здесь же:
@@ -117,7 +117,7 @@ jobs:
         module: ${{ fromJson(needs.modules.outputs.list) }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: ${{ matrix.module }}/go.mod
       - name: govulncheck
@@ -148,7 +148,7 @@ jobs:
     continue-on-error: false
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.work
       - name: go build examples
