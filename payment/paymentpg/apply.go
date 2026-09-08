@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/nrect/rebar/payment"
+	"github.com/nrect/rebar/postgres"
 )
 
 // Блокировка намерения идёт ПЕРВОЙ и до вставки строки дедупа: внешний ключ
@@ -183,16 +184,16 @@ func appendLedger(ctx context.Context, tx pgx.Tx, e payment.LedgerEntry) error {
 	_, err := tx.Exec(ctx, insertLedgerSQL, e.ID, e.IntentID, string(e.Kind), e.AmountMinor,
 		e.Currency, e.ProviderEventID, e.ReversesEntryID, e.IdempotencyKey, e.ActorID, e.CreatedAt)
 	switch {
-	case violates(err, uxLedgerCapture):
+	case postgres.IsUniqueViolation(err, uxLedgerCapture):
 		return fmt.Errorf("%w: paymentpg: append ledger: %s: зачисление на это намерение уже записано",
 			payment.ErrUnavailable, uxLedgerCapture)
-	case violates(err, uxLedgerKey):
+	case postgres.IsUniqueViolation(err, uxLedgerKey):
 		return fmt.Errorf("%w: paymentpg: append ledger: %s: запись с этим ключом уже записана",
 			payment.ErrUnavailable, uxLedgerKey)
-	case violates(err, ckLedgerRefundCap):
+	case raisedBy(err, ckLedgerRefundCap):
 		return fmt.Errorf("%w: paymentpg: append ledger: %s: сумма возвратов превысила бы зачисление",
 			payment.ErrUnavailable, ckLedgerRefundCap)
-	case violates(err, ckLedgerRefundCurrency):
+	case raisedBy(err, ckLedgerRefundCurrency):
 		return fmt.Errorf("%w: paymentpg: append ledger: %s: возврат в чужой валюте",
 			payment.ErrUnavailable, ckLedgerRefundCurrency)
 	}

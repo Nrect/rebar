@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/nrect/rebar/payment"
+	"github.com/nrect/rebar/postgres"
 )
 
 // ON CONFLICT ON CONSTRAINT, А НЕ ПЕРЕХВАТ 23505: законный повтор по ключу
@@ -45,9 +46,9 @@ func (s *Store) CreateIntent(ctx context.Context, in payment.Intent) error {
 			string(in.Status), in.IdempotencyKey, in.ParamsFingerprint,
 			in.CreatedAt, in.UpdatedAt, in.ExpiresAt, settledAt(in))
 		switch {
-		case violates(err, uxIntentsLiveReference):
+		case postgres.IsUniqueViolation(err, uxIntentsLiveReference):
 			return payment.ErrReferenceBusy
-		case violates(err, uxIntentsKey):
+		case postgres.IsUniqueViolation(err, uxIntentsKey):
 			// Сюда попадёт гонка, в которой победитель закоммитился между нашим
 			// ON CONFLICT и вставкой: арбитр её уже не гасит.
 			return payment.ErrIdempotencyRace

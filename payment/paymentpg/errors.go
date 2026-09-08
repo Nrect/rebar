@@ -7,49 +7,47 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/nrect/rebar/payment"
+	"github.com/nrect/rebar/postgres"
 )
 
 // storeError — единственная точка перевода сбоя Postgres в ошибку порта:
 // errors.Is(err, payment.ErrUnavailable) означает «решение не принято, деньги
 // не двинулись», то есть 503 и повтор провайдера.
 //
-// СОДЕРЖИМОЕ СТРОКИ НЕ ПОПАДАЕТ В ОШИБКУ. У pgconn.PgError в Detail лежит
-// «Failing row contains (…)» — вся строка целиком: сумма, ссылка потребителя,
-// состав. Поэтому *PgError не заворачивается в цепочку (иначе Detail достался
-// бы через errors.As ниже по стеку), от него остаются SQLSTATE, Message и имя
-// ограничения — это имена схемы, а не данные.
-//
-// Копия правила postgres.Sanitize, а не импорт: ADR-0005 разрешает адаптеру
-// зависеть от модуля postgres только из _test.go.
+// ГРАНИЦА ОШИБКИ — ОБЩАЯ, А НЕ СВОЯ КОПИЯ (ADR-0005, третья межмодульная
+// зависимость). У pgconn.PgError в Detail лежит «Failing row contains (…)» —
+// вся строка целиком: сумма, ссылка потребителя, состав заказа;
+// postgres.Sanitize оставляет от неё SQLSTATE, Message и имя ограничения и не
+// заворачивает *PgError в цепочку, поэтому Detail не достанется и через
+// errors.As ниже по стеку.
 func storeError(op string, err error) error {
 	if err == nil {
 		return nil
 	}
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) {
-		return fmt.Errorf("%w: paymentpg: %s: SQLSTATE %s: %s",
-			payment.ErrUnavailable, op, pgErr.Code, pgErr.Message)
-	}
-	return fmt.Errorf("%w: paymentpg: %s: %w", payment.ErrUnavailable, op, err)
+	return fmt.Errorf("%w: paymentpg: %s: %w", payment.ErrUnavailable, op, postgres.Sanitize(err))
 }
 
-// violates — нарушено ИМЕННО это ограничение.
+// raisedBy — база отбила запись ИМЕНОВАННЫМ ограничением.
 //
-// ПО ИМЕНИ, А НЕ ПО КОДУ: в таблице намерений два уникальных ограничения, и у
-// них противоположные исходы — занятый ключ идемпотентности это повтор, занятая
-// ссылка это отказ. «Любое 23505 — дубль» вернуло бы клиенту чужую ссылку на
-// оплату. По той же причине триггеры книги поднимают ошибку с именем
-// ограничения (USING CONSTRAINT), а не с одним кодом.
+// Дополняет postgres.IsUniqueViolation, а не заменяет: та закрывает 23505, то
+// есть индексы, а инварианты книги держат триггеры и приезжают как 23514 с тем
+// же полем имени (RAISE … USING CONSTRAINT). Разбор всё равно ПО ИМЕНИ, а не по
+// коду: у двух нарушений в одной таблице исходы бывают противоположными.
 //
-// Пустое имя — всегда false: Postgres называет ограничение не всегда, и «»
-// совпало бы с этим.
-func violates(err error, constraint string) bool {
+// Работает и до Sanitize (*pgconn.PgError), и после (*postgres.Error): иначе
+// ошибка, прошедшая границу адаптера, молча переставала бы опознаваться.
+// Пустое имя — всегда false: Postgres называет ограничение не всегда.
+func raisedBy(err error, constraint string) bool {
 	if constraint == "" {
 		return false
 	}
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
 		return pgErr.ConstraintName == constraint
+	}
+	var sanitized *postgres.Error
+	if errors.As(err, &sanitized) {
+		return sanitized.Constraint == constraint
 	}
 	return false
 }
