@@ -12,6 +12,10 @@ import (
 // GooseUpMarker — маркер секции наката в файле схемы.
 const GooseUpMarker = "-- +goose Up"
 
+// GooseDownMarker — маркер обратной секции. Вместе с GooseUpMarker это
+// единственные директивы, переключающие секцию.
+const GooseDownMarker = "-- +goose Down"
+
 // Schema — своя схема на тест и пул с search_path в неё: параллельные тесты
 // не видят строк друг друга, а имена таблиц в SQL остаются без префикса схемы.
 // Схема не удаляется — базу прогона снимает Close.
@@ -44,8 +48,9 @@ func Apply(t *testing.T, pool *pgxpool.Pool, sql string) {
 // GooseUp — тело секции «-- +goose Up» файла миграции.
 //
 // БЕЗ ЗАВИСИМОСТИ ОТ GOOSE: раннер миграций — дело потребителя, а тесту нужен
-// ровно текст секции. StatementBegin/End не поддерживаются: в схеме пакета нет
-// тел функций с ';' внутри.
+// ровно текст секции. StatementBegin/End внутри секции сохраняются вместе с
+// телом функции: схема с триггером неизменяемости иначе применялась бы без
+// самого триггера, а тест на append-only зеленел бы впустую.
 func GooseUp(t *testing.T, path string) string {
 	t.Helper()
 	raw, err := os.ReadFile(path) //nolint:gosec // путь к схеме даёт сам тест
@@ -65,14 +70,22 @@ func gooseSection(sql, marker string) (body string, ok bool) {
 	var out strings.Builder
 	inside := false
 	for line := range strings.SplitSeq(sql, "\n") {
-		if directive := strings.TrimSpace(line); strings.HasPrefix(directive, "-- +goose") {
-			inside = directive == marker
-			ok = ok || inside
+		directive := strings.TrimSpace(line)
+		if !strings.HasPrefix(directive, "-- +goose") {
+			if inside {
+				out.WriteString(line)
+				out.WriteString("\n")
+			}
 			continue
 		}
-		if inside {
-			out.WriteString(line)
-			out.WriteString("\n")
+		// СЕКЦИЮ ПЕРЕКЛЮЧАЮТ ТОЛЬКО Up И Down. Прочие директивы goose
+		// (StatementBegin/StatementEnd вокруг тела функции, NO TRANSACTION)
+		// — часть секции: считая их сменой секции, разбор терял тело функции
+		// триггера, схема применялась без него, и тест на append-only зеленел
+		// на схеме, где триггера нет.
+		if directive == GooseUpMarker || directive == GooseDownMarker {
+			inside = directive == marker
+			ok = ok || inside
 		}
 	}
 	return out.String(), ok
