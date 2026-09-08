@@ -167,6 +167,21 @@ func TestPrepare_RejectsTooManyDetails(t *testing.T) {
 	assert.ErrorIs(t, err, audit.ErrInvalidDetail)
 }
 
+// Ровно Config.MaxDetails подробностей проходят: граница включающая, и лишний
+// байт в ней отверг бы законную запись.
+func TestPrepare_AcceptsDetailsAtLimit(t *testing.T) {
+	t.Parallel()
+
+	rec, _ := newRecorder(t)
+	details := map[string]string{}
+	for i := range testConfig().MaxDetails {
+		details[string(rune('a'+i))] = "v"
+	}
+	ev, err := rec.Prepare(userCtx(t), entry(func(e *audit.Entry) { e.Details = details }))
+	require.NoError(t, err)
+	assert.Len(t, ev.Details, testConfig().MaxDetails)
+}
+
 // Враждебный ввод усекается по каждому полю: без потолка одна строка журнала
 // раздувается запросом атакующего (doc.go, п. 4).
 func TestPrepare_TruncatesHostileInput(t *testing.T) {

@@ -48,6 +48,16 @@ func TestNewRecorder_PanicsOnBadConfig(t *testing.T) {
 		},
 		{name: "нулевой MaxDetails", mod: func(c *audit.Config) { c.MaxDetails = 0 }, want: "Config.MaxDetails must be positive"},
 		{
+			name: "отрицательный MaxDetails",
+			mod:  func(c *audit.Config) { c.MaxDetails = -1 },
+			want: "Config.MaxDetails must be positive",
+		},
+		{
+			name: "нулевой MaxDetailLen",
+			mod:  func(c *audit.Config) { c.MaxDetailLen = 0 },
+			want: "Config.MaxDetailLen must be positive",
+		},
+		{
 			name: "отрицательный MaxDetailLen",
 			mod:  func(c *audit.Config) { c.MaxDetailLen = -1 },
 			want: "Config.MaxDetailLen must be positive",

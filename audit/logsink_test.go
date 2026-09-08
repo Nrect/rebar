@@ -115,3 +115,19 @@ func TestLogSink_SurvivesZeroEvent(t *testing.T) {
 	})
 	assert.Equal(t, audit.LogMessage, line["msg"])
 }
+
+// Пустая группа подробностей до строки лога не доходит: slog опускает её сам,
+// поэтому условие в приёмнике экономит сборку атрибутов, а не меняет вывод
+// (mutants_internal_test.go, разбор эквивалентных мутантов).
+func TestLogSink_EmptyDetailsGroupIsElided(t *testing.T) {
+	t.Parallel()
+
+	rec, _ := newRecorder(t)
+	empty, err := rec.Prepare(userCtx(t), entry(func(e *audit.Entry) { e.Details = map[string]string{} }))
+	require.NoError(t, err)
+
+	line := logged(t, func(sink *audit.LogSink) {
+		assert.NoError(t, sink.Write(t.Context(), empty))
+	})
+	assert.NotContains(t, line, "audit.details")
+}
