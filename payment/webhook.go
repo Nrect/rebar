@@ -37,9 +37,9 @@ func (s *Service) HandleWebhook(ctx context.Context, req WebhookRequest) (Webhoo
 	// Подлинность проверяется первой и БЕЗ похода в БД: неподтверждённый запрос
 	// не должен стоить нам ни одного соединения из пула.
 	ev, err := s.provider.ParseWebhook(ctx, req)
-	switch {
-	case errors.Is(err, ErrInvalidSignature):
+	if errors.Is(err, ErrInvalidSignature) {
 		return WebhookResult{}, ReasonSignatureInvalid, err
+	}
 	// Подтверждение ходит во внешний мир (ключ подписи, перечтение объекта у
 	// провайдера — порт не зря принимает ctx), и его сбой связи НЕ означает
 	// «тело нечитаемо». Без этой ветки адаптер, честно вернувший
@@ -47,9 +47,10 @@ func (s *Service) HandleWebhook(ctx context.Context, req WebhookRequest) (Webhoo
 	// выбирал по нему 400 — и провайдер считал вебхук доставленным и больше не
 	// приходил. Тот же «200 на сбой», от которого предостерегает контракт
 	// ошибок, только через 4xx.
-	case errors.Is(err, ErrUnavailable):
+	if errors.Is(err, ErrUnavailable) {
 		return WebhookResult{}, ReasonProviderError, err
-	case err != nil:
+	}
+	if err != nil {
 		return WebhookResult{}, ReasonMalformedEvent, fmt.Errorf("%w: %w", ErrMalformedEvent, err)
 	}
 	return s.apply(ctx, ev)
@@ -156,15 +157,16 @@ func (s *Service) record(ctx context.Context, ev Event, intentID uuid.UUID, fall
 }
 
 func (s *Service) validateEvent(ev Event) error {
-	switch {
-	case ev.ProviderEventID == "":
+	if ev.ProviderEventID == "" {
 		// Событие без собственного id невозможно дедуплицировать, а значит его
 		// повторная доставка зачислила бы деньги дважды.
 		return fmt.Errorf("%w: event has no provider event id", ErrMalformedEvent)
-	case ev.Provider != s.provider.Name():
+	}
+	if ev.Provider != s.provider.Name() {
 		return fmt.Errorf("%w: event from provider %q, service serves %q",
 			ErrMalformedEvent, ev.Provider, s.provider.Name())
-	case !ev.Type.valid():
+	}
+	if !ev.Type.valid() {
 		return fmt.Errorf("%w: unknown event type %q", ErrMalformedEvent, ev.Type)
 	}
 	return nil
@@ -255,12 +257,11 @@ func appliedReason(target Status) Reason {
 // Всё остальное — запоздалый даунгрейд (pending после succeeded, отказ после
 // отмены): статус не меняется, деньги не двигаются, 200 и никакого алерта.
 func classifyConflict(current, target Status) Reason {
-	switch {
-	case target == StatusSucceeded:
+	if target == StatusSucceeded {
 		return ReasonStatusConflict
-	case current == StatusSucceeded && target != StatusPending:
-		return ReasonStatusConflict
-	default:
-		return ReasonLateEvent
 	}
+	if current == StatusSucceeded && target != StatusPending {
+		return ReasonStatusConflict
+	}
+	return ReasonLateEvent
 }

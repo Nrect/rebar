@@ -95,19 +95,20 @@ func (s *Service) create(ctx context.Context, req StartRequest, key string, fp [
 ) (StartResult, Reason, error) {
 	intent := s.newIntent(req, key, fp)
 	err := s.store.CreateIntent(ctx, intent)
-	switch {
 	// Гонку за ключ проиграли: два одновременных запроса, оба не нашли строку,
 	// оба вставили. Это не 500 и не 409 — БД здесь арбитр, а не свидетель:
 	// перечитываем победителя и отдаём ЕГО результат как повтор.
-	case errors.Is(err, ErrIdempotencyRace):
+	if errors.Is(err, ErrIdempotencyRace) {
 		return s.afterLostRace(ctx, req, key, fp)
+	}
 	// У заказа уже есть живая попытка оплаты, и это ДРУГОЙ ключ: платить
 	// второй раз за тот же заказ нельзя. Клиенту 409 — пусть продолжает
 	// первую попытку или дожидается её конца.
-	case errors.Is(err, ErrReferenceBusy):
+	if errors.Is(err, ErrReferenceBusy) {
 		return StartResult{}, ReasonReferenceBusy,
 			fmt.Errorf("%w: reference %q", ErrReferenceBusy, req.Reference)
-	case err != nil:
+	}
+	if err != nil {
 		return StartResult{}, ReasonStoreError, fmt.Errorf("%w: create intent: %w", ErrUnavailable, err)
 	}
 	return s.complete(ctx, intent, req, false)
@@ -227,10 +228,10 @@ func (s *Service) complete(ctx context.Context, in Intent, req StartRequest, rep
 // адаптера, и лучше он проявится ретраем, чем намерением в pending, по
 // которому никто никогда не заплатит.
 func checkCreated(res CreatePaymentResult) error {
-	switch {
-	case res.ProviderPaymentID == "":
+	if res.ProviderPaymentID == "" {
 		return fmt.Errorf("%w: provider returned no payment id", ErrUnavailable)
-	case !res.Confirmation.Type.valid():
+	}
+	if !res.Confirmation.Type.valid() {
 		return fmt.Errorf("%w: provider returned confirmation type %q",
 			ErrUnavailable, res.Confirmation.Type)
 	}
@@ -327,15 +328,17 @@ func (s *Service) newIntent(req StartRequest, key string, fp []byte) Intent {
 }
 
 func (s *Service) validateStart(req StartRequest) error {
-	switch {
-	case req.PayerID == uuid.Nil:
+	if req.PayerID == uuid.Nil {
 		return fmt.Errorf("%w: no payer", ErrInvalidRequest)
-	case !validReference(req.Reference):
+	}
+	if !validReference(req.Reference) {
 		return fmt.Errorf("%w: reference %q must match [A-Za-z0-9:_-]{1,%d}",
 			ErrInvalidRequest, req.Reference, MaxReferenceLen)
-	case !s.cfg.knowsMethod(req.Method):
+	}
+	if !s.cfg.knowsMethod(req.Method) {
 		return fmt.Errorf("%w: method %q is not in Config.Methods", ErrInvalidRequest, req.Method)
-	case req.Currency != s.cfg.Currency:
+	}
+	if req.Currency != s.cfg.Currency {
 		return fmt.Errorf("%w: currency %q is not the configured %q",
 			ErrInvalidMoney, req.Currency, s.cfg.Currency)
 	}

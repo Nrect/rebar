@@ -115,10 +115,10 @@ func (p *MemProvider) CreatePayment(_ context.Context, req payment.CreatePayment
 	if p.CreateHook != nil {
 		p.CreateHook(req)
 	}
-	switch {
-	case p.CreateErr != nil:
+	if p.CreateErr != nil {
 		return payment.CreatePaymentResult{}, p.CreateErr
-	case p.FailFor[req.Reference]:
+	}
+	if p.FailFor[req.Reference] {
 		return payment.CreatePaymentResult{}, fmt.Errorf("%w: reference %q", ErrProviderDown, req.Reference)
 	}
 	if prev, ok := p.byKey[req.IdempotencyKey]; ok {
@@ -191,10 +191,10 @@ func (p *MemProvider) Capture(_ context.Context, req payment.CaptureRequest) (pa
 	defer p.mu.Unlock()
 	p.Calls["Capture"]++
 	p.Captures = append(p.Captures, req)
-	switch {
-	case p.NoHolds:
+	if p.NoHolds {
 		return payment.Event{}, fmt.Errorf("%w: two-stage payments", payment.ErrUnsupported)
-	case p.CaptureErr != nil:
+	}
+	if p.CaptureErr != nil {
 		return payment.Event{}, p.CaptureErr
 	}
 	return p.settle(req.IdempotencyKey, req.ProviderPaymentID, payment.EventSucceeded,
@@ -208,10 +208,10 @@ func (p *MemProvider) Cancel(_ context.Context, providerPaymentID, idempotencyKe
 	defer p.mu.Unlock()
 	p.Calls["Cancel"]++
 	p.Cancels = append(p.Cancels, providerPaymentID)
-	switch {
-	case p.NoHolds:
+	if p.NoHolds {
 		return payment.Event{}, fmt.Errorf("%w: two-stage payments", payment.ErrUnsupported)
-	case p.CancelErr != nil:
+	}
+	if p.CancelErr != nil {
 		return payment.Event{}, p.CancelErr
 	}
 	return p.settle(idempotencyKey, providerPaymentID, payment.EventCanceled, 0, ""), nil

@@ -185,15 +185,17 @@ func checkReceiptItems(items []ReceiptItem, amountMinor int64) error {
 
 	var total int64
 	for i, item := range items {
-		switch {
-		case strings.TrimSpace(item.Description) == "":
+		if strings.TrimSpace(item.Description) == "" {
 			return fmt.Errorf("%w: item %d has no description", ErrReceiptInvalid, i)
-		case item.AmountMinor <= 0 || item.AmountMinor > MaxMoneyMinor:
+		}
+		if item.AmountMinor <= 0 || item.AmountMinor > MaxMoneyMinor {
 			return fmt.Errorf("%w: item %d amount %d is outside (0, %d]",
 				ErrReceiptInvalid, i, item.AmountMinor, MaxMoneyMinor)
-		case item.Quantity <= 0:
+		}
+		if item.Quantity <= 0 {
 			return fmt.Errorf("%w: item %d quantity %d is not positive", ErrReceiptInvalid, i, item.Quantity)
-		case item.VATCode == "":
+		}
+		if item.VATCode == "" {
 			return fmt.Errorf("%w: item %d has no VAT code", ErrReceiptInvalid, i)
 		}
 		total += item.AmountMinor

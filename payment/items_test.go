@@ -64,6 +64,7 @@ func TestCheckItems(t *testing.T) {
 		"нет идентификатора товара": {
 			[]payment.OrderItem{{Position: 0, ProductID: "", AmountMinor: 100, Quantity: 1}}, 100, 10, payment.ErrInvalidRequest,
 		},
+		"позиций ровно потолок":  {items(), testAmount, 2, nil},
 		"позиций больше потолка": {items(), testAmount, 1, payment.ErrInvalidRequest},
 		"потолок не задан":       {items(), testAmount, 0, payment.ErrInvalidRequest},
 		"позиция сверх потолка денег": {
@@ -91,6 +92,18 @@ func TestCheckItems(t *testing.T) {
 			require.ErrorIs(t, err, tc.wantErr)
 		})
 	}
+}
+
+// Потолок, забытый в Config, — это сломанная сборка, а не слишком большой
+// заказ: отказ обязан называть именно её, иначе дежурный пойдёт искать
+// стотысячную корзину, которой не было.
+func TestCheckItems_BrokenCapIsNamedSeparately(t *testing.T) {
+	t.Parallel()
+
+	err := payment.CheckItems(items(), testAmount, 0)
+
+	require.ErrorIs(t, err, payment.ErrInvalidRequest)
+	assert.Contains(t, err.Error(), "item cap must be positive")
 }
 
 // Состав — снапшот: правка среза вызывающим после Start не должна доезжать до

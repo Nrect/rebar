@@ -53,12 +53,13 @@ type OrderItem struct {
 // ни запрета повторов товара. Это политика потребителя, и она считается ДО
 // Start; пакет проверяет только внутреннюю согласованность присланного.
 func CheckItems(items []OrderItem, amountMinor int64, maxItems int) error {
-	switch {
-	case len(items) == 0:
+	if len(items) == 0 {
 		return fmt.Errorf("%w: a purchase needs at least one item", ErrInvalidRequest)
-	case maxItems <= 0:
+	}
+	if maxItems <= 0 {
 		return fmt.Errorf("%w: item cap must be positive, got %d", ErrInvalidRequest, maxItems)
-	case len(items) > maxItems:
+	}
+	if len(items) > maxItems {
 		return fmt.Errorf("%w: a purchase takes at most %d items, got %d",
 			ErrInvalidRequest, maxItems, len(items))
 	}
@@ -89,19 +90,21 @@ func CheckItems(items []OrderItem, amountMinor int64, maxItems int) error {
 
 // checkItem — годность одной позиции.
 func checkItem(i int, item OrderItem) error {
-	switch {
-	case item.Position != i:
+	if item.Position != i {
 		return fmt.Errorf("%w: item %d is numbered %d", ErrInvalidRequest, i, item.Position)
-	case item.ProductID == "":
+	}
+	if item.ProductID == "" {
 		return fmt.Errorf("%w: item %d has no product id", ErrInvalidRequest, i)
-	case item.AmountMinor <= 0:
+	}
+	if item.AmountMinor <= 0 {
 		// Позиция — она же строка чека, а строка чека строго положительна
 		// (checkReceiptItems). Ноль отвергается здесь, до сборки чека, иначе
 		// он вернулся бы наружу ошибкой чека, то есть 500 вместо названного
 		// отказа.
 		return fmt.Errorf("%w: item %d of product %q charges %d, a receipt line is positive",
 			ErrInvalidRequest, i, item.ProductID, item.AmountMinor)
-	case item.Quantity < 1:
+	}
+	if item.Quantity < 1 {
 		return fmt.Errorf("%w: item %d of product %q has quantity %d",
 			ErrInvalidRequest, i, item.ProductID, item.Quantity)
 	}

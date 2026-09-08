@@ -22,12 +22,13 @@ type Service struct {
 // просроченным в момент создания, нулевой MaxAmountMinor — каждое
 // неоплачиваемым, а пустая валюта прошла бы в CHAR(3) книги навсегда.
 func NewService(store Store, provider Provider, cfg Config) *Service {
-	switch {
-	case store == nil:
+	if store == nil {
 		panic("payment.NewService: store must not be nil")
-	case provider == nil:
+	}
+	if provider == nil {
 		panic("payment.NewService: provider must not be nil")
-	case !provider.Name().valid():
+	}
+	if !provider.Name().valid() {
 		panic("payment.NewService: provider.Name() must match [a-z0-9_]{1,32}")
 	}
 	if err := cfg.validate(); err != nil {
