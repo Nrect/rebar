@@ -56,6 +56,11 @@ func checkRegistryAgainst(reg *Registry, m model) {
 	}
 }
 
+// Knows — объявлено ли разрешение в Config. Нужно проводке, которая
+// собирается на старте (authzhttp.Guard.Require): опечатка в константе должна
+// ронять сборку, а не превращаться в ErrUnknownPermission на каждом запросе.
+func (a *Authorizer) Knows(p Permission) bool { return a.model.permissions[p] }
+
 // Registry — реестр, с которым собран авторизатор: инвариант-тест
 // потребителя берёт его отсюда и не заводит вторую копию правил.
 func (a *Authorizer) Registry() *Registry { return a.reg }
