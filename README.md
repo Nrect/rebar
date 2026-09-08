@@ -21,6 +21,9 @@
 | &nbsp;&nbsp;`mail/mailotel/` | подпакет `mail` | наблюдаемость: декоратор транспорта со счётчиком `emails_sent{type,result}` и три гейджа очереди (OpenTelemetry metric API) | реализован |
 | &nbsp;&nbsp;`mail/mailtest/` | подпакет `mail` | двойники портов для тестов потребителя и фейк SES v2 без Docker | реализован |
 | &nbsp;&nbsp;`mail/cmd/sesfake/` | подпакет `mail` | SES v2-фейк для dev/stage с релеем в Mailpit | реализован |
+| `kit/` | `github.com/nrect/rebar/kit` | мелочи без внешних зависимостей: ошибки со слагом и их HTTP-форма (`errs`, `errs/httperr`), идентификатор запроса (`reqid`), загрузка окружения (`config`) | реализован |
+| `scheduler/` | `github.com/nrect/rebar/scheduler` | in-process периодика: горутина с тикером на задачу, recover, join на остановке, наблюдение через порт `Observer` | реализован |
+| `otelboot/` | `github.com/nrect/rebar/otelboot` | бутстрап наблюдаемости: провайдеры метрик и трейсов, `/metrics`, `build_info`; `errtrack` — Sentry-совместимый трекер | реализован |
 | `postgres/` | `github.com/nrect/rebar/postgres` | транзакции с таймаутами и повторами на pgx, классификация ошибок Postgres без содержимого строки; `pgtest` — база для интеграционных тестов | реализован |
 | `payment/` | — | покупка: намерение, зачисление по вебхуку, возврат, сверка | переезжает из `lifeurok-backend/internal/payment` отдельной задачей |
 | `entitlement/` | — | права доступа с кэшем и fail-closed | переезжает из `lifeurok-backend/internal/entitlement` отдельной задачей |

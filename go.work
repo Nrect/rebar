@@ -5,4 +5,7 @@ toolchain go1.26.6
 use (
 	./kit
 	./mail
+	./otelboot
+	./postgres
+	./scheduler
 )

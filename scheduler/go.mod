@@ -1,6 +1,6 @@
 module github.com/nrect/rebar/scheduler
 
-go 1.25.0
+go 1.26.0
 
 // Пин патч-версии stdlib: govulncheck проверяет ту stdlib, которой собран
 // модуль, а версия одна на все модули тулкита (VERSIONING, «Единая версия

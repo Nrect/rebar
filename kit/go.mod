@@ -1,6 +1,6 @@
 module github.com/nrect/rebar/kit
 
-go 1.25.0
+go 1.26.0
 
 // Пин патч-версии stdlib: govulncheck проверяет ту stdlib, которой собран
 // модуль. Пакеты kit ходят в net/http, net/url и crypto/rand, поэтому патчи
