@@ -23,6 +23,7 @@
 | &nbsp;&nbsp;`mail/cmd/sesfake/` | подпакет `mail` | SES v2-фейк для dev/stage с релеем в Mailpit | реализован |
 | `kit/` | `github.com/nrect/rebar/kit` | мелочи без внешних зависимостей: ошибки со слагом и их HTTP-форма (`errs`, `errs/httperr`), идентификатор запроса (`reqid`), загрузка окружения (`config`) | реализован |
 | `scheduler/` | `github.com/nrect/rebar/scheduler` | in-process периодика: горутина с тикером на задачу, recover, join на остановке, наблюдение через порт `Observer` | реализован |
+| `outbox/` | `github.com/nrect/rebar/outbox` | транзакционный outbox для доменных событий и отложенных команд: вставка в транзакции факта, аренда с токеном, классы ошибок, видимый dead-letter с redrive | реализован |
 | `otelboot/` | `github.com/nrect/rebar/otelboot` | бутстрап наблюдаемости: провайдеры метрик и трейсов, `/metrics`, `build_info`; `errtrack` — Sentry-совместимый трекер | реализован |
 | `postgres/` | `github.com/nrect/rebar/postgres` | транзакции с таймаутами и повторами на pgx, классификация ошибок Postgres без содержимого строки; `pgtest` — база для интеграционных тестов | реализован |
 | `payment/` | — | покупка: намерение, зачисление по вебхуку, возврат, сверка | переезжает из `lifeurok-backend/internal/payment` отдельной задачей |
