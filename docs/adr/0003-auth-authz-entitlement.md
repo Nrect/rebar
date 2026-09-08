@@ -279,7 +279,10 @@ type Config struct {                                   // закрытые на�
 type RoleSource interface { RolesOf(ctx context.Context, s Subject) ([]Role, error) }   // у потребителя
 type Policy func(ctx context.Context, s Subject, p Permission, r Resource) (allow bool, err error)
 
-func New(src RoleSource, cfg Config, policy Policy) *Authorizer
+func New(src RoleSource, cfg Config, policy Policy, reg *Registry) *Authorizer
+// реестр приходит аргументом, а не сеттером: CanOp без реестра отвечал бы
+// «не классифицировано» на всё, и забытая проводка выглядела бы обычным
+// отказом, а сеттер менял бы правила под работающими запросами
 func (a *Authorizer) Can(ctx context.Context, s Subject, p Permission) (Decision, error)
 func (a *Authorizer) CanOn(ctx context.Context, s Subject, p Permission, r Resource) (Decision, error)
 func (a *Authorizer) CanOp(ctx context.Context, s Subject, op Operation) (Decision, error)
