@@ -21,6 +21,7 @@
 | &nbsp;&nbsp;`mail/mailotel/` | подпакет `mail` | наблюдаемость: декоратор транспорта со счётчиком `emails_sent{type,result}` и три гейджа очереди (OpenTelemetry metric API) | реализован |
 | &nbsp;&nbsp;`mail/mailtest/` | подпакет `mail` | двойники портов для тестов потребителя и фейк SES v2 без Docker | реализован |
 | &nbsp;&nbsp;`mail/cmd/sesfake/` | подпакет `mail` | SES v2-фейк для dev/stage с релеем в Mailpit | реализован |
+| `audit/` | `github.com/nrect/rebar/audit` | журнал действий: закрытый набор действий, актор из контекста, запись в одной транзакции с самим действием, запрет секретов в подробностях | реализован |
 | `kit/` | `github.com/nrect/rebar/kit` | мелочи без внешних зависимостей: ошибки со слагом и их HTTP-форма (`errs`, `errs/httperr`), идентификатор запроса (`reqid`), загрузка окружения (`config`) | реализован |
 | `scheduler/` | `github.com/nrect/rebar/scheduler` | in-process периодика: горутина с тикером на задачу, recover, join на остановке, наблюдение через порт `Observer` | реализован |
 | `outbox/` | `github.com/nrect/rebar/outbox` | транзакционный outbox для доменных событий и отложенных команд: вставка в транзакции факта, аренда с токеном, классы ошибок, видимый dead-letter с redrive | реализован |
