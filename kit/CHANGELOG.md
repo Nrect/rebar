@@ -68,7 +68,9 @@
   info=purpose, секрет от `MinSecretLen`), `Cipher` с `Seal`/`Open`/
   `KeyIDOf`/`Reseal(blob, aad) (out, changed, err)`, ошибки `ErrMalformed` и
   `ErrUnknownKey`. Формат блоба: версия(1) | keyID(2, BigEndian) | nonce(12) |
-  ciphertext+tag; заголовок открыт и входит в AAD.
+  ciphertext+tag; заголовок открыт и входит в AAD. Сам формат — контракт
+  совместимости наравне со схемой адаптера: его смена возможна только с
+  миграцией через `Reseal` и считается ломающим изменением.
 - `ratelimit` — token bucket на ключ без фоновой горутины: `Config`
   (`Limit`, `Window`, `Burst` = 0 → `Limit`, `IdleTTL` > `Window`, `MaxKeys`) с
   panic-валидацией, порт `Gate`, `Decision{Allowed, Remaining, RetryAfter}`,

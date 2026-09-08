@@ -23,7 +23,8 @@ var AllClasses = []Class{ClassTransient, ClassThrottled, ClassPermanent}
 
 // Classify — класс ошибки по структурному контракту, а не по типу: чужой
 // пакет реализует Permanent()/RetryAfter() и не импортирует retry.
-// nil — ClassPermanent: повторять нечего, и это безопаснее случайного повтора.
+// Звать её на nil не нужно; ClassPermanent выбран для этого случая так,
+// чтобы ошибка вызова не превратилась в бесконечный повтор.
 func Classify(err error) Class {
 	if err == nil || IsPermanent(err) {
 		return ClassPermanent
