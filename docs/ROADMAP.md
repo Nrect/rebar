@@ -35,7 +35,10 @@
 - **единая версия Go и общих библиотек** во всех модулях, проверяется в CI;
 - **`schema.sql` адаптера — часть контракта**: потребитель копирует её в свои
   миграции, поэтому имена ограничений и индексов ломать нельзя;
-- **копируемые мелочи не выносятся в общий пакет до третьего потребителя.**
+- **копируемые мелочи не выносятся в общий пакет до третьего потребителя;**
+- **гейты не заходят в рабочие каталоги веток** (`.claude/worktrees` исключён в
+  Makefile, скриптах и поиске модулей CI): там лежат незавершённые ветки, и
+  общий прогон падал бы на чужой работе.
 
 ## Решения по спорным вопросам
 
@@ -66,7 +69,7 @@
 | `scheduler` | `scheduler`, `schedulerotel`, `schedulertest` | otel/metric — только в `schedulerotel` | неделя 1 | да | **реализован** |
 | `kit` | `errs`, `errs/httperr`, `errs/errstest`, `reqid`, `config`; далее `secrets`, `ratelimit`, `retry` | нет вовсе | неделя 1 | да | **частично**: остаются `secrets`, `ratelimit`, `retry` |
 | `otelboot` | `otelboot`, `errtrack` | otel sdk, prometheus; sentry-совместимый трекер — в `errtrack` | неделя 1 | да | **реализован** |
-| `outbox` | `outbox`, `outboxpg`, `outboxotel`, `outboxtest` | pgx, otel | недели 1–2 | да | пишется |
+| `outbox` | `outbox`, `outboxpg`, `outboxotel`, `outboxtest` | pgx, otel | недели 1–2 | да | **ядро и двойники реализованы**; адаптеры `outboxpg`, `outboxotel` — следующий шаг |
 | `payment` | `payment`, `prorate`, `paymentpg`, `paymentotel`, `paymenttest`, `cmd/psfake`, адаптер провайдера | pgx, otel; адаптер провайдера — stdlib | недели 1–3 | да | пишется |
 | `auth` | `auth`, `password`, `zxcvbn`, `session`, `authpg`, `authhttp`, `authtest` | x/crypto, оценщик паролей, pgx; `authhttp` → `kit/httperr` | недели 2–3 | да | план |
 | `authz` | `authz`, `authzhttp`, `authztest` | нет | неделя 3 | да | план |
@@ -133,8 +136,9 @@ ORM и кодогенераторов внутри тулкита; движко�
 **Недели 1–4 — фундамент.** `postgres` и `pgtest` первыми (без них не собрать
 ни один pg-адаптер), затем `scheduler`, `kit`, `otelboot`, `outbox`, `payment`,
 `auth`, `authz`, по необходимости `audit`, `objectstore`, `entitlement`.
-Завершается сборкой `examples/monolith` и тегами `v0.1.0`. Первая волна
-(`postgres`, `scheduler`, `kit`, `otelboot`) закрыта; идут `outbox` и `payment`.
+Завершается сборкой `examples/monolith` и тегами `v0.1.0`. В основную ветку
+влиты `postgres`, `scheduler`, `kit`, `otelboot` и ядро `outbox`; репозиторий
+на `go 1.26.0`. Идут адаптеры очереди и ядро `payment`.
 
 Линия отсечения, если месяц не сходится: сначала `postgres`, `kit`,
 `scheduler`, `outbox`, `payment` (с фейком провайдера); затем `auth`, `authz`,
