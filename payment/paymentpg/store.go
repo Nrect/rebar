@@ -106,6 +106,26 @@ func (s *Store) inTx(ctx context.Context, op string, fn func(context.Context, pg
 	return storeError(op, tx.Commit(ctx))
 }
 
+// inTxResult — та же транзакция, но у операции есть результат. Обобщённая
+// функция, а не метод: параметров типа у методов Go не бывает, а три копии
+// одной обвязки вокруг Transition, ApplyEvent и ApplyRefund разъехались бы
+// первой же правкой.
+func inTxResult[T any](ctx context.Context, s *Store, op string,
+	fn func(context.Context, pgx.Tx) (T, error),
+) (T, error) {
+	var res T
+	err := s.inTx(ctx, op, func(ctx context.Context, tx pgx.Tx) error {
+		var opErr error
+		res, opErr = fn(ctx, tx)
+		return opErr
+	})
+	if err != nil {
+		var zero T
+		return zero, err
+	}
+	return res, nil
+}
+
 // intentColumns — порядок колонок для scanIntent; менять только вместе с ним.
 const intentColumns = `id, payer_id, reference, amount_minor, currency, provider, method,
 	auto_capture, provider_payment_id, confirmation_type, confirmation_url, confirmation_qr,

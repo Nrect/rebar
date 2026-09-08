@@ -48,16 +48,13 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`
 // неучтённую оплату.
 func (s *Store) ApplyEvent(ctx context.Context, req payment.ApplyEventRequest,
 ) (payment.ApplyEventResult, error) {
-	var res payment.ApplyEventResult
-	err := s.inTx(ctx, "apply event", func(ctx context.Context, tx pgx.Tx) error {
-		var err error
-		res, err = s.applyEvent(ctx, tx, req)
-		return err
-	})
-	if err != nil {
+	if err := checkEventShape(req); err != nil {
 		return payment.ApplyEventResult{}, err
 	}
-	return res, nil
+	return inTxResult(ctx, s, "apply event",
+		func(ctx context.Context, tx pgx.Tx) (payment.ApplyEventResult, error) {
+			return s.applyEvent(ctx, tx, req)
+		})
 }
 
 func (s *Store) applyEvent(ctx context.Context, tx pgx.Tx, req payment.ApplyEventRequest,
@@ -221,6 +218,39 @@ func settledMoment(req payment.ApplyEventRequest, in payment.Intent) any {
 		at = req.Now
 	}
 	return at
+}
+
+// checkEventShape — форма запроса, которую адаптер обязан требовать ДО первой
+// записи: книга непуста тогда и только тогда, когда цель — succeeded, и запись
+// принадлежит тому же намерению.
+//
+// Каждое из этих расхождений неисправимо, потому что книга append-only.
+// Зачисление без книги — это succeeded_no_capture: деньги получены, денежной
+// записи нет. Книга без зачисления — движение денег на переходе, который
+// деньгами не является. Запись, уехавшая на ЧУЖОЕ намерение, занимает его
+// уникальный индекс зачисления, и собственная законная оплата того намерения не
+// запишется уже никогда.
+func checkEventShape(req payment.ApplyEventRequest) error {
+	if req.Ledger == nil {
+		if req.To == payment.StatusSucceeded {
+			return fmt.Errorf("%w: settling %s requires a ledger entry",
+				payment.ErrBadTransition, req.IntentID)
+		}
+		return nil
+	}
+	if req.To != payment.StatusSucceeded {
+		return fmt.Errorf("%w: a ledger entry belongs to a settlement, not to %q",
+			payment.ErrBadTransition, req.To)
+	}
+	if req.Ledger.Kind != payment.LedgerCapture {
+		return fmt.Errorf("%w: settlement writes a capture, got %q",
+			payment.ErrBadTransition, req.Ledger.Kind)
+	}
+	if req.Ledger.IntentID != req.IntentID {
+		return fmt.Errorf("%w: ledger entry belongs to intent %s, event to %s",
+			payment.ErrBadTransition, req.Ledger.IntentID, req.IntentID)
+	}
+	return nil
 }
 
 // checkApplyPredicate — предикат домена в порядке контракта порта: статус,

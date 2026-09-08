@@ -38,16 +38,10 @@ func (s *Store) ApplyRefund(ctx context.Context, req payment.ApplyRefundRequest,
 	if err := checkRefundShape(req); err != nil {
 		return payment.ApplyRefundResult{}, err
 	}
-	var res payment.ApplyRefundResult
-	err := s.inTx(ctx, "apply refund", func(ctx context.Context, tx pgx.Tx) error {
-		var err error
-		res, err = s.applyRefund(ctx, tx, req)
-		return err
-	})
-	if err != nil {
-		return payment.ApplyRefundResult{}, err
-	}
-	return res, nil
+	return inTxResult(ctx, s, "apply refund",
+		func(ctx context.Context, tx pgx.Tx) (payment.ApplyRefundResult, error) {
+			return s.applyRefund(ctx, tx, req)
+		})
 }
 
 func (s *Store) applyRefund(ctx context.Context, tx pgx.Tx, req payment.ApplyRefundRequest,

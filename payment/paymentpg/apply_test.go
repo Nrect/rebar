@@ -247,6 +247,44 @@ func TestStore_ApplyEvent_RecordOnlyAndBadTransition(t *testing.T) {
 		"строка дедупа не осталась")
 }
 
+// Форма запроса проверяется до первой записи: каждое из этих расхождений
+// неисправимо, потому что книга append-only.
+func TestStore_ApplyEvent_RejectsBadShape(t *testing.T) {
+	t.Parallel()
+
+	store, pool, _ := hookedStore(t, nil)
+	in := mustCreate(t, store, intent())
+	toPending(t, store, in)
+	now := testNow()
+	ev := event(in, payment.EventSucceeded)
+
+	tests := map[string]func(*payment.ApplyEventRequest){
+		"зачисление без книги": func(req *payment.ApplyEventRequest) { req.Ledger = nil },
+		"книга без зачисления": func(req *payment.ApplyEventRequest) {
+			req.To = payment.StatusCanceled
+			req.ExpectFrom = expectFrom(payment.StatusCanceled)
+		},
+		"в книгу едет не зачисление": func(req *payment.ApplyEventRequest) {
+			req.Ledger.Kind = payment.LedgerRefund
+		},
+		"запись чужого намерения": func(req *payment.ApplyEventRequest) {
+			req.Ledger.IntentID = uuid.New()
+		},
+	}
+	for name, mod := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			entry := *captureEntry(in, ev, now)
+			req := applyRequest(in, ev, payment.StatusSucceeded, &entry, now)
+			mod(&req)
+			_, err := store.ApplyEvent(t.Context(), req)
+			require.ErrorIs(t, err, payment.ErrBadTransition)
+			assert.Zero(t, countRows(t, pool, `SELECT count(*) FROM payment_events`),
+				"до записей дело не дошло")
+		})
+	}
+}
+
 // Момент зачисления берётся из события и зажимается в [created_at, now]:
 // событие может доехать через час после списания, и выручка «за январь» уехала
 // бы в февраль, — но время внешнего мира на веру не принимается.

@@ -31,16 +31,10 @@ RETURNING ` + intentColumns
 // оплаченную строку без момента зачисления, а его назначает только ApplyEvent.
 func (s *Store) Transition(ctx context.Context, req payment.TransitionRequest,
 ) (payment.TransitionResult, error) {
-	var res payment.TransitionResult
-	err := s.inTx(ctx, "transition", func(ctx context.Context, tx pgx.Tx) error {
-		var err error
-		res, err = s.transition(ctx, tx, req)
-		return err
-	})
-	if err != nil {
-		return payment.TransitionResult{}, err
-	}
-	return res, nil
+	return inTxResult(ctx, s, "transition",
+		func(ctx context.Context, tx pgx.Tx) (payment.TransitionResult, error) {
+			return s.transition(ctx, tx, req)
+		})
 }
 
 func (s *Store) transition(ctx context.Context, tx pgx.Tx, req payment.TransitionRequest,
