@@ -3,14 +3,19 @@ package outboxpg_test
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/nrect/rebar/outbox"
 	"github.com/nrect/rebar/outbox/outboxpg"
+	"github.com/nrect/rebar/postgres"
 	"github.com/nrect/rebar/postgres/pgtest"
 )
 
@@ -102,18 +107,54 @@ func TestStore_Enqueue_SameIDIsError(t *testing.T) {
 
 // Отвергнутая строка целиком уезжает в PgError.Detail вместе с payload:
 // самый честный тест на утечку — INSERT, потому что payload в ней ещё есть.
+//
+// ГЛАВНАЯ ПРОВЕРКА ЗДЕСЬ — НЕ ТЕКСТ, А ДОСЯГАЕМОСТЬ *pgconn.PgError ЧЕРЕЗ
+// errors.As. Detail не входит в PgError.Error(), поэтому тест, который ищет
+// секрет только в тексте, зелен и на адаптере БЕЗ границы: утечка происходит
+// ниже по стеку, там, где кто-то достаёт *PgError и логирует его целиком.
+// Ровно это и закрывает postgres.Sanitize, не заворачивая *PgError в цепочку.
 func TestStore_Enqueue_ErrorHidesPayload(t *testing.T) {
 	t.Parallel()
-	store, _ := newStore(t)
+	store, pool := newStore(t)
+	bad := envelope(func(e *outbox.Envelope) { e.SchemaVersion = 0 })
 
-	_, err := store.Enqueue(t.Context(),
-		envelope(func(e *outbox.Envelope) { e.SchemaVersion = 0 }))
+	// Сначала — что утекать есть чему: сырая ошибка того же INSERT несёт
+	// payload в Detail. Без этой половины тест не доказывал бы ничего.
+	raw := rawInsertError(t, pool, bad)
+	var rawPg *pgconn.PgError
+	require.ErrorAs(t, raw, &rawPg)
+	require.Contains(t, rawPg.Detail, secretPayload, "иначе проверять нечего: Detail пуст")
+
+	_, err := store.Enqueue(t.Context(), bad)
 
 	require.Error(t, err)
 	require.ErrorIs(t, err, outbox.ErrUnavailable)
-	assert.Contains(t, err.Error(), "23514")
+	var leaked *pgconn.PgError
+	assert.False(t, errors.As(err, &leaked),
+		"*pgconn.PgError достаётся через errors.As — вместе с ним достаётся и Detail со всей строкой")
 	assert.NotContains(t, err.Error(), secretPayload)
 	assert.NotContains(t, err.Error(), "Failing row")
+
+	// Классификация после границы жива: SQLSTATE и имя ограничения — это
+	// имена схемы, а не данные, и они обязаны пережить Sanitize.
+	var sanitized *postgres.Error
+	require.ErrorAs(t, err, &sanitized)
+	assert.Equal(t, "23514", sanitized.Code)
+	assert.NotEmpty(t, sanitized.Message, "сообщение Postgres остаётся: по нему чинят")
+	assert.Contains(t, err.Error(), "23514")
+}
+
+// rawInsertError — та же вставка мимо адаптера: сырая ошибка Postgres со всем,
+// что адаптер обязан отрезать.
+func rawInsertError(t *testing.T, pool *pgxpool.Pool, env outbox.Envelope) error {
+	t.Helper()
+	_, err := pool.Exec(t.Context(),
+		`INSERT INTO outbox_messages (id, kind, payload, schema_version, fingerprint, status,
+			available_at, occurred_at, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, 'pending', $6, $6, $6, $6)`,
+		env.ID, env.Kind, env.Payload, env.SchemaVersion, env.Fingerprint, env.CreatedAt)
+	require.Error(t, err, "вставка обязана быть отвергнута CHECK")
+	return err
 }
 
 // Контракт «в одной транзакции» (CONVENTIONS §5): строка очереди и факт
