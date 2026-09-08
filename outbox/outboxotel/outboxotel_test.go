@@ -20,7 +20,7 @@ import (
 
 const (
 	testKind    outbox.Kind = "order.paid"
-	maxAttempts             = 3
+	maxAttempts int         = 3
 	// traceparent — заголовок породившего запроса: с ним связывается span доставки.
 	traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
 	producerTID = "4bf92f3577b34da6a3ce929d0e0e4736"

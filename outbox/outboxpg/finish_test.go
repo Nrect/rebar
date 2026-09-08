@@ -30,6 +30,7 @@ func TestStore_Finish_WritesOutcome(t *testing.T) {
 			req:        outbox.FinishRequest{Outcome: outbox.FinishDone},
 			wantStatus: outbox.StatusDone,
 			assert: func(t *testing.T, got row) {
+				t.Helper()
 				require.NotNil(t, got.DoneAt)
 				assert.Equal(t, now, got.DoneAt.UTC())
 			},
@@ -38,13 +39,14 @@ func TestStore_Finish_WritesOutcome(t *testing.T) {
 			name:       "skipped — для строки тот же done",
 			req:        outbox.FinishRequest{Outcome: outbox.FinishSkipped},
 			wantStatus: outbox.StatusDone,
-			assert:     func(t *testing.T, got row) { require.NotNil(t, got.DoneAt) },
+			assert:     func(t *testing.T, got row) { t.Helper(); require.NotNil(t, got.DoneAt) },
 		},
 		{
 			name:       "retry",
 			req:        outbox.FinishRequest{Outcome: outbox.FinishRetry, NextAttemptAt: next, Error: "boom"},
 			wantStatus: outbox.StatusPending,
 			assert: func(t *testing.T, got row) {
+				t.Helper()
 				assert.Equal(t, next, got.AvailableAt.UTC())
 				assert.Equal(t, "boom", got.LastError)
 				assert.Equal(t, 1, got.Attempts, "попытка потрачена")
@@ -55,6 +57,7 @@ func TestStore_Finish_WritesOutcome(t *testing.T) {
 			req:        outbox.FinishRequest{Outcome: outbox.FinishFailed, FailReason: outbox.FailPermanent, Error: "нет такого счёта"},
 			wantStatus: outbox.StatusFailed,
 			assert: func(t *testing.T, got row) {
+				t.Helper()
 				assert.Equal(t, string(outbox.FailPermanent), got.FailReason)
 				assert.NotEmpty(t, got.Payload, "payload остаётся: без него нечем делать redrive")
 			},
@@ -64,6 +67,7 @@ func TestStore_Finish_WritesOutcome(t *testing.T) {
 			req:        outbox.FinishRequest{Outcome: outbox.FinishFailed, FailReason: outbox.FailExhausted},
 			wantStatus: outbox.StatusFailed,
 			assert: func(t *testing.T, got row) {
+				t.Helper()
 				assert.Equal(t, string(outbox.FailExhausted), got.FailReason)
 			},
 		},
@@ -71,13 +75,14 @@ func TestStore_Finish_WritesOutcome(t *testing.T) {
 			name:       "expired",
 			req:        outbox.FinishRequest{Outcome: outbox.FinishExpired},
 			wantStatus: outbox.StatusExpired,
-			assert:     func(t *testing.T, got row) { assert.Empty(t, got.FailReason) },
+			assert:     func(t *testing.T, got row) { t.Helper(); assert.Empty(t, got.FailReason) },
 		},
 		{
 			name:       "released — попытка возвращается",
 			req:        outbox.FinishRequest{Outcome: outbox.FinishReleased},
 			wantStatus: outbox.StatusPending,
 			assert: func(t *testing.T, got row) {
+				t.Helper()
 				assert.Zero(t, got.Attempts, "быстрая остановка не жжёт лимит попыток")
 				assert.Equal(t, now, got.AvailableAt.UTC(), "строка готова немедленно")
 			},

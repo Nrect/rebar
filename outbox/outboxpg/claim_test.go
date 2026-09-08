@@ -132,7 +132,7 @@ func TestStore_Claim_RespectsLimitAndOrder(t *testing.T) {
 	claimed, _ := mustClaim(t, store, now, 2)
 
 	require.Len(t, claimed, 2)
-	assert.True(t, !claimed[0].AvailableAt.After(claimed[1].AvailableAt), "самые старые первыми")
+	assert.False(t, claimed[0].AvailableAt.After(claimed[1].AvailableAt), "самые старые первыми")
 }
 
 // Арбитр — база, а не Go: между «посмотреть» и «взять» помещается чужая

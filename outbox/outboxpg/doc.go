@@ -27,7 +27,7 @@
 //     проверяет, поэтому контракт держит тест TestEnqueue_WithTx_IsAtomic:
 //     после ROLLBACK нет ни строки очереди, ни факта, ни занятого ключа.
 //  3. ПОВТОР ПО КЛЮЧУ НЕ РОНЯЕТ ТРАНЗАКЦИЮ. Конфликт разбирается через
-//     ON CONFLICT (kind, dedup_key) WHERE dedup_key <> '' DO NOTHING: перехват
+//     ON CONFLICT (kind, dedup_key) WHERE dedup_key <> ” DO NOTHING: перехват
 //     23505 перевёл бы транзакцию потребителя в aborted и снёс бы бизнес-факт
 //     вместе с событием (TestEnqueue_DuplicateDoesNotAbortTx).
 //  4. FOR UPDATE SKIP LOCKED — ДВА ВОРКЕРА НЕ БЕРУТ ОДНУ СТРОКУ: арбитр здесь

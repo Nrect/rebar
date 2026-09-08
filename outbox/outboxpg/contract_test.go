@@ -35,6 +35,7 @@ func TestStoreContract(t *testing.T) {
 		{
 			name: "outboxpg.Store",
 			open: func(t *testing.T) outbox.Store {
+				t.Helper()
 				store, _ := newStore(t)
 				return store
 			},
@@ -73,6 +74,7 @@ var contractScenarios = []contractScenario{
 }
 
 func contractDuplicate(t *testing.T, store outbox.Store) {
+	t.Helper()
 	env := contractEnvelope(contractNow())
 	first, err := outboxtest.Enqueue(t.Context(), store, env)
 	require.NoError(t, err)
@@ -89,6 +91,7 @@ func contractDuplicate(t *testing.T, store outbox.Store) {
 }
 
 func contractKeyReused(t *testing.T, store outbox.Store) {
+	t.Helper()
 	env := contractEnvelope(contractNow())
 	_, err := outboxtest.Enqueue(t.Context(), store, env)
 	require.NoError(t, err)
@@ -103,6 +106,7 @@ func contractKeyReused(t *testing.T, store outbox.Store) {
 }
 
 func contractEmptyKey(t *testing.T, store outbox.Store) {
+	t.Helper()
 	for range 3 {
 		res, err := outboxtest.Enqueue(t.Context(), store,
 			contractEnvelope(contractNow(), func(e *outbox.Envelope) { e.DedupKey = "" }))
@@ -116,6 +120,7 @@ func contractEmptyKey(t *testing.T, store outbox.Store) {
 }
 
 func contractLease(t *testing.T, store outbox.Store) {
+	t.Helper()
 	now := contractNow()
 	env := contractInsert(t, store, now)
 
@@ -139,6 +144,7 @@ func contractLease(t *testing.T, store outbox.Store) {
 }
 
 func contractEmptyClaim(t *testing.T, store outbox.Store) {
+	t.Helper()
 	now := contractNow()
 	contractInsert(t, store, now)
 
@@ -154,6 +160,7 @@ func contractEmptyClaim(t *testing.T, store outbox.Store) {
 }
 
 func contractClaimKinds(t *testing.T, store outbox.Store) {
+	t.Helper()
 	now := contractNow()
 	known := contractInsert(t, store, now)
 	contractInsert(t, store, now, func(e *outbox.Envelope) { e.Kind = secondKind })
@@ -166,6 +173,7 @@ func contractClaimKinds(t *testing.T, store outbox.Store) {
 }
 
 func contractStaleToken(t *testing.T, store outbox.Store) {
+	t.Helper()
 	now := contractNow()
 	env := contractInsert(t, store, now)
 	stale := uuid.New()
@@ -189,6 +197,7 @@ func contractStaleToken(t *testing.T, store outbox.Store) {
 }
 
 func contractReleased(t *testing.T, store outbox.Store) {
+	t.Helper()
 	now := contractNow()
 	env := contractInsert(t, store, now)
 	token := uuid.New()
@@ -209,6 +218,7 @@ func contractReleased(t *testing.T, store outbox.Store) {
 }
 
 func contractPurgeKeepsFailed(t *testing.T, store outbox.Store) {
+	t.Helper()
 	now := contractNow()
 	done := contractFinish(t, store, now, outbox.FinishRequest{Outcome: outbox.FinishDone})
 	expired := contractFinish(t, store, now, outbox.FinishRequest{Outcome: outbox.FinishExpired})
@@ -237,6 +247,7 @@ func contractPurgeKeepsFailed(t *testing.T, store outbox.Store) {
 }
 
 func contractRedrive(t *testing.T, store outbox.Store) {
+	t.Helper()
 	now := contractNow()
 	later := now.Add(time.Hour)
 	failed := contractFinish(t, store, now, outbox.FinishRequest{
@@ -264,6 +275,7 @@ func contractRedrive(t *testing.T, store outbox.Store) {
 }
 
 func contractStats(t *testing.T, store outbox.Store) {
+	t.Helper()
 	now := contractNow()
 	// Под арендой: самая старая, но её уже взяли.
 	contractInsert(t, store, now, func(e *outbox.Envelope) { e.AvailableAt = now.Add(-time.Hour) })
@@ -288,6 +300,7 @@ func contractStats(t *testing.T, store outbox.Store) {
 }
 
 func contractListFailed(t *testing.T, store outbox.Store) {
+	t.Helper()
 	now := contractNow()
 	first := contractFinish(t, store, now, outbox.FinishRequest{
 		Outcome: outbox.FinishFailed, FailReason: outbox.FailPermanent,

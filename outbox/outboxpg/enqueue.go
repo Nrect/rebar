@@ -16,7 +16,7 @@ import (
 //
 // Арбитр назван колонками и предикатом, а не через ON CONSTRAINT: индекс
 // дедупа частичный, а `ON CONSTRAINT` умеет только ограничения, не индексы.
-// Вывод по (kind, dedup_key) WHERE dedup_key <> '' указывает ровно на
+// Вывод по (kind, dedup_key) WHERE dedup_key <> ” указывает ровно на
 // ux_outbox_messages_dedup, поэтому нарушение любого другого UNIQUE
 // (первичный ключ) остаётся ошибкой, а не превращается в дубль.
 const insertSQL = `INSERT INTO outbox_messages (` + envelopeColumns + `)

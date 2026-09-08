@@ -176,6 +176,7 @@ func TestStore_Redrive_OnlyFromFailed(t *testing.T) {
 		{name: "повторный клик по уже возвращённой", id: failed.ID},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			affected, redriveErr := store.Redrive(t.Context(), tt.id, later)
 			require.NoError(t, redriveErr, "«не сработало» — не ошибка")
 			assert.False(t, affected)
