@@ -69,6 +69,18 @@
   `KeyIDOf`/`Reseal(blob, aad) (out, changed, err)`, ошибки `ErrMalformed` и
   `ErrUnknownKey`. Формат блоба: версия(1) | keyID(2, BigEndian) | nonce(12) |
   ciphertext+tag; заголовок открыт и входит в AAD.
+- `ratelimit` — token bucket на ключ без фоновой горутины: `Config`
+  (`Limit`, `Window`, `Burst` = 0 → `Limit`, `IdleTTL` > `Window`, `MaxKeys`) с
+  panic-валидацией, порт `Gate`, `Decision{Allowed, Remaining, RetryAfter}`,
+  `Allow`, `Sweep(ctx) (int, error)` под сигнатуру задачи планировщика,
+  `Stats{Keys, Overflows}`, `SetClock`. Пустой ключ — отказ и `ErrEmptyKey`;
+  на переполнении `MaxKeys` сначала inline-sweep простаивающих, потом отказ
+  новым ключам со счётчиком.
+- `ratelimit/ratelimithttp` — `Middleware(Gate, KeyFunc, Deny)` (ставит
+  `Retry-After` с округлением вверх, тело пишет `httperr` потребителя),
+  `ClientIP(r, trusted []netip.Prefix)` — `X-Forwarded-For` справа налево
+  только от доверенного соседа, `ByIP(trusted, v6PrefixBits)` со сворачиванием
+  IPv6 в префикс.
 
 ### Security
 - `retry`: переполнение сдвига оставляет потолок `Max`, а не ноль — иначе
@@ -82,6 +94,10 @@
   одного байта ключа, а `Keyring` и `Cipher` редактируются во всех формах
   печати (`fmt` любым глаголом через `Format`, `slog`, `json`): без этого
   `%v` достал бы ключи рефлексией из неэкспортируемых полей.
+- `ratelimit`: пустой ключ и ошибка `Gate` — отказ, а не пропуск;
+  `X-Forwarded-For` читается только от доверенного прокси, иначе лимит
+  обходится одним заголовком; IPv6 агрегируется по префиксу; ключ (IP — ПДн)
+  не логируется и в ответ не попадает.
 - Значение переменной окружения никогда не попадает в текст ошибки `config`:
   список проблем идёт в лог выката, а под ключом лежит DSN с паролем.
   Длина секрета считается в символах, умолчания у секрета нет, пустая
