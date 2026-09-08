@@ -74,9 +74,12 @@ chip-check:
 	@echo "chip-check passed: $(MODULE)"
 
 # Мутационное тестирование ядра модуля — локально, не в CI: медленно.
+# GOWORK=off обязателен: пока модуль не внесён в go.work, прогон падает на
+# «directory prefix . does not contain modules listed in go.work», а go.work
+# правит арбитр уже при слиянии — то есть у чипа его нет по построению.
 # Коэффициент таймаута 20 обязателен: на меньшем прогон врёт зелёным, объявляя
 # выживших мутантов «не покрытыми», потому что тест не успел за окно.
 mutants:
 	@test -n "$(MODULE)" || { echo "нужен MODULE=<каталог>, например: make mutants MODULE=mail"; exit 1; }
 	@test -f "$(MODULE)/go.mod" || { echo "$(MODULE)/go.mod не найден"; exit 1; }
-	cd $(MODULE) && gremlins unleash --timeout-coefficient 20 --workers 4 $(MUTANTS_EXCLUDE)
+	cd $(MODULE) && GOWORK=off gremlins unleash --timeout-coefficient 20 --workers 4 $(MUTANTS_EXCLUDE)
