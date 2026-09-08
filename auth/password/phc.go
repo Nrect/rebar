@@ -95,8 +95,10 @@ func decode(encoded string) (decoded, error) {
 	if len(hash) < MinKeyLen || len(hash) > MaxKeyLen {
 		return decoded{}, fmt.Errorf("%w: key length %d is outside [%d, %d]", ErrHashInvalid, len(hash), MinKeyLen, MaxKeyLen)
 	}
-	p.saltLen = uint32(len(salt))
-	p.keyLen = uint32(len(hash))
+	// Длины уже сведены к [Min, Max] строкой выше, потолок — 64 байта:
+	// переполнения при сужении нет.
+	p.saltLen = uint32(len(salt)) //nolint:gosec // длина проверена потолком MaxSaltLen
+	p.keyLen = uint32(len(hash))  //nolint:gosec // длина проверена потолком MaxKeyLen
 	return decoded{params: p, salt: salt, hash: hash}, nil
 }
 
@@ -128,7 +130,7 @@ func parseHeader(versionPart, costPart string) (params, error) {
 		return params{}, fmt.Errorf("%w: cost parameters above the verification ceiling", ErrHashInvalid)
 	}
 	p := params{memoryKiB: uint32(memory), time: uint32(iterations), threads: uint8(threads)}
-	if err = checkFloors(p); err != nil {
+	if err := checkFloors(p); err != nil {
 		return params{}, err
 	}
 	return p, nil

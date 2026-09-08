@@ -24,10 +24,10 @@ func TestNewSecret_RejectsShort(t *testing.T) {
 
 	for _, size := range []int{0, 1, token.MinSecretLen - 1} {
 		_, err := token.NewSecret(bytes.Repeat([]byte{'k'}, size))
-		assert.ErrorIsf(t, err, token.ErrSecretTooShort, "секрет в %d байт принят", size)
+		require.ErrorIsf(t, err, token.ErrSecretTooShort, "секрет в %d байт принят", size)
 	}
 	_, err := token.NewSecret(secretBytes('k'))
-	assert.NoError(t, err, "секрет ровно в минимум обязан приниматься")
+	require.NoError(t, err, "секрет ровно в минимум обязан приниматься")
 }
 
 // Секрет копируется: правка среза вызывающим не должна менять секрет реалма на

@@ -38,8 +38,8 @@ func TestStrength_AnswersAndIsRaceSafe(t *testing.T) {
 	s.Set("weak one here", password.ScoreMin)
 
 	p := password.NewPolicy(s, password.DefaultPolicyConfig())
-	assert.NoError(t, p.Check("anything long enough"))
-	assert.ErrorIs(t, p.Check("weak one here"), password.ErrTooWeak)
+	require.NoError(t, p.Check("anything long enough"))
+	require.ErrorIs(t, p.Check("weak one here"), password.ErrTooWeak)
 
 	var wg sync.WaitGroup
 	for i := range 32 {

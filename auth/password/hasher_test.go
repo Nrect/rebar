@@ -166,9 +166,13 @@ func TestHasher_VerifyRejectsMalformed(t *testing.T) {
 		"хвост в параметрах": "$argon2id$v=19$m=8192,t=1,p=1x$" + salt + "$" + key,
 		"минус в параметре":  "$argon2id$v=19$m=-8192,t=1,p=1$" + salt + "$" + key,
 	} {
-		ok, err := h.Verify(t.Context(), "p", encoded)
-		assert.ErrorIsf(t, err, password.ErrHashInvalid, "%s: %q", name, encoded)
-		assert.Falsef(t, ok, "%s: битая строка не может совпасть", name)
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			ok, err := h.Verify(t.Context(), "p", encoded)
+			require.ErrorIsf(t, err, password.ErrHashInvalid, "%q", encoded)
+			require.False(t, ok, "битая строка не может совпасть")
+		})
 	}
 }
 

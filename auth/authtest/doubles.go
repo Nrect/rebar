@@ -47,13 +47,13 @@ func NewStrength(score int) *Strength {
 }
 
 // Set задаёт точечный ответ на конкретный пароль.
-func (s *Strength) Set(password string, score int) {
+func (s *Strength) Set(pw string, score int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.ByPassword == nil {
 		s.ByPassword = map[string]int{}
 	}
-	s.ByPassword[password] = score
+	s.ByPassword[pw] = score
 }
 
 // Score — ответ двойника. Совпадение с userInputs двойник не моделирует: это

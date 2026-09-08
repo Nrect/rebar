@@ -25,15 +25,11 @@ func (s *fixedStrength) Score(pw string, userInputs []string) int {
 	return s.score
 }
 
-func policy(t *testing.T, score int, mutate ...func(*password.PolicyConfig)) (*password.Policy, *fixedStrength) {
+func policy(t *testing.T, score int) (*password.Policy, *fixedStrength) {
 	t.Helper()
 
-	cfg := password.DefaultPolicyConfig()
-	for _, m := range mutate {
-		m(&cfg)
-	}
 	checker := &fixedStrength{score: score}
-	return password.NewPolicy(checker, cfg), checker
+	return password.NewPolicy(checker, password.DefaultPolicyConfig()), checker
 }
 
 // Границы политики: ровно на границе — принято, на шаг за ней — отказ.
@@ -44,10 +40,10 @@ func TestPolicy_LengthBounds(t *testing.T) {
 	require.Equal(t, 10, p.MinLength())
 	require.Equal(t, password.MaxAllowedLength, p.MaxLength())
 
-	assert.ErrorIs(t, p.Check(strings.Repeat("a", 9)), password.ErrTooShort)
-	assert.NoError(t, p.Check(strings.Repeat("a", 10)), "ровно минимум обязан проходить")
-	assert.NoError(t, p.Check(strings.Repeat("a", password.MaxAllowedLength)), "ровно максимум обязан проходить")
-	assert.ErrorIs(t, p.Check(strings.Repeat("a", password.MaxAllowedLength+1)), password.ErrTooLong)
+	require.ErrorIs(t, p.Check(strings.Repeat("a", 9)), password.ErrTooShort)
+	require.NoError(t, p.Check(strings.Repeat("a", 10)), "ровно минимум обязан проходить")
+	require.NoError(t, p.Check(strings.Repeat("a", password.MaxAllowedLength)), "ровно максимум обязан проходить")
+	require.ErrorIs(t, p.Check(strings.Repeat("a", password.MaxAllowedLength+1)), password.ErrTooLong)
 }
 
 // Порог силы: ровно порог проходит, на единицу ниже — нет.
@@ -55,10 +51,10 @@ func TestPolicy_ScoreThreshold(t *testing.T) {
 	t.Parallel()
 
 	strong, _ := policy(t, 2)
-	assert.NoError(t, strong.Check("password on the threshold"), "оценка ровно на пороге обязана проходить")
+	require.NoError(t, strong.Check("password on the threshold"), "оценка ровно на пороге обязана проходить")
 
 	weak, _ := policy(t, 1)
-	assert.ErrorIs(t, weak.Check("password below the threshold"), password.ErrTooWeak)
+	require.ErrorIs(t, weak.Check("password below the threshold"), password.ErrTooWeak)
 }
 
 // Длина проверяется ДО силы: гигантский ввод не должен доходить до оценки,
@@ -94,7 +90,7 @@ func TestPolicy_OutOfRangeScoreIsWeakest(t *testing.T) {
 
 	for _, score := range []int{-1, password.ScoreMax + 1, 1 << 30} {
 		p, _ := policy(t, score)
-		assert.ErrorIsf(t, p.Check("some long enough password"), password.ErrTooWeak,
+		require.ErrorIsf(t, p.Check("some long enough password"), password.ErrTooWeak,
 			"оценка %d вне шкалы обязана считаться нулевой", score)
 	}
 }
@@ -105,7 +101,7 @@ func TestPolicy_HasNoCompositionRules(t *testing.T) {
 	t.Parallel()
 
 	p, _ := policy(t, password.ScoreMax)
-	assert.NoError(t, p.Check("correcthorsebatterystaple"))
+	require.NoError(t, p.Check("correcthorsebatterystaple"))
 }
 
 // Ошибки политики не носят самого пароля.
