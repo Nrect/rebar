@@ -422,3 +422,53 @@ func TestReconciler_Run_FullBatchKeepsCursor(t *testing.T) {
 	assert.Equal(t, payment.StatusSucceeded, h.mustIntent(t, queue[2].ID).Status,
 		"хвост очереди обязан быть разобран вторым прогоном")
 }
+
+// ХОЛД НЕ ХОРОНИТСЯ ПО НАШЕМУ TTL, и это правило, а не следствие устройства
+// кода: деньги у плательщика заморожены реально, и локальный `expired` при
+// живом холде — расхождение с провайдером, которое нечем починить. Уходит холд
+// только списанием (Capture) или отменой у провайдера; терминальное «денег не
+// будет» адаптер обязан отображать в canceled.
+//
+// Два рубежа, и тест проверяет оба.
+func TestReconcile_HoldIsNeverExpiredByTTL(t *testing.T) {
+	t.Parallel()
+
+	// Рубеж первый: у холда всегда есть платёж у провайдера, поэтому ветка
+	// протухания по TTL до него не доходит — даже когда провайдер молчит.
+	t.Run("провайдер недоступен, TTL истёк", func(t *testing.T) {
+		t.Parallel()
+
+		h := newHarness(t)
+		in := h.hold(t)
+		h.prov.GetErr = paymenttest.ErrProviderDown
+		h.clock.Advance(h.cfg.IntentTTL * 3)
+
+		reason, err := h.svc.Reconcile(context.Background(), in.ID)
+
+		require.ErrorIs(t, err, payment.ErrUnavailable)
+		assert.Equal(t, payment.ReasonProviderError, reason)
+		assert.Equal(t, payment.StatusAuthorized, h.mustIntent(t, in.ID).Status)
+	})
+
+	// Рубеж второй: даже если строка холда каким-то образом окажется без id
+	// платежа (правка мимо приложения, разъехавшийся адаптер) и сверка дойдёт до
+	// протухания — таблица переходов её не пустит: authorized → expired клетки
+	// нет. Проверяется именно так, а не чтением таблицы: страж, который держится
+	// на «сюда всё равно не попадём», однажды перестанет держать.
+	t.Run("холд без платежа у провайдера, TTL истёк", func(t *testing.T) {
+		t.Parallel()
+
+		h := newHarness(t)
+		in := h.hold(t)
+		broken := h.mustIntent(t, in.ID)
+		broken.ProviderPaymentID = ""
+		h.store.Seed(broken)
+		h.clock.Advance(h.cfg.IntentTTL * 3)
+
+		_, err := h.svc.Reconcile(context.Background(), in.ID)
+
+		require.NoError(t, err)
+		assert.Equal(t, payment.StatusAuthorized, h.mustIntent(t, in.ID).Status,
+			"холд обязан пережить протухание: клетки authorized → expired нет")
+	})
+}
