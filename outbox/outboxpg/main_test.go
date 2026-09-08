@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -67,8 +68,14 @@ func newSchemaPool(t *testing.T) *pgxpool.Pool {
 
 // envelope — конверт в том виде, в каком его отдаёт outbox.Producer.Prepare.
 func envelope(mods ...func(*outbox.Envelope)) outbox.Envelope {
+	return envelopeAt(pgtest.Now(), mods...)
+}
+
+// envelopeAt — тот же конверт, но все времена от одного момента: тесты аренды
+// сравнивают available_at ровно с тем now, который уходит в Claim, и разница
+// в микросекунды между двумя вызовами часов делала бы их плавающими.
+func envelopeAt(now time.Time, mods ...func(*outbox.Envelope)) outbox.Envelope {
 	id := uuid.New()
-	now := pgtest.Now()
 	env := outbox.Envelope{
 		ID:            id,
 		Kind:          testKind,
@@ -170,4 +177,26 @@ func assertSameEnvelope(t *testing.T, want, got outbox.Envelope) {
 	assert.JSONEq(t, string(want.Payload), string(got.Payload))
 	want.Payload, got.Payload = nil, nil
 	assert.Equal(t, want, got)
+}
+
+// assertConstraintViolation — нарушение именно этого CHECK: имя ограничения —
+// контракт схемы, а не деталь реализации.
+func assertConstraintViolation(t *testing.T, err error, constraint string) {
+	t.Helper()
+	var pgErr *pgconn.PgError
+	require.ErrorAs(t, err, &pgErr)
+	assert.Equal(t, "23514", pgErr.Code)
+	assert.Equal(t, constraint, pgErr.ConstraintName)
+}
+
+// finishedRow — строка, доведённая до нужного исхода: вставка, захват, Finish.
+func finishedRow(t *testing.T, store *outboxpg.Store, now time.Time, req outbox.FinishRequest) outbox.Envelope {
+	t.Helper()
+	env := mustEnqueue(t, store, envelopeAt(now, func(e *outbox.Envelope) { e.DedupKey = "" }))
+	claimed, token := mustClaim(t, store, now, 1)
+	require.Len(t, claimed, 1)
+	require.Equal(t, env.ID, claimed[0].ID, "захвачена не та строка: тест не изолирован")
+	req.ID, req.Token, req.Now = env.ID, token, now
+	require.NoError(t, store.Finish(t.Context(), req))
+	return env
 }
