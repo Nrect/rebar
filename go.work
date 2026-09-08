@@ -7,6 +7,7 @@ use (
 	./mail
 	./otelboot
 	./outbox
+	./payment
 	./postgres
 	./scheduler
 )
