@@ -45,6 +45,31 @@
   `RefundTooLargeOnce`), `MemProvider` (идемпотентность по ключу,
   детерминированный `ProviderEventID`, `NoHolds`, `RejectFor`, `FailFor`,
   `RefundEcho`), `Clock`.
+- Адаптер `paymentpg` на pgx/v5: `New(pool, Options{Settler})`, `WithTx(tx)`,
+  `CheckSchema(ctx)`; `schema.sql` с маркерами goose — таблицы
+  `payment_intents`, `payment_intent_items`, `payment_events` (inbox со
+  счётчиком доставок) и append-only `payment_ledger`.
+- Схема как контракт: `ux_payment_intents_key` (полный `UNIQUE (payer_id,
+  idempotency_key)` — провалившаяся попытка ключ не освобождает),
+  `ux_payment_intents_live_reference` (частичный, «одно живое намерение на
+  заказ»), `ux_payment_events_dedup`, `ux_payment_ledger_capture` (одно
+  зачисление на намерение), `ux_payment_ledger_key`. Адаптер различает их ПО
+  ИМЕНИ: у первых двух исходы противоположные (`ErrIdempotencyRace` против
+  `ErrReferenceBusy`).
+- Книгу держит база: триггеры `payment_ledger_immutable_trg`,
+  `payment_ledger_no_truncate_trg` и `payment_ledger_refund_cap_trg`, все
+  `ENABLE ALWAYS`; они представляются именами ограничений
+  (`payment_ledger_immutable`, `payment_ledger_refund_cap`,
+  `payment_ledger_refund_currency`), поэтому разбираются так же, как индексы.
+  `CheckSchema` проверяет в том числе режим `ENABLE ALWAYS`.
+- Хук потребителя `paymentpg.Settler` (`OnSettled`/`OnRefunded` с `pgx.Tx`):
+  зовётся после записи книги и до commit, ошибка откатывает всё, включая строку
+  дедупа события.
+- `ApplyEvent` проверяет форму запроса до первой записи: книга непуста тогда и
+  только тогда, когда цель — `succeeded`, запись это зачисление и принадлежит
+  тому же намерению (каждое расхождение неисправимо: книга append-only).
+- Контрактный набор `TestStoreContract`: семь сценариев гоняются и по двойнику
+  `paymenttest.MemStore`, и по адаптеру.
 - Страж закрытых наборов: тест разбирает исходники и падает, если константа
   объявлена мимо списка `All*`.
 - Мутационный прогон gremlins по ядру (без `paymenttest` и `prorate`): убито
@@ -53,6 +78,14 @@
   его не убить, — в `mutants_internal_test.go`.
 
 ### Notes
+- `paymentpg` зависит от модуля `postgres` (ADR-0005, третья межмодульная
+  зависимость): граница ошибки — общая `postgres.Sanitize`, а не своя копия.
+  Локальным остался только `raisedBy`: `postgres.IsUniqueViolation` закрывает
+  23505, а инварианты книги держат триггеры и приезжают как 23514 с тем же
+  полем имени.
+- Тестовый стенд адаптера свой (как в `mailpg` и `auditpg`), плюс поддержка
+  `TEST_DATABASE_URL`: прогону мутантов нужен общий сервер, иначе каждый мутант
+  поднимает свой контейнер.
 - Модуль ещё не внесён в `go.work` (это делает арбитр при слиянии), поэтому
   локальные прогоны идут с `GOWORK=off` — включая `make mutants`.
 - Валидация переписана цепочками `if` вместо `switch { case cond: }`: профиль
