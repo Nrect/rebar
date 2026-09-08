@@ -262,7 +262,9 @@ func (m *MemStore) ApplyEvent(_ context.Context, req payment.ApplyEventRequest,
 	// строку дедупа события, иначе повтор вебхука увидел бы дубль и не применил
 	// бы ничего.
 	if req.Ledger != nil && m.OnSettled != nil {
-		if err := m.OnSettled(in, *req.Ledger); err != nil {
+		hooked := in
+		hooked.Items = slices.Clone(in.Items)
+		if err := m.OnSettled(hooked, *req.Ledger); err != nil {
 			return payment.ApplyEventResult{}, err
 		}
 	}
@@ -311,7 +313,9 @@ func (m *MemStore) ApplyRefund(_ context.Context, req payment.ApplyRefundRequest
 		return payment.ApplyRefundResult{Outcome: payment.OutcomeRefundTooLarge}, nil
 	}
 	if m.OnRefunded != nil {
-		if hookErr := m.OnRefunded(in, req.Refund); hookErr != nil {
+		hooked := in
+		hooked.Items = slices.Clone(in.Items)
+		if hookErr := m.OnRefunded(hooked, req.Refund); hookErr != nil {
 			return payment.ApplyRefundResult{}, hookErr
 		}
 	}
