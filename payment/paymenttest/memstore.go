@@ -150,6 +150,12 @@ func (m *MemStore) IntentByKey(_ context.Context, payerID uuid.UUID, key string,
 	if !ok {
 		return payment.Intent{}, false, nil
 	}
+	// Индекс без строки — это не «нашли пустое намерение», а разъехавшийся
+	// индекс либо чтение с отставшей реплики. Двойник обязан отвечать так же,
+	// как база: строки нет.
+	if _, exists := m.Intents[id]; !exists {
+		return payment.Intent{}, false, nil
+	}
 	return m.snapshot(id), true, nil
 }
 
@@ -227,15 +233,16 @@ func (m *MemStore) ApplyEvent(_ context.Context, req payment.ApplyEventRequest,
 	}
 
 	in, ok := m.Intents[req.IntentID]
-	switch {
-	case !ok:
+	if !ok {
 		// Орфан: строка события записана, применять не к чему.
 		m.Events[ek] = 1
 		return payment.ApplyEventResult{Outcome: payment.OutcomeUnknownIntent}, nil
-	case req.To == "":
+	}
+	if req.To == "" {
 		m.Events[ek] = 1
 		return payment.ApplyEventResult{Outcome: payment.OutcomeIgnored, Intent: in}, nil
-	case len(req.ExpectFrom) == 0:
+	}
+	if len(req.ExpectFrom) == 0 {
 		// Ошибка программиста, а не событие: строка дедупа не пишется, чтобы
 		// исправленный домен смог применить это же событие.
 		return payment.ApplyEventResult{}, payment.ErrBadTransition
@@ -256,7 +263,9 @@ func (m *MemStore) ApplyEvent(_ context.Context, req payment.ApplyEventRequest,
 	// строку дедупа события, иначе повтор вебхука увидел бы дубль и не применил
 	// бы ничего.
 	if req.Ledger != nil && m.OnSettled != nil {
-		if err := m.OnSettled(in, *req.Ledger); err != nil {
+		hooked := in
+		hooked.Items = slices.Clone(in.Items)
+		if err := m.OnSettled(hooked, *req.Ledger); err != nil {
 			return payment.ApplyEventResult{}, err
 		}
 	}
@@ -305,7 +314,9 @@ func (m *MemStore) ApplyRefund(_ context.Context, req payment.ApplyRefundRequest
 		return payment.ApplyRefundResult{Outcome: payment.OutcomeRefundTooLarge}, nil
 	}
 	if m.OnRefunded != nil {
-		if hookErr := m.OnRefunded(in, req.Refund); hookErr != nil {
+		hooked := in
+		hooked.Items = slices.Clone(in.Items)
+		if hookErr := m.OnRefunded(hooked, req.Refund); hookErr != nil {
 			return payment.ApplyRefundResult{}, hookErr
 		}
 	}
@@ -442,12 +453,13 @@ func (m *MemStore) apply(in payment.Intent) {
 // метку запоздалой доставки.
 func checkApplyPredicate(in payment.Intent, req payment.ApplyEventRequest,
 ) (payment.ApplyOutcome, bool) {
-	switch {
-	case in.Status != req.To && !slices.Contains(req.ExpectFrom, in.Status):
+	if in.Status != req.To && !slices.Contains(req.ExpectFrom, in.Status) {
 		return payment.OutcomeStatusConflict, true
-	case req.Ledger != nil && !amountsAgree(in, req):
+	}
+	if req.Ledger != nil && !amountsAgree(in, req) {
 		return payment.OutcomeAmountMismatch, true
-	case in.Status == req.To:
+	}
+	if in.Status == req.To {
 		return payment.OutcomeAlreadyInTarget, true
 	}
 	return "", false
@@ -481,13 +493,14 @@ func amountsAgree(in payment.Intent, req payment.ApplyEventRequest) bool {
 // строка уехала бы мимо блокировки намерения, и потолок Σrefund ≤ capture
 // считался бы по чужой книге.
 func checkRefundShape(req payment.ApplyRefundRequest) error {
-	switch {
-	case req.Refund.Kind != payment.LedgerRefund:
+	if req.Refund.Kind != payment.LedgerRefund {
 		return fmt.Errorf("%w: refund entry has kind %q", payment.ErrBadTransition, req.Refund.Kind)
-	case req.Refund.IntentID != req.IntentID:
+	}
+	if req.Refund.IntentID != req.IntentID {
 		return fmt.Errorf("%w: refund entry belongs to intent %s, request to %s",
 			payment.ErrBadTransition, req.Refund.IntentID, req.IntentID)
-	case req.Refund.ReversesEntryID == nil || *req.Refund.ReversesEntryID != req.CaptureEntryID:
+	}
+	if req.Refund.ReversesEntryID == nil || *req.Refund.ReversesEntryID != req.CaptureEntryID {
 		return fmt.Errorf("%w: refund entry does not reverse capture %s",
 			payment.ErrBadTransition, req.CaptureEntryID)
 	}

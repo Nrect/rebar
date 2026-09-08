@@ -538,3 +538,132 @@ func TestConcurrent_SameKey_OneIntent(t *testing.T) {
 	}
 	assert.Len(t, seen, 1, "все параллельные запросы обязаны сойтись на одном намерении")
 }
+
+// Потолок суммы: ровно в него продаём, на копейку выше — нет. Сдвиг границы
+// внутрь запрещает законную сделку на предельную сумму, наружу — пропускает
+// опечатку в каталоге («лишний ноль в цене»), ради которой потолок и заведён.
+func TestStart_AmountExactlyAtCap(t *testing.T) {
+	t.Parallel()
+
+	sell := func(t *testing.T, amount int64) (payment.Reason, error) {
+		t.Helper()
+
+		h := newHarness(t)
+		req := startReq()
+		req.Items = []payment.OrderItem{{Position: 0, ProductID: "book-1", AmountMinor: amount, Quantity: 1}}
+		req.AmountMinor = amount
+		req.Receipt = receiptFor(amount)
+		_, reason, err := h.svc.Start(context.Background(), req)
+		return reason, err
+	}
+
+	t.Run("ровно потолок продаётся", func(t *testing.T) {
+		t.Parallel()
+
+		reason, err := sell(t, testConfig().MaxAmountMinor)
+
+		require.NoError(t, err)
+		assert.Equal(t, payment.ReasonCreated, reason)
+	})
+
+	t.Run("на копейку выше отвергается", func(t *testing.T) {
+		t.Parallel()
+
+		reason, err := sell(t, testConfig().MaxAmountMinor+1)
+
+		require.ErrorIs(t, err, payment.ErrInvalidMoney)
+		assert.Equal(t, payment.ReasonInvalidRequest, reason)
+	})
+}
+
+// Строку подвинул кто-то другой, пока мы ходили к провайдеру: отдаём ФАКТИЧЕСКОЕ
+// состояние, а не своё ожидание.
+//
+// Щель узкая, но дорогая: провайдер отказал, а вебхук об оплате успел приехать
+// между вставкой намерения и его ответом. Сказать клиенту «создано» про уже
+// оплаченное намерение — это отправить его платить второй раз.
+func TestStart_RowMovedWhileWeAskedProvider_ReportsActualState(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	req := startReq()
+	h.prov.RejectFor[req.Reference] = true
+	h.prov.CreateHook = func(sent payment.CreatePaymentRequest) {
+		in := h.mustIntent(t, sent.IntentID)
+		in.Status = payment.StatusSucceeded
+		h.store.Seed(in)
+	}
+
+	res, reason, err := h.svc.Start(context.Background(), req)
+
+	require.NoError(t, err)
+	assert.Equal(t, payment.ReasonReplay, reason)
+	assert.False(t, res.Created, "это не первое создание: строка уже оплачена")
+	assert.Equal(t, payment.StatusSucceeded, res.Intent.Status)
+}
+
+// Индекс сказал «ключ занят», а чтение строки не нашло: это разъехавшийся
+// индекс либо чтение с отставшей реплики. Повторная вставка здесь создала бы
+// ВТОРОЕ намерение на тот же ключ, поэтому наружу 503, а не новая покупка.
+func TestStart_KeyTakenButRowUnreadable_IsUnavailable(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	req := startReq()
+	h.store.ByKey[req.PayerID.String()+"|"+req.IdempotencyKey] = uuid.New()
+
+	res, reason, err := h.svc.Start(context.Background(), req)
+
+	require.ErrorIs(t, err, payment.ErrUnavailable)
+	assert.Equal(t, payment.ReasonStoreError, reason)
+	assert.Zero(t, res.Intent.ID)
+	assert.Equal(t, 0, h.prov.CallCount("CreatePayment"))
+}
+
+// Подтверждение — не голая ссылка: у СБП это payload QR, у виджета — адрес
+// встраивания. Тип говорит вызывающему, что рисовать, и доезжает до намерения
+// как есть.
+func TestStart_ConfirmationTypes(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]payment.Confirmation{
+		"редирект": {Type: payment.ConfirmationRedirect, URL: "https://pay.example/p1"},
+		"QR СБП":   {Type: payment.ConfirmationQR, QRPayload: "https://qr.nspk.ru/AD10"},
+		"виджет":   {Type: payment.ConfirmationEmbedded, URL: "https://pay.example/widget/p1"},
+	}
+
+	for name, confirmation := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			h := newHarness(t)
+			h.prov.Result = payment.CreatePaymentResult{
+				ProviderPaymentID: "pay-1",
+				Confirmation:      confirmation,
+				Status:            payment.EventPending,
+			}
+
+			res, _, err := h.svc.Start(context.Background(), startReq())
+
+			require.NoError(t, err)
+			assert.Equal(t, confirmation, res.Intent.Confirmation)
+		})
+	}
+
+	t.Run("незнакомый тип — баг адаптера, а не платёж", func(t *testing.T) {
+		t.Parallel()
+
+		h := newHarness(t)
+		h.prov.Result = payment.CreatePaymentResult{
+			ProviderPaymentID: "pay-1",
+			Confirmation:      payment.Confirmation{Type: "sms", URL: "https://pay.example/p1"},
+			Status:            payment.EventPending,
+		}
+
+		res, reason, err := h.svc.Start(context.Background(), startReq())
+
+		require.ErrorIs(t, err, payment.ErrUnavailable)
+		assert.Equal(t, payment.ReasonProviderError, reason)
+		assert.Equal(t, payment.StatusCreated, res.Intent.Status)
+	})
+}

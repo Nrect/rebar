@@ -59,6 +59,19 @@ func TestNewService_PanicsOnBadConfig(t *testing.T) {
 	}
 }
 
+// Потолок суммы ровно в потолок денег законен: сдвиг границы внутрь запретил бы
+// сборку, которой предельная сумма нужна по делу.
+func TestNewService_MaxAmountAtMoneyCapIsAllowed(t *testing.T) {
+	t.Parallel()
+
+	cfg := validConfig()
+	cfg.MaxAmountMinor = payment.MaxMoneyMinor
+
+	assert.NotPanics(t, func() {
+		payment.NewService(paymenttest.NewMemStore(), paymenttest.NewMemProvider("memprov"), cfg)
+	})
+}
+
 func TestNewService_PanicsOnBadPorts(t *testing.T) {
 	t.Parallel()
 

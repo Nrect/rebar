@@ -368,3 +368,20 @@ func TestConcurrent_SameEvent_OneCapture(t *testing.T) {
 	assert.Len(t, h.store.EntriesOf(in.ID, payment.LedgerCapture), 1)
 	assert.Equal(t, payment.StatusSucceeded, h.mustIntent(t, in.ID).Status)
 }
+
+// Провайдер отказал уже после выдачи подтверждения (карта не прошла): попытка
+// закрывается, и это штатный исход, а не конфликт.
+func TestWebhook_FailedEvent_ClosesTheAttempt(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	in := h.start(t, startReq())
+	h.prov.Push(h.event(in, payment.EventFailed, 0))
+
+	res, reason, err := h.svc.HandleWebhook(context.Background(), webhook())
+
+	require.NoError(t, err)
+	assert.Equal(t, payment.ReasonIntentClosed, reason)
+	assert.Equal(t, payment.StatusFailed, res.Intent.Status)
+	assert.Empty(t, h.store.EntriesOf(in.ID, payment.LedgerCapture))
+}

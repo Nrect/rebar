@@ -66,6 +66,11 @@ type MemProvider struct {
 	// FailFor — ссылки, по которым провайдер не отвечает: временный сбой, ретрай
 	// осмыслен.
 	FailFor map[string]bool
+	// CreateHook — зовётся внутри CreatePayment, до ответа. Так тест изображает
+	// событие, приехавшее РОВНО между вставкой намерения и ответом провайдера:
+	// иначе эту щель не воспроизвести, а именно в ней домен обязан отдать
+	// фактическое состояние строки, а не своё ожидание.
+	CreateHook func(req payment.CreatePaymentRequest)
 	// RefundEcho — если не ноль, Refund отвечает ЭТОЙ суммой вместо запрошенной.
 	// Так изображается провайдер, вернувший не то, о чём просили: домен обязан
 	// отказаться записывать в книгу цифру, которой не было.
@@ -107,10 +112,13 @@ func (p *MemProvider) CreatePayment(_ context.Context, req payment.CreatePayment
 	defer p.mu.Unlock()
 	p.Calls["CreatePayment"]++
 	p.Created = append(p.Created, req)
-	switch {
-	case p.CreateErr != nil:
+	if p.CreateHook != nil {
+		p.CreateHook(req)
+	}
+	if p.CreateErr != nil {
 		return payment.CreatePaymentResult{}, p.CreateErr
-	case p.FailFor[req.Reference]:
+	}
+	if p.FailFor[req.Reference] {
 		return payment.CreatePaymentResult{}, fmt.Errorf("%w: reference %q", ErrProviderDown, req.Reference)
 	}
 	if prev, ok := p.byKey[req.IdempotencyKey]; ok {
@@ -183,10 +191,10 @@ func (p *MemProvider) Capture(_ context.Context, req payment.CaptureRequest) (pa
 	defer p.mu.Unlock()
 	p.Calls["Capture"]++
 	p.Captures = append(p.Captures, req)
-	switch {
-	case p.NoHolds:
+	if p.NoHolds {
 		return payment.Event{}, fmt.Errorf("%w: two-stage payments", payment.ErrUnsupported)
-	case p.CaptureErr != nil:
+	}
+	if p.CaptureErr != nil {
 		return payment.Event{}, p.CaptureErr
 	}
 	return p.settle(req.IdempotencyKey, req.ProviderPaymentID, payment.EventSucceeded,
@@ -200,10 +208,10 @@ func (p *MemProvider) Cancel(_ context.Context, providerPaymentID, idempotencyKe
 	defer p.mu.Unlock()
 	p.Calls["Cancel"]++
 	p.Cancels = append(p.Cancels, providerPaymentID)
-	switch {
-	case p.NoHolds:
+	if p.NoHolds {
 		return payment.Event{}, fmt.Errorf("%w: two-stage payments", payment.ErrUnsupported)
-	case p.CancelErr != nil:
+	}
+	if p.CancelErr != nil {
 		return payment.Event{}, p.CancelErr
 	}
 	return p.settle(idempotencyKey, providerPaymentID, payment.EventCanceled, 0, ""), nil

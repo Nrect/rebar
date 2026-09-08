@@ -77,32 +77,34 @@ func (c Config) validate() error {
 }
 
 func (c Config) validateMoney() error {
-	switch {
-	case !isCurrency(c.Currency):
+	if !isCurrency(c.Currency) {
 		return errors.New("Config.Currency must be a 3-letter uppercase ISO-4217 code")
-	case c.MaxAmountMinor <= 0 || c.MaxAmountMinor > MaxMoneyMinor:
+	}
+	if c.MaxAmountMinor <= 0 || c.MaxAmountMinor > MaxMoneyMinor {
 		return fmt.Errorf("Config.MaxAmountMinor must be within (0, %d]", MaxMoneyMinor)
-	case c.MaxItems <= 0:
+	}
+	if c.MaxItems <= 0 {
 		return errors.New("Config.MaxItems must be positive")
 	}
 	return nil
 }
 
 func (c Config) validateFlow() error {
-	switch {
-	case c.IntentTTL <= 0:
+	if c.IntentTTL <= 0 {
 		return errors.New("Config.IntentTTL must be positive")
-	case c.StalePendingAfter <= 0:
+	}
+	if c.StalePendingAfter <= 0 {
 		return errors.New("Config.StalePendingAfter must be positive")
-	case !validProviderKeyPrefix(c.ProviderKeyPrefix):
+	}
+	if !validProviderKeyPrefix(c.ProviderKeyPrefix) {
 		return fmt.Errorf("Config.ProviderKeyPrefix must match [a-z0-9_-]{1,%d}", MaxProviderKeyPrefixLen)
 	}
 	seen := make(map[Method]bool, len(c.Methods))
 	for _, m := range c.Methods {
-		switch {
-		case !m.valid():
+		if !m.valid() {
 			return fmt.Errorf("Config.Methods: method %q must match [a-z_]{1,%d}", m, MaxMethodLen)
-		case seen[m]:
+		}
+		if seen[m] {
 			return fmt.Errorf("Config.Methods: method %q is listed twice", m)
 		}
 		seen[m] = true

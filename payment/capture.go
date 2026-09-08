@@ -65,11 +65,11 @@ func (s *Service) Capture(ctx context.Context, intentID uuid.UUID, amountMinor i
 
 // capturable — холд ещё можно списать (уже списанный разобран у вызывающего).
 func capturable(in Intent, amountMinor int64) (Reason, error) {
-	switch {
-	case in.Status != StatusAuthorized:
+	if in.Status != StatusAuthorized {
 		return ReasonStatusConflict, fmt.Errorf("%w: intent %s is %s, not %s",
 			ErrStatusConflict, in.ID, in.Status, StatusAuthorized)
-	case amountMinor != in.AmountMinor:
+	}
+	if amountMinor != in.AmountMinor {
 		// Расхождение не зачисляется ни в какую сторону (инвариант 8): меньше —
 		// это частичное списание, которого в модели нет, больше — списание
 		// сверх замороженного.
@@ -117,10 +117,10 @@ func (s *Service) Cancel(ctx context.Context, intentID uuid.UUID, key string) (I
 // cancelable — есть ли у провайдера что отменять (уже отменённое разобрано у
 // вызывающего).
 func cancelable(in Intent) (Reason, error) {
-	switch {
-	case in.Status.IsTerminal():
+	if in.Status.IsTerminal() {
 		return ReasonIntentClosed, fmt.Errorf("%w: intent %s is %s", ErrIntentClosed, in.ID, in.Status)
-	case in.ProviderPaymentID == "":
+	}
+	if in.ProviderPaymentID == "" {
 		return ReasonInvalidRequest, fmt.Errorf(
 			"%w: intent %s has no payment at the provider yet; retry once it is %s",
 			ErrInvalidRequest, in.ID, StatusPending)

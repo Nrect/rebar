@@ -13,9 +13,32 @@ import (
 // `>` на `>=` или отрицание условия не роняет ни одного теста. Покрытие о таком
 // молчит: оно считает, что строка выполнилась, а не что от неё чего-то ждали.
 //
-// Повторить: make mutants MODULE=payment MUTANTS_EXCLUDE="-E '^paymenttest/' -E '^prorate/'"
+// Итог прогона: убито 264, выжил 1, mutator coverage 100%, эффективность
+// 99.62% (первый прогон: 91.63%, 18 выживших и 50 «NOT COVERED»).
 //
-// Разбор оставшихся выживших — в конце файла.
+// ВАЛИДАЦИЯ ПИШЕТСЯ ЦЕПОЧКОЙ `if`, А НЕ `switch { case cond: }`, и это не
+// вкус. Профиль покрытия Go не описывает блоком УСЛОВИЕ ветки `case` у
+// бестегового switch: блок начинается после двоеточия. gremlins, не найдя
+// позицию мутанта ни в одном блоке, помечает его «NOT COVERED» и не запускает
+// вовсе — то есть страж границ молча выключается ровно там, где стоит.
+// Переписывание пятнадцати таких мест цепочкой `if` дало 0 «NOT COVERED»
+// вместо 50, mutator coverage 100% вместо 81% и +50 убитых мутантов на том же
+// наборе тестов; четыре из них оказались настоящими дырами (потолок позиций,
+// потолок суммы в Config, нулевая строка чека, сломанный потолок в Config).
+//
+// ЕДИНСТВЕННЫЙ ВЫЖИВШИЙ — money.go:116, отрицательная половина потолка в tryAdd
+// (`result < -MaxMoneyMinor`). Ветка недостижима по построению: tryAdd зовёт
+// только проверка состава (CheckItems), а она складывает строго положительные
+// суммы позиций — до нижней границы дойти нечем. Убить мутанта пришлось бы
+// вызовом, которого в проде нет; проверка ради проверки — ровно тот дефект,
+// ради поиска которого мутации и запускают. Верхняя половина той же строки
+// проверена (TestMoneyTryAdd_*), и отрицательная граница Add — тоже
+// (TestMoneySub_*).
+//
+// Повторить: GOWORK=off make mutants MODULE=payment \
+//     MUTANTS_EXCLUDE="-E '^paymenttest/' -E '^prorate/'"
+// (GOWORK=off обязателен, пока модуль не внесён в go.work; коэффициент таймаута
+// 20 — в самой цели Makefile, на меньшем прогон врёт зелёным.)
 
 // --- Потолок суммы: money.go Add / tryAdd ---------------------------------
 
@@ -238,31 +261,73 @@ func TestCheckReceipt_ItemsOverflowIsCaughtWhileSumming(t *testing.T) {
 
 // --- Форма значений: intent.go matchesForm --------------------------------
 
-// Границы алфавитов и длины: значение уезжает в колонку БД и в метку метрики, и
-// сдвиг любой границы либо отвергает законное имя, либо впускает мусор.
-func TestFormBoundaries(t *testing.T) {
+// Границы АЛФАВИТОВ, а не только длины: значение уезжает в колонку БД, в ключ
+// дедупа и в метку метрики, и сдвиг любой границы либо отвергает законное имя
+// («yookassa» с 'z', «tbank2» с цифрой), либо впускает соседний по коду символ
+// («{» сразу после 'z', «:» сразу после '9').
+//
+// Проверяются края каждого разрешённого диапазона и символы вплотную за ними:
+// именно там мутация `>=` → `>` не роняет ни одного теста, если в примерах нет
+// ни 'a', ни 'z', ни '0', ни '9'.
+func TestFormBoundaries_Alphabets(t *testing.T) {
 	t.Parallel()
 
-	assert.True(t, ProviderName("a").valid())
+	t.Run("имя провайдера", func(t *testing.T) {
+		t.Parallel()
+
+		assert.True(t, ProviderName("az09_").valid(), "края диапазонов законны")
+		for _, name := range []string{"`a", "a{", "a/", "a:", "a-", "A", "a b"} {
+			assert.False(t, ProviderName(name).valid(), "имя %q обязано быть отвергнуто", name)
+		}
+	})
+
+	t.Run("способ оплаты", func(t *testing.T) {
+		t.Parallel()
+
+		assert.True(t, Method("az_").valid())
+		for _, m := range []string{"`a", "a{", "a0", "a9", "a-", "A"} {
+			assert.False(t, Method(m).valid(), "способ %q обязан быть отвергнут", m)
+		}
+	})
+
+	t.Run("ссылка потребителя", func(t *testing.T) {
+		t.Parallel()
+
+		assert.True(t, validReference("azAZ09:_-"), "края всех трёх диапазонов законны")
+		for _, ref := range []string{"a`", "a{", "a@", "a[", "a/", "a b", "a.", "a/b"} {
+			assert.False(t, validReference(ref), "ссылка %q обязана быть отвергнута", ref)
+		}
+	})
+
+	t.Run("префикс ключей провайдера", func(t *testing.T) {
+		t.Parallel()
+
+		assert.True(t, validProviderKeyPrefix("az09_-"))
+		for _, prefix := range []string{"a`", "a{", "a/", "a:", "A", "a b"} {
+			assert.False(t, validProviderKeyPrefix(prefix), "префикс %q обязан быть отвергнут", prefix)
+		}
+	})
+}
+
+// Длина: ровно потолок законен, на байт больше — нет. Сдвиг границы внутрь
+// отвергает законное имя, наружу — впускает значение, ради отсечения которого
+// потолок и заведён.
+func TestFormBoundaries_Lengths(t *testing.T) {
+	t.Parallel()
+
 	assert.True(t, ProviderName(repeat("a", MaxProviderNameLen)).valid())
 	assert.False(t, ProviderName(repeat("a", MaxProviderNameLen+1)).valid())
 	assert.False(t, ProviderName("").valid())
-	assert.False(t, ProviderName("YooKassa").valid(), "заглавные в метку не идут")
-	assert.False(t, ProviderName("yoo-kassa").valid(), "дефис не в наборе")
 
-	assert.True(t, Method("bank_card").valid())
-	assert.False(t, Method("bank card").valid())
-	assert.False(t, Method("sbp1").valid(), "цифры не в наборе способа")
+	assert.True(t, Method(repeat("a", MaxMethodLen)).valid())
+	assert.False(t, Method(repeat("a", MaxMethodLen+1)).valid())
 
-	assert.True(t, validReference("order:1001"))
 	assert.True(t, validReference(repeat("o", MaxReferenceLen)))
 	assert.False(t, validReference(repeat("o", MaxReferenceLen+1)))
-	assert.False(t, validReference("order 1001"))
-	assert.False(t, validReference("order/1001"))
 	assert.False(t, validReference(""))
 
-	assert.True(t, validProviderKeyPrefix("shop-stage_2"))
-	assert.False(t, validProviderKeyPrefix("shop:stage"), "двоеточие — разделитель ключа")
+	assert.True(t, validProviderKeyPrefix(repeat("s", MaxProviderKeyPrefixLen)))
+	assert.False(t, validProviderKeyPrefix(repeat("s", MaxProviderKeyPrefixLen+1)))
 	assert.False(t, validProviderKeyPrefix(""))
 }
 

@@ -29,16 +29,17 @@ const MaxIdempotencyKeyLen = 200
 // уникального индекса, и двойной клик становится двойным списанием.
 func NormalizeKey(raw string) (string, error) {
 	key := strings.TrimSpace(raw)
-	switch {
-	case key == "":
+	if key == "" {
 		return "", fmt.Errorf("%w: key is empty", ErrIdempotencyKeyInvalid)
-	case len(key) > MaxIdempotencyKeyLen:
+	}
+	if len(key) > MaxIdempotencyKeyLen {
 		return "", fmt.Errorf("%w: key is %d bytes, max is %d",
 			ErrIdempotencyKeyInvalid, len(key), MaxIdempotencyKeyLen)
+	}
 	// Проверяем UTF-8 отдельно: битый байт декодируется в U+FFFD, а он
 	// печатный — одна лишь проверка на печатность пропустила бы мусор в ключ,
 	// который потом поедет в сравнение байтов и в лог.
-	case !utf8.ValidString(key):
+	if !utf8.ValidString(key) {
 		return "", fmt.Errorf("%w: key is not valid UTF-8", ErrIdempotencyKeyInvalid)
 	}
 	for _, r := range key {

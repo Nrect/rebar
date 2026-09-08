@@ -75,6 +75,18 @@ func TestCheckReceipt_Rules(t *testing.T) {
 		require.ErrorIs(t, payment.CheckReceipt(good(), true, 999), payment.ErrReceiptInvalid)
 	})
 
+	// Строка на ноль не проходит даже тогда, когда сходится с расчётом: чека на
+	// ноль не бывает, а «сумма сошлась» на пустых строках — фискальный документ
+	// ни о чём.
+	t.Run("строка на ноль", func(t *testing.T) {
+		t.Parallel()
+
+		r := good()
+		r.Items = []payment.ReceiptItem{{Description: "Ничто", AmountMinor: 0, Quantity: 1, VATCode: "1"}}
+
+		require.ErrorIs(t, payment.CheckReceipt(r, true, 0), payment.ErrReceiptInvalid)
+	})
+
 	t.Run("чек без строк", func(t *testing.T) {
 		t.Parallel()
 

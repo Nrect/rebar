@@ -194,10 +194,10 @@ type Reconciler struct {
 // NewReconciler строит задание сверки; паникует на nil-сервисе и непозитивной
 // пачке — ошибка сборки обязана падать на старте, а не на первом прогоне.
 func NewReconciler(svc *Service, batch int) *Reconciler {
-	switch {
-	case svc == nil:
+	if svc == nil {
 		panic("payment.NewReconciler: service must not be nil")
-	case batch <= 0:
+	}
+	if batch <= 0 {
 		panic("payment.NewReconciler: batch must be positive")
 	}
 	return &Reconciler{svc: svc, batch: batch}
