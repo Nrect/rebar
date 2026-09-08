@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/nrect/rebar/authz/authzpg"
+	"github.com/nrect/rebar/postgres/pgtest"
 )
 
 // Обе стороны миграции применяются на пустую базу: файл уезжает в миграции
@@ -15,20 +16,11 @@ func TestSchema_AppliesBothWays(t *testing.T) {
 	t.Parallel()
 	pool := newSchemaPool(t)
 
-	raw, err := schemaSQL()
-	require.NoError(t, err)
-	up, ok := gooseSection(raw, gooseUp)
-	require.True(t, ok)
-	down, ok := gooseSection(raw, gooseDown)
-	require.True(t, ok)
-
-	_, err = pool.Exec(t.Context(), up)
-	require.NoError(t, err, "накат на пустую схему")
+	pgtest.Apply(t, pool, pgtest.GooseUp(t, schemaPath))
 	require.NoError(t, authzpg.New(pool).CheckSchema(t.Context()))
 
-	_, err = pool.Exec(t.Context(), down)
-	require.NoError(t, err, "откат")
-	require.Error(t, authzpg.New(pool).CheckSchema(t.Context()))
+	pgtest.Apply(t, pool, gooseDown(t))
+	require.Error(t, authzpg.New(pool).CheckSchema(t.Context()), "после отката таблицы нет")
 }
 
 // Schema — тот же файл побайтно: потребитель, применяющий миграцию из кода,
@@ -36,9 +28,7 @@ func TestSchema_AppliesBothWays(t *testing.T) {
 func TestSchema_EmbedMatchesFile(t *testing.T) {
 	t.Parallel()
 
-	raw, err := schemaSQL()
-	require.NoError(t, err)
-	assert.Equal(t, raw, authzpg.Schema)
+	assert.Equal(t, readSchema(t), authzpg.Schema)
 }
 
 // CheckSchema называет расхождения и не ругается на колонку потребителя.

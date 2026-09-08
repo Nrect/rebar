@@ -1,83 +1,52 @@
 package authzpg_test
 
 import (
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/nrect/rebar/postgres/pgtest"
 )
 
-const (
-	gooseUp   = "-- +goose Up"
-	gooseDown = "-- +goose Down"
-)
+// schemaPath — файл схемы; он же артефакт для goose потребителя.
+const schemaPath = "schema.sql"
 
-// gooseSection — тело секции goose: строки между маркером и следующим
-// маркером секции или концом файла; ok = false, если маркера нет. Копия из
-// pgtest (ADR-0005, «Копируемые мелочи») вместе с её правкой.
-func gooseSection(sql, marker string) (body string, ok bool) {
-	var out strings.Builder
-	inside := false
-	for line := range strings.SplitSeq(sql, "\n") {
-		directive := strings.TrimSpace(line)
-		if !strings.HasPrefix(directive, "-- +goose") {
-			if inside {
-				out.WriteString(line)
-				out.WriteString("\n")
-			}
-			continue
-		}
-		// СЕКЦИЮ ПЕРЕКЛЮЧАЮТ ТОЛЬКО Up И Down. Прочие директивы goose
-		// (StatementBegin/StatementEnd вокруг тела функции, NO TRANSACTION)
-		// — часть секции: считая их сменой секции, разбор терял бы тело
-		// функции, схема применялась бы без неё, а тест на инвариант,
-		// который эта функция держит, зеленел бы впустую.
-		if directive == gooseUp || directive == gooseDown {
-			inside = directive == marker
-			ok = ok || inside
-		}
-	}
-	return out.String(), ok
+// readSchema — файл целиком.
+func readSchema(t *testing.T) string {
+	t.Helper()
+	raw, err := os.ReadFile(schemaPath)
+	require.NoError(t, err)
+	return string(raw)
 }
 
-// Регрессия: директива внутри секции не должна её обрывать. У схемы authz
-// тела функции сегодня нет, но копия разбора обязана держать тот же контракт,
-// что и оригинал в pgtest, — иначе первый же триггер выпадет молча.
-func TestGooseSection_KeepsStatementBlocks(t *testing.T) {
-	t.Parallel()
-
-	const doc = gooseUp + "\n" +
-		"CREATE TABLE t (id INT);\n" +
-		"-- +goose StatementBegin\n" +
-		"CREATE FUNCTION f() RETURNS trigger AS $$ BEGIN RETURN NEW; END; $$ LANGUAGE plpgsql;\n" +
-		"-- +goose StatementEnd\n" +
-		gooseDown + "\n" +
-		"DROP TABLE t;\n"
-
-	up, ok := gooseSection(doc, gooseUp)
-	require.True(t, ok)
-	assert.Contains(t, up, "CREATE FUNCTION f()", "тело функции выпало из секции")
-	assert.Contains(t, up, "CREATE TABLE t")
-	assert.NotContains(t, up, "DROP TABLE")
-
-	down, ok := gooseSection(doc, gooseDown)
-	require.True(t, ok)
-	assert.Contains(t, down, "DROP TABLE t")
-	assert.NotContains(t, down, "CREATE FUNCTION")
+// gooseDown — тело обратной секции. pgtest отдаёт только Up, а заводить
+// вторую копию разбора секций незачем: в схемах тулкита Down последняя,
+// поэтому это всё, что идёт после её маркера. Единственность маркера и
+// порядок секций проверяет TestSchemaFile_HoldsContract.
+func gooseDown(t *testing.T) string {
+	t.Helper()
+	_, down, ok := strings.Cut(readSchema(t), pgtest.GooseDownMarker)
+	require.True(t, ok, "в %s нет маркера %q", schemaPath, pgtest.GooseDownMarker)
+	return down
 }
 
 // Схема — артефакт для goose потребителя: имена, на которые опирается адаптер,
-// проверяются в файле, а не в его копии в коде.
+// проверяются в файле, а не в его копии в коде. Заодно это проверка
+// допущения, на котором стоит gooseDown: маркер Down один и стоит после Up.
 func TestSchemaFile_HoldsContract(t *testing.T) {
 	t.Parallel()
 
-	raw, err := schemaSQL()
-	require.NoError(t, err)
-	up, ok := gooseSection(raw, gooseUp)
-	require.True(t, ok)
-	down, ok := gooseSection(raw, gooseDown)
-	require.True(t, ok)
+	raw := readSchema(t)
+	up := pgtest.GooseUp(t, schemaPath)
+	down := gooseDown(t)
+
+	require.Equal(t, 1, strings.Count(raw, pgtest.GooseDownMarker), "маркер Down обязан быть один")
+	require.Equal(t, 1, strings.Count(raw, pgtest.GooseUpMarker), "маркер Up обязан быть один")
+	require.Less(t, strings.Index(raw, pgtest.GooseUpMarker), strings.Index(raw, pgtest.GooseDownMarker),
+		"Down обязана идти после Up: на этом стоит разбор обратной секции")
 
 	for _, want := range []string{
 		"CREATE TABLE authz_role_assignments",
