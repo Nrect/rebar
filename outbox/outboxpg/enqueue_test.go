@@ -3,7 +3,6 @@ package outboxpg_test
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"testing"
 	"time"
 
@@ -130,7 +129,7 @@ func TestStore_Enqueue_ErrorHidesPayload(t *testing.T) {
 	require.Error(t, err)
 	require.ErrorIs(t, err, outbox.ErrUnavailable)
 	var leaked *pgconn.PgError
-	assert.False(t, errors.As(err, &leaked),
+	assert.NotErrorAs(t, err, &leaked,
 		"*pgconn.PgError достаётся через errors.As — вместе с ним достаётся и Detail со всей строкой")
 	assert.NotContains(t, err.Error(), secretPayload)
 	assert.NotContains(t, err.Error(), "Failing row")
