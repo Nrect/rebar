@@ -391,3 +391,34 @@ func TestNewReconciler_PanicsOnBadArguments(t *testing.T) {
 	assert.Panics(t, func() { payment.NewReconciler(nil, 1) })
 	assert.Panics(t, func() { payment.NewReconciler(h.svc, 0) })
 }
+
+// Курсор сбрасывается ТОЛЬКО на короткой пачке. Сбрось его на полной — и
+// следующий прогон перечитает ту же голову очереди, а хвост не спросят никогда;
+// в хвосте при этом лежит тот, кто заплатил только что и чей вебхук потерялся.
+//
+// Тест устроен так, что разница видна: намерения первой пачки остаются в
+// pending (провайдер отвечает «платёж жив»), поэтому при сбросе курсора второй
+// прогон занялся бы ими снова и до третьего не дошёл бы.
+func TestReconciler_Run_FullBatchKeepsCursor(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	queue := h.startQueue(t, 3)
+	for _, in := range queue[:2] {
+		h.prov.SetPayment(in.ProviderPaymentID, h.event(in, payment.EventPending, in.AmountMinor))
+	}
+	h.prov.SetPayment(queue[2].ProviderPaymentID, h.event(queue[2], payment.EventSucceeded, testAmount))
+	h.clock.Advance(h.cfg.StalePendingAfter + time.Second)
+	job := payment.NewReconciler(h.svc, 2)
+
+	done, err := job.Run(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 2, done)
+
+	done, err = job.Run(context.Background())
+
+	require.NoError(t, err)
+	assert.Equal(t, 1, done)
+	assert.Equal(t, payment.StatusSucceeded, h.mustIntent(t, queue[2].ID).Status,
+		"хвост очереди обязан быть разобран вторым прогоном")
+}

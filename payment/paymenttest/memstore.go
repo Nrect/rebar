@@ -150,6 +150,12 @@ func (m *MemStore) IntentByKey(_ context.Context, payerID uuid.UUID, key string,
 	if !ok {
 		return payment.Intent{}, false, nil
 	}
+	// Индекс без строки — это не «нашли пустое намерение», а разъехавшийся
+	// индекс либо чтение с отставшей реплики. Двойник обязан отвечать так же,
+	// как база: строки нет.
+	if _, exists := m.Intents[id]; !exists {
+		return payment.Intent{}, false, nil
+	}
 	return m.snapshot(id), true, nil
 }
 

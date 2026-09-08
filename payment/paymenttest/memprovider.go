@@ -66,6 +66,11 @@ type MemProvider struct {
 	// FailFor — ссылки, по которым провайдер не отвечает: временный сбой, ретрай
 	// осмыслен.
 	FailFor map[string]bool
+	// CreateHook — зовётся внутри CreatePayment, до ответа. Так тест изображает
+	// событие, приехавшее РОВНО между вставкой намерения и ответом провайдера:
+	// иначе эту щель не воспроизвести, а именно в ней домен обязан отдать
+	// фактическое состояние строки, а не своё ожидание.
+	CreateHook func(req payment.CreatePaymentRequest)
 	// RefundEcho — если не ноль, Refund отвечает ЭТОЙ суммой вместо запрошенной.
 	// Так изображается провайдер, вернувший не то, о чём просили: домен обязан
 	// отказаться записывать в книгу цифру, которой не было.
@@ -107,6 +112,9 @@ func (p *MemProvider) CreatePayment(_ context.Context, req payment.CreatePayment
 	defer p.mu.Unlock()
 	p.Calls["CreatePayment"]++
 	p.Created = append(p.Created, req)
+	if p.CreateHook != nil {
+		p.CreateHook(req)
+	}
 	switch {
 	case p.CreateErr != nil:
 		return payment.CreatePaymentResult{}, p.CreateErr
