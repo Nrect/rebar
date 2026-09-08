@@ -46,6 +46,24 @@ func TestPolicy_LengthBounds(t *testing.T) {
 	require.ErrorIs(t, p.Check(strings.Repeat("a", password.MaxAllowedLength+1)), password.ErrTooLong)
 }
 
+// Граница политики проверяется с обеих сторон: односторонний тест пропускает
+// сдвиг на единицу внутрь, то есть настройку, которая обязана приниматься, но
+// начинает ронять конструктор у потребителя.
+func TestPolicyConfig_AcceptsEveryBoundary(t *testing.T) {
+	t.Parallel()
+
+	for name, cfg := range map[string]password.PolicyConfig{
+		"минимум на полу":         {MinLength: password.MinAllowedLength, MaxLength: 64, MinScore: 2},
+		"максимум на потолке":     {MinLength: 10, MaxLength: password.MaxAllowedLength, MinScore: 2},
+		"минимум равен максимуму": {MinLength: 12, MaxLength: 12, MinScore: 2},
+		"порог на нуле":           {MinLength: 10, MaxLength: 64, MinScore: password.ScoreMin},
+		"порог на потолке":        {MinLength: 10, MaxLength: 64, MinScore: password.ScoreMax},
+	} {
+		assert.NotPanicsf(t, func() { password.NewPolicy(&fixedStrength{}, cfg) },
+			"%s: годная политика отвергнута", name)
+	}
+}
+
 // Порог силы: ровно порог проходит, на единицу ниже — нет.
 func TestPolicy_ScoreThreshold(t *testing.T) {
 	t.Parallel()
@@ -55,6 +73,12 @@ func TestPolicy_ScoreThreshold(t *testing.T) {
 
 	weak, _ := policy(t, 1)
 	require.ErrorIs(t, weak.Check("password below the threshold"), password.ErrTooWeak)
+
+	// Верх шкалы тоже граница: оценка ScoreMax при пороге ScoreMax обязана
+	// проходить, иначе сведение «вне шкалы — ноль» съедает законный максимум.
+	top := password.NewPolicy(&fixedStrength{score: password.ScoreMax},
+		password.PolicyConfig{MinLength: 10, MaxLength: 64, MinScore: password.ScoreMax})
+	require.NoError(t, top.Check("password at the very top"))
 }
 
 // Длина проверяется ДО силы: гигантский ввод не должен доходить до оценки,

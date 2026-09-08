@@ -22,7 +22,7 @@ var allowedByDir = map[string][]string{
 	"password": {"golang.org/x/crypto"},
 	"token":    {},
 	"pwzxcvbn": {"github.com/trustelem/zxcvbn"},
-	"authtest": {},
+	"authtest": {"github.com/google/uuid"},
 }
 
 // TestPackageImportsAreWhitelisted — страж переносимости: ни одного импорта из

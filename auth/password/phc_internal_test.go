@@ -70,6 +70,7 @@ func TestEncodeDecode_RoundTrip(t *testing.T) {
 		"рабочие":    {memoryKiB: 64 * 1024, time: 3, threads: 2, keyLen: 32, saltLen: 16},
 		"потолок":    {memoryKiB: MaxVerifyMemoryKiB, time: MaxVerifyTime, threads: MaxVerifyThreads, keyLen: MaxKeyLen, saltLen: MaxSaltLen},
 		"из истории": {memoryKiB: 19 * 1024, time: 2, threads: 1, keyLen: 32, saltLen: 16},
+		"пол при четырёх потоках": {memoryKiB: 8 * 4, time: 1, threads: 4, keyLen: MinKeyLen, saltLen: MinSaltLen},
 	} {
 		salt := bytes.Repeat([]byte{0xAB}, int(p.saltLen))
 		key := bytes.Repeat([]byte{0xCD}, int(p.keyLen))
@@ -104,6 +105,9 @@ func TestParseHeader_IsStrict(t *testing.T) {
 		"порядок другой":   "t=1,m=8192,p=1",
 		"переполнение":     "m=99999999999,t=1,p=1",
 		"шестнадцатеричн.": "m=0x2000,t=1,p=1",
+		// Пол памяти — 8*p, а не 8: с четырьмя потоками видно, что это
+		// умножение, а не какое-нибудь другое действие.
+		"память под полом четырёх потоков": "m=31,t=1,p=4",
 	} {
 		if _, err := decode("$argon2id$v=19$" + header + "$" + salt + "$" + key); !errors.Is(err, ErrHashInvalid) {
 			t.Fatalf("%s: заголовок %q принят", name, header)

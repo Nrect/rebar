@@ -22,7 +22,10 @@ func TestRealm_FormMatchesTheSchemaCheck(t *testing.T) {
 
 	re := regexp.MustCompile(realmPattern)
 	for _, s := range []string{
-		"", "a", "buyers", "staff_2", "0", "_", strings.Repeat("a", auth.MaxRealmLen),
+		// Концы диапазонов a-z и 0-9 нужны отдельно: без 'z' и '9' сдвиг
+		// границы на единицу проходит незамеченным.
+		"", "a", "z", "0", "9", "az09_", "buyers", "staff_2", "_",
+		strings.Repeat("z", auth.MaxRealmLen),
 		strings.Repeat("a", auth.MaxRealmLen+1), "Buyers", "buyers-2", "buyers.2", "buyers 2",
 		"пользователи", "buy\ners", "buyers\x00", "buyers%", "b\tuyers",
 	} {
