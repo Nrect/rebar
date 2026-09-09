@@ -59,6 +59,38 @@ func TestUploader_ExactlyAtLimitIsAccepted(t *testing.T) {
 	assert.Len(t, store.Keys(), 1)
 }
 
+// Та же граница, но по ЗАЯВЛЕННОМУ размеру: заявка ровно в потолок законна, и
+// отказ по ней запретил бы файл предельного размера у честного клиента.
+func TestUploader_ExactlyAtDeclaredLimitIsAccepted(t *testing.T) {
+	t.Parallel()
+	up, store := newUploader(t, testUploaderConfig())
+
+	obj, err := up.Upload(t.Context(), objectstore.UploadRequest{
+		Body: bytes.NewReader(objectstoretest.PNG(testMaxSize)), Size: testMaxSize,
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, int64(testMaxSize), obj.Size)
+	assert.Len(t, store.Keys(), 1)
+}
+
+// ТИП СНИМАЕТСЯ С ПЕРВЫХ SniffLen БАЙТ, а не со всего тела, и отказ SVG идёт
+// по тому же окну. Иначе настоящий PNG, у которого в сжатых данных случайно
+// встретились байты "<svg", отвергался бы как картинка со скриптом — а такие
+// байты встречаются в любом достаточно большом файле.
+func TestUploader_AcceptsImageWhoseBodyMentionsSVGBeyondTheSniffWindow(t *testing.T) {
+	t.Parallel()
+	up, store := newUploader(t, testUploaderConfig())
+	body := objectstoretest.PNG(objectstore.SniffLen * 2)
+	copy(body[objectstore.SniffLen+64:], "<svg>")
+
+	obj, err := up.Upload(t.Context(), objectstore.UploadRequest{Body: bytes.NewReader(body), Size: -1})
+
+	require.NoError(t, err)
+	assert.Equal(t, string(objectstore.ContentTypePNG), obj.ContentType)
+	assert.Len(t, store.Keys(), 1)
+}
+
 func TestUploader_OneByteOverLimitIsRejected(t *testing.T) {
 	t.Parallel()
 	up, _ := newUploader(t, testUploaderConfig())
