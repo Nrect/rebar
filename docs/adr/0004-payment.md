@@ -274,72 +274,49 @@ SKU → outbox). Порядок, зафиксированный в одном м
 | Намерение зависло в `pending` | висит вечно, деньги в подвешенном состоянии | сверка забирает состояние у провайдера, гейдж «зависшие» и алерт |
 | Чек не собрался | платёж создан, чек не пробит | отказ до создания платежа |
 
-## Схема (`paymentpg/schema.sql`, goose) — набросок
+## Схема (`payment/paymentpg/schema.sql`)
 
-```sql
-CREATE TABLE payment_intents (
-    id                  UUID PRIMARY KEY,
-    payer_id            UUID NOT NULL,
-    reference           TEXT NOT NULL,
-    amount_minor        BIGINT NOT NULL CHECK (amount_minor > 0),
-    currency            TEXT NOT NULL CHECK (currency ~ '^[A-Z]{3}$'),
-    params_digest       BYTEA NOT NULL,
-    status              TEXT NOT NULL CHECK (status IN ('pending','authorized','succeeded','canceled')),
-    provider            TEXT NOT NULL CHECK (provider ~ '^[a-z0-9_]{1,32}$'),
-    provider_payment_id TEXT NOT NULL DEFAULT '',
-    idempotency_key     TEXT NOT NULL,
-    fingerprint         BYTEA NOT NULL,
-    created_at          TIMESTAMPTZ NOT NULL,
-    updated_at          TIMESTAMPTZ NOT NULL,
-    expires_at          TIMESTAMPTZ NOT NULL
-);
-CREATE UNIQUE INDEX ux_payment_intents_key ON payment_intents (idempotency_key);
--- одно живое намерение на заказ: второе только после терминального первого
-CREATE UNIQUE INDEX ux_payment_intents_live_reference ON payment_intents (reference)
-    WHERE status IN ('pending','authorized');
+Набросок схемы из этого ADR снят 2026-09-09: он разошёлся и с `ports.go`
+(`ParamsFingerprint` вместо `params_digest`, статусы `created`/`failed`/
+`expired`, `Method`, `AutoCapture`, `Confirmation`, `SettledAt`), и с
+реализацией. Двух описаний схемы не бывает: одно всегда протухает, и протухает
+молча. Источник — сам файл, а ниже только решения, которых в SQL не видно.
 
-CREATE TABLE payment_intent_items (
-    intent_id    UUID NOT NULL REFERENCES payment_intents(id),
-    position     INT  NOT NULL CHECK (position >= 0),
-    product_id   TEXT NOT NULL,
-    amount_minor BIGINT NOT NULL CHECK (amount_minor > 0),
-    PRIMARY KEY (intent_id, position)
-);
+Ограничения схемы обязаны зеркалить закрытые множества ядра; это проверяет
+`TestChecksMirrorClosedSets` (CHECK ⊇ `All*`), а имена ограничений и индексов —
+контракт, потому что адаптер разбирает конфликты по имени, а не по SQLSTATE.
 
-CREATE TABLE payment_events (              -- inbox: дедуп событий провайдера
-    provider          TEXT NOT NULL,
-    provider_event_id TEXT NOT NULL,
-    intent_id         UUID NOT NULL REFERENCES payment_intents(id),
-    kind              TEXT NOT NULL,
-    received_at       TIMESTAMPTZ NOT NULL,
-    PRIMARY KEY (provider, provider_event_id)
-);
-
-CREATE TABLE payment_ledger (              -- append-only
-    id                UUID PRIMARY KEY,
-    intent_id         UUID NOT NULL REFERENCES payment_intents(id),
-    kind              TEXT NOT NULL CHECK (kind IN ('capture','refund')),
-    amount_minor      BIGINT NOT NULL CHECK (amount_minor > 0),
-    currency          TEXT NOT NULL,
-    reverses_entry_id UUID REFERENCES payment_ledger(id),
-    provider_ref      TEXT NOT NULL DEFAULT '',
-    created_at        TIMESTAMPTZ NOT NULL,
-    CONSTRAINT payment_ledger_refund_chk CHECK ((kind = 'refund') = (reverses_entry_id IS NOT NULL))
-);
--- одно зачисление на намерение
-CREATE UNIQUE INDEX ux_payment_ledger_capture ON payment_ledger (intent_id) WHERE kind = 'capture';
-CREATE INDEX ix_payment_ledger_reverses ON payment_ledger (reverses_entry_id) WHERE kind = 'refund';
-```
-
-Плюс два триггера, оба `ENABLE ALWAYS` — то есть работающие и под ролью
-владельца схемы, и при репликации:
-
-- **неизменяемость книги**: `UPDATE` и `DELETE` по `payment_ledger` отвергаются.
-  Инвариант «append-only», который держится только дисциплиной кода, не держится
-  ничем: миграция или ручная правка в проде обходят его молча;
-- **потолок возвратов**: сумма возвратов по зачислению не может его превысить.
-  Второй рубеж к блокировке намерения — на случай, если в книгу однажды напишут
-  в обход сервиса.
+- **Идемпотентность — `UNIQUE (payer_id, idempotency_key)`, полным индексом.**
+  Провалившаяся попытка ключ не освобождает: иначе повтор с тем же ключом после
+  отказа создал бы вторую сделку. Ключ уникален в пределах плательщика, чтобы
+  ключ, выданный клиентом, не сталкивался с чужим.
+- **Именованное `CONSTRAINT`, а не `CREATE UNIQUE INDEX`.** На него ссылается
+  `ON CONFLICT ON CONSTRAINT` адаптера, а `ON CONSTRAINT` умеет только
+  ограничения. Это не украшение: перехват 23505 из ошибки оставил бы
+  транзакцию потребителя прерванной, и его собственная работа в той же
+  транзакции погибла бы вместе с нашей пробой.
+- **«Одно живое намерение на `reference`» — частичный уникальный индекс**
+  (`WHERE status IN ('created','pending','authorized')`), назвать его в
+  `ON CONFLICT ON CONSTRAINT` нельзя. Поэтому этот конфликт адаптер узнаёт по
+  имени индекса в ошибке — два разных механизма на две разные записи в одной
+  вставке, и это осознанно.
+- **Момент зачисления — колонка `settled_at`, CHECK
+  `(status = 'succeeded') = (settled_at IS NOT NULL)`.** Отсюда же следует, что
+  перевести намерение в `succeeded` мимо книги (`Transition`) база не даст: у
+  той операции момента зачисления нет.
+- **Строка приёма события пишется всегда, в том числе орфану** (`intent_id
+  IS NULL`): потерянный орфан — это невидимая утечка ключа подписи либо вебхук
+  со стенда, прилетевший в прод. Счётчик `deliveries` растёт на повторах:
+  растущий счётчик означает, что наш ответ до провайдера не доезжает.
+- **Книга append-only держится триггерами, а не дисциплиной кода**, оба
+  `ENABLE ALWAYS` — иначе триггер молчит под ролью владельца схемы и при
+  репликации, то есть ровно тогда, когда правят руками. Триггеров три:
+  неизменяемость (`UPDATE`/`DELETE`), запрет `TRUNCATE` (построчный триггер
+  стирание таблицы целиком не ловит) и потолок возвратов — второй рубеж к
+  блокировке намерения на случай, если в книгу однажды напишут мимо сервиса.
+- **Идемпотентность строки книги — `UNIQUE (intent_id, idempotency_key)`**, а
+  не по `reverses_entry_id`: частичных возвратов на одно зачисление бывает
+  несколько. Одно зачисление на намерение держит отдельный частичный индекс.
 
 Внешних ключей на таблицы потребителя нет: пакет не знает, как называется его
 таблица заказов. Потребитель добавляет их своей миграцией, если хочет
