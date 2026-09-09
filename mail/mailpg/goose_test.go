@@ -56,6 +56,8 @@ func TestSchemaFile_HoldsContract(t *testing.T) {
 		"ix_email_outbox_due",
 		"ix_email_outbox_terminal",
 		"email_outbox_status_chk", // имя — контракт: по нему разбирают конфликт
+		"email_outbox_fail_reason_chk",
+		"email_outbox_attempts_chk",
 		"email_outbox_body_cleared_chk",
 		"email_outbox_lock_chk",
 	} {
@@ -74,11 +76,40 @@ func TestSchemaFile_HoldsContract(t *testing.T) {
 func TestSchemaFile_ChecksMirrorClosedSets(t *testing.T) {
 	t.Parallel()
 
-	statuses := checkValues(t, pgtest.GooseUp(t, schemaPath), "email_outbox_status_chk")
+	up := pgtest.GooseUp(t, schemaPath)
+
+	statuses := checkValues(t, up, "email_outbox_status_chk")
 	for _, st := range mail.AllStatuses {
 		assert.Contains(t, statuses, string(st), "статус %q не зеркалится CHECK", st)
 	}
 	assert.Len(t, statuses, len(mail.AllStatuses), "CHECK и AllStatuses разъехались")
+
+	// У причин отказа CHECK ⊇ набора, а не равен ему: в колонке живёт ещё
+	// пустая строка — «не падало». В AllFailReasons её нет и быть не должно,
+	// это не причина отказа; поэтому лишнее проверяется поимённо, а не длиной.
+	// Иначе следующий добавит '' в AllFailReasons ради зелёного теста и сломает
+	// домен: пустая причина стала бы законным исходом Finish.
+	reasons := checkValues(t, up, "email_outbox_fail_reason_chk")
+	for _, r := range mail.AllFailReasons {
+		assert.Contains(t, reasons, string(r), "причина отказа %q не зеркалится CHECK", r)
+	}
+	assert.ElementsMatch(t, []string{""}, extra(reasons, mail.AllFailReasons),
+		"сверх AllFailReasons в CHECK допустима ровно пустая строка")
+}
+
+// extra — значения CHECK, которых нет в закрытом наборе домена.
+func extra[T ~string](values []string, closed []T) []string {
+	known := make(map[string]bool, len(closed))
+	for _, c := range closed {
+		known[string(c)] = true
+	}
+	out := make([]string, 0, len(values))
+	for _, v := range values {
+		if !known[v] {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 // checkValues — литералы из IN (...) именованного CHECK.

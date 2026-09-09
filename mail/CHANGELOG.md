@@ -15,26 +15,40 @@
   была в том, что её никто не сторожил.
 
 ### Changed
-- **CHECK словаря статусов получил имя `email_outbox_status_chk`.** Это
-  МИГРАЦИЯ для того, кто копировал схему `v0.1.0`: там ограничение объявлено
-  без имени, и Postgres выдал ему своё (`email_outbox_status_check`). После
-  обновления `CheckSchema` скажет на старте «ограничения
-  email_outbox_status_chk нет» — это не поломка, а то, ради чего он и зовётся.
-  Починка на стороне потребителя — одна миграция:
+- **Все безымянные CHECK получили имена: `email_outbox_status_chk`,
+  `email_outbox_fail_reason_chk`, `email_outbox_attempts_chk`.** Соседние
+  `_body_cleared_chk` и `_lock_chk` имена имели с первого дня — безымянными
+  остальные три были недосмотром, а не решением.
+
+  Это **одна миграция** для того, кто копировал схему `v0.1.0`: там эти три
+  ограничения объявлены без имени, и Postgres выдал им свои. После обновления
+  `CheckSchema` скажет на старте, каких ограничений нет — это не поломка, а то,
+  ради чего он и зовётся. Имена проверены на схеме тега `mail/v0.1.0`:
 
   ```sql
   ALTER TABLE email_outbox DROP CONSTRAINT email_outbox_status_check;
   ALTER TABLE email_outbox ADD CONSTRAINT email_outbox_status_chk
       CHECK (status IN ('pending','sending','sent','failed','expired','suppressed'));
+
+  ALTER TABLE email_outbox DROP CONSTRAINT email_outbox_fail_reason_check;
+  ALTER TABLE email_outbox ADD CONSTRAINT email_outbox_fail_reason_chk
+      CHECK (fail_reason IN ('', 'rejected','exhausted','uncertain'));
+
+  ALTER TABLE email_outbox DROP CONSTRAINT email_outbox_attempts_check;
+  ALTER TABLE email_outbox ADD CONSTRAINT email_outbox_attempts_chk
+      CHECK (attempts >= 0);
   ```
 
-  Момент выбран самый дешёвый: у схемы ещё нет потребителей. Через месяц это
-  была бы миграция у живого магазина. Соседние ограничения (`_body_cleared_chk`,
-  `_lock_chk`) имена имели с первого дня — безымянный здесь был недосмотром.
-- Имя стало контрактом сразу в четырёх местах, а не только в файле:
-  `TestSchemaFile_HoldsContract` требует его в схеме, `expectedChecks` — в базе
-  потребителя, табличный тест `CheckSchema` проверяет, что пропажа названа по
-  имени, а `TestStore_Enqueue_ErrorHidesBody` требует имя ограничения литералом.
+  Проверки не меняются — меняются только имена, поэтому пересчёта строк и
+  простоя миграция не требует. Момент выбран самый дешёвый: у схемы ещё нет
+  потребителей. Через месяц это была бы миграция у живого магазина.
+- Имена стали контрактом, а не строкой в файле: `TestSchemaFile_HoldsContract`
+  требует все пять в схеме, `expectedChecks` — в базе потребителя, табличный
+  тест `CheckSchema` проверяет, что пропажа названа по имени, а
+  `TestStore_Enqueue_ErrorHidesBody` требует литералом имя ограничения, которым
+  база отбивает вставку (`email_outbox_body_cleared_chk`: строка с телом и
+  чужим статусом нарушает сразу два CHECK, и Postgres называет это).
+  Одного места хватило бы, чтобы имя разъехалось при следующей правке.
 
 - `mailpg` переведён на общую границу ошибки `postgres.Sanitize` — своя копия
   была последней из пяти адаптеров. Копия вела себя верно, но теряла имя
@@ -66,13 +80,20 @@
   зависимостей»; потребителю на Go 1.25 нужен бамп компилятора.
 
 ### Added
-- `TestSchemaFile_ChecksMirrorClosedSets` — guard «CHECK ⊇ `AllStatuses`»,
-  которого у `mailpg` не было вовсе, хотя комментарий у `mail.AllStatuses`
-  обещал его («держит guard-тест и CHECK адаптера») и требует
+- `TestSchemaFile_ChecksMirrorClosedSets` — guard «CHECK ⊇ `All*`» для обоих
+  закрытых наборов, доезжающих до базы (`AllStatuses` и `AllFailReasons`).
+  У `mailpg` его не было вовсе, хотя комментарий у `mail.AllStatuses` обещал
+  его («держит guard-тест и CHECK адаптера») и требует
   [CONVENTIONS §9](../CONVENTIONS.md#9-схема-адаптера). Раньше он и не мог
   существовать: адресовать безымянный CHECK нечем. Расхождение словаря кода и
-  словаря базы иначе всплывает только в проде — на первом новом статусе база
+  словаря базы иначе всплывает только в проде — на первом новом значении база
   отобьёт строку, которую домен считает законной.
+
+  У причин отказа сверка ИМЕННО «⊇», а не равенство: в колонке живёт ещё пустая
+  строка — «не падало», и в `AllFailReasons` её нет и быть не должно. Лишнее
+  сверяется поимённо, а не длиной, поэтому чужое значение в CHECK тест поймает,
+  а соблазна дописать `''` в закрытый набор ради зелёного теста не возникнет —
+  пустая причина стала бы законным исходом `Finish`.
 
 ## [0.1.0] — 2026-09-07
 

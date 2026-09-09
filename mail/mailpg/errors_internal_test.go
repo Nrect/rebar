@@ -23,8 +23,8 @@ func TestStoreError_FoldsPgErrorWithoutDetail(t *testing.T) {
 	pgErr := &pgconn.PgError{
 		Severity:       "ERROR",
 		Code:           "23514",
-		Message:        `new row for relation "email_outbox" violates check constraint "email_outbox_fail_reason_check"`,
-		ConstraintName: "email_outbox_fail_reason_check",
+		Message:        `new row for relation "email_outbox" violates check constraint "email_outbox_fail_reason_chk"`,
+		ConstraintName: "email_outbox_fail_reason_chk",
 		Detail:         "Failing row contains (7b1c…, verify, " + body + ", …).",
 	}
 
@@ -41,7 +41,7 @@ func TestStoreError_FoldsPgErrorWithoutDetail(t *testing.T) {
 
 	var sanitized *postgres.Error
 	require.ErrorAs(t, err, &sanitized, "наружу едет очищенная ошибка общей границы")
-	assert.Equal(t, "email_outbox_fail_reason_check", sanitized.Constraint)
+	assert.Equal(t, "email_outbox_fail_reason_chk", sanitized.Constraint)
 	assert.NotContains(t, sanitized.Message, body)
 }
 

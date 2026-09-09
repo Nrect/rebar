@@ -65,6 +65,8 @@ var expectedColumns = map[string]string{
 // статусов, ни инварианты Finish.
 var expectedChecks = []string{
 	"email_outbox_status_chk",
+	"email_outbox_fail_reason_chk",
+	"email_outbox_attempts_chk",
 	"email_outbox_body_cleared_chk",
 	"email_outbox_lock_chk",
 }
