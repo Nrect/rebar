@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/nrect/rebar/payment/paymentpg"
+	"github.com/nrect/rebar/postgres/pgtest"
 )
 
 // Обе стороны миграции применяются на пустую схему: Up, затем Down, затем Up
@@ -15,19 +16,13 @@ func TestSchema_UpDownUp(t *testing.T) {
 	t.Parallel()
 
 	pool := newSchemaPool(t)
-	raw, err := schemaSQL()
-	require.NoError(t, err)
-	up, ok := gooseSection(raw, gooseUp)
-	require.True(t, ok)
-	down, ok := gooseSection(raw, gooseDown)
-	require.True(t, ok)
+	up := pgtest.GooseUp(t, schemaPath)
+	down := gooseDown(t)
 
 	for range 2 {
-		_, err = pool.Exec(t.Context(), up)
-		require.NoError(t, err, "применение Up")
+		pgtest.Apply(t, pool, up)
 		require.NoError(t, paymentpg.New(pool, paymentpg.Options{}).CheckSchema(t.Context()))
-		_, err = pool.Exec(t.Context(), down)
-		require.NoError(t, err, "применение Down")
+		pgtest.Apply(t, pool, down)
 	}
 }
 

@@ -1,84 +1,59 @@
 package paymentpg_test
 
 import (
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/nrect/rebar/postgres/pgtest"
 )
 
-const (
-	gooseUp   = "-- +goose Up"
-	gooseDown = "-- +goose Down"
-)
+// schemaPath — файл схемы; он же артефакт для goose потребителя.
+const schemaPath = "schema.sql"
 
-// gooseSection — тело секции goose: строки между маркером секции и следующим
-// маркером секции либо концом файла.
-//
-// Своя, а не pgtest.GooseUp: у схемы есть тела функций с ';' внутри, и они
-// обязаны быть обёрнуты в StatementBegin/End для раннера потребителя. pgtest
-// считает секцией ЛЮБУЮ директиву «-- +goose», поэтому на StatementBegin он
-// обрывает секцию и молча отдаёт обрезанную схему.
-func gooseSection(sql, marker string) (body string, ok bool) {
-	var out strings.Builder
-	inside := false
-	for line := range strings.SplitSeq(sql, "\n") {
-		directive := strings.TrimSpace(line)
-		if directive == gooseUp || directive == gooseDown {
-			inside = directive == marker
-			ok = ok || inside
-			continue
-		}
-		if strings.HasPrefix(directive, "-- +goose") {
-			continue // StatementBegin/End — разметка раннера, а не текст SQL
-		}
-		if inside {
-			out.WriteString(line)
-			out.WriteString("\n")
-		}
-	}
-	return out.String(), ok
+// readSchema — файл целиком.
+func readSchema(t *testing.T) string {
+	t.Helper()
+	raw, err := os.ReadFile(schemaPath)
+	require.NoError(t, err)
+	return string(raw)
 }
 
-func TestGooseSection(t *testing.T) {
-	t.Parallel()
-
-	const doc = "-- заголовок\n" +
-		gooseUp + "\nCREATE TABLE t (id INT);\n" +
-		"-- +goose StatementBegin\nCREATE FUNCTION f() RETURNS trigger AS $$\nBEGIN\nRETURN NEW;\nEND;\n$$;\n" +
-		"-- +goose StatementEnd\nCREATE TRIGGER g BEFORE INSERT ON t EXECUTE FUNCTION f();\n" +
-		gooseDown + "\nDROP TABLE t;\n"
-
-	up, ok := gooseSection(doc, gooseUp)
-	require.True(t, ok)
-	assert.Contains(t, up, "CREATE TABLE t")
-	assert.Contains(t, up, "RETURN NEW;", "тело функции не обрывается на StatementBegin")
-	assert.Contains(t, up, "CREATE TRIGGER g", "секция продолжается после StatementEnd")
-	assert.NotContains(t, up, "+goose", "маркеры в SQL не уезжают")
-	assert.NotContains(t, up, "DROP TABLE")
-	assert.NotContains(t, up, "-- заголовок", "текст до первого маркера не в секции")
-
-	down, ok := gooseSection(doc, gooseDown)
-	require.True(t, ok)
-	assert.Contains(t, down, "DROP TABLE t")
-	assert.NotContains(t, down, "CREATE TABLE")
-
-	_, ok = gooseSection(doc, "-- +goose Nope")
-	assert.False(t, ok, "маркера нет — секции нет")
+// gooseDown — тело обратной секции. Секцию Up отдаёт pgtest.GooseUp; вторая
+// копия разбора завела бы вторую правду о строке директивы, а в схемах тулкита
+// Down последняя, поэтому это всё, что идёт после её маркера. Допущение
+// проверяет TestSchemaFile_HoldsContract: без него переставленные секции
+// отдали бы обрезанное тело вместо падения.
+func gooseDown(t *testing.T) string {
+	t.Helper()
+	_, down, ok := strings.Cut(readSchema(t), pgtest.GooseDownMarker)
+	require.True(t, ok, "в %s нет маркера %q", schemaPath, pgtest.GooseDownMarker)
+	return down
 }
 
 // Схема — артефакт для goose потребителя: имена, на которые опирается адаптер,
-// проверяются в файле, а не в его копии в коде.
+// проверяются в файле, а не в его копии в коде. Заодно это проверка допущения,
+// на котором стоит gooseDown: маркеров ровно по одному и Up идёт раньше Down.
 func TestSchemaFile_HoldsContract(t *testing.T) {
 	t.Parallel()
 
-	raw, err := schemaSQL()
-	require.NoError(t, err)
-	up, ok := gooseSection(raw, gooseUp)
-	require.True(t, ok)
-	down, ok := gooseSection(raw, gooseDown)
-	require.True(t, ok)
+	raw := readSchema(t)
+	up := pgtest.GooseUp(t, schemaPath)
+	down := gooseDown(t)
+
+	require.Equal(t, 1, strings.Count(raw, pgtest.GooseUpMarker), "маркер Up обязан быть один")
+	require.Equal(t, 1, strings.Count(raw, pgtest.GooseDownMarker), "маркер Down обязан быть один")
+	require.Less(t, strings.Index(raw, pgtest.GooseUpMarker), strings.Index(raw, pgtest.GooseDownMarker),
+		"Down обязана идти после Up: на этом стоит разбор обратной секции")
+
+	// Тела функций с ';' внутри обёрнуты в StatementBegin/End для раннера
+	// потребителя; разбор pgtest их не считает границей секции, иначе схема
+	// применялась бы без триггеров книги, а тесты зеленели бы на ней впустую.
+	assert.Contains(t, up, "RETURN NEW", "тело функции не обрывается на StatementBegin")
+	assert.NotContains(t, up, "+goose", "директивы раннера в тело не попадают")
 
 	for _, want := range []string{
 		"CREATE TABLE payment_intents",

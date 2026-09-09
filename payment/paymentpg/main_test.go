@@ -6,31 +6,17 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/nrect/rebar/payment"
 	"github.com/nrect/rebar/payment/paymentpg"
+	"github.com/nrect/rebar/postgres/pgtest"
 )
-
-// postgresImage — digest-пин, как у mailpg.
-const postgresImage = "postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685"
-
-// envDatabaseURL — общий сервер вместо контейнера. Нужен прогону мутантов:
-// иначе каждый мутант поднимает свой Postgres, и прогон врёт таймаутами.
-const envDatabaseURL = "TEST_DATABASE_URL"
-
-// maxPoolConns — потолок соединений на пул: тестам гонки нужно несколько
-// параллельных транзакций, а сумма пулов обязана остаться ниже
-// max_connections сервера.
-const maxPoolConns = 6
 
 // secretReference — «содержимое строки» тестов: ищем его в текстах ошибок.
 const secretReference = "order:SECRET-42"
@@ -42,9 +28,11 @@ const (
 	otherCurrency = "KZT"
 )
 
-// adminPool — общий пул к базе прогона; каждый тест заводит через него свою
-// схему, поэтому тесты идут параллельно и не видят строк друг друга.
-var adminPool *pgxpool.Pool
+// db — база на весь тестовый бинарь; схему каждый тест заводит свою. Стенд
+// общий с остальными адаптерами тулкита (postgres/pgtest): он умеет
+// TEST_DATABASE_URL, без которого мутационный прогон поднимал бы контейнер на
+// каждого мутанта.
+var db *pgtest.DB
 
 func TestMain(m *testing.M) {
 	flag.Parse() // testing.Short() до m.Run требует разобранных флагов
@@ -52,57 +40,15 @@ func TestMain(m *testing.M) {
 		os.Exit(m.Run()) // интеграционные тесты пропустят себя сами
 	}
 	ctx := context.Background()
-	dsn, stop, err := startPostgres(ctx)
+	started, err := pgtest.Start(ctx, pgtest.Options{})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "старт Postgres:", err)
 		os.Exit(1)
 	}
-	if adminPool, err = newPool(ctx, dsn, ""); err != nil {
-		fmt.Fprintln(os.Stderr, "пул к Postgres:", err)
-		os.Exit(1)
-	}
+	db = started
 	code := m.Run()
-	adminPool.Close()
-	stop(context.Background())
+	db.Close(ctx)
 	os.Exit(code)
-}
-
-// startPostgres — общий сервер из TEST_DATABASE_URL либо свой контейнер.
-func startPostgres(ctx context.Context) (dsn string, stop func(context.Context), err error) {
-	if server := os.Getenv(envDatabaseURL); server != "" {
-		return server, func(context.Context) {}, nil
-	}
-	ctr, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
-		ContainerRequest: testcontainers.ContainerRequest{
-			Image:        postgresImage,
-			ExposedPorts: []string{"5432/tcp"},
-			Env: map[string]string{
-				"POSTGRES_USER":     "payment",
-				"POSTGRES_PASSWORD": "payment",
-				"POSTGRES_DB":       "payment",
-			},
-			WaitingFor: wait.ForAll(
-				// Инициализация поднимает временный сервер и перезапускает его:
-				// строка в логе появляется дважды, годится вторая.
-				wait.ForLog("database system is ready to accept connections").WithOccurrence(2),
-				wait.ForListeningPort("5432/tcp"),
-			).WithStartupTimeoutDefault(120 * time.Second),
-		},
-		Started: true,
-	})
-	if err != nil {
-		return "", nil, err
-	}
-	host, err := ctr.Host(ctx)
-	if err != nil {
-		return "", nil, err
-	}
-	port, err := ctr.MappedPort(ctx, "5432")
-	if err != nil {
-		return "", nil, err
-	}
-	return fmt.Sprintf("postgres://payment:payment@%s:%d/payment", host, port.Num()),
-		func(ctx context.Context) { _ = ctr.Terminate(ctx) }, nil
 }
 
 // newStore — схема на тест плюс адаптер над ней. Up применяется из schema.sql,
@@ -111,64 +57,19 @@ func startPostgres(ctx context.Context) (dsn string, stop func(context.Context),
 func newStore(t *testing.T, opts paymentpg.Options) (*paymentpg.Store, *pgxpool.Pool) {
 	t.Helper()
 	pool := newSchemaPool(t)
-	_, err := pool.Exec(t.Context(), schemaUp(t))
-	require.NoError(t, err, "применение -- +goose Up из schema.sql")
+	pgtest.Apply(t, pool, pgtest.GooseUp(t, schemaPath))
 	return paymentpg.New(pool, opts), pool
 }
 
 // newSchemaPool — пул в пустую схему теста: миграция ещё не применена.
 func newSchemaPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	if testing.Short() {
-		t.Skip("интеграционный тест: нужен Docker или " + envDatabaseURL)
-	}
-	ctx := context.Background()
-	schema := "t" + strings.ReplaceAll(uuid.NewString(), "-", "")
-	_, err := adminPool.Exec(ctx, "CREATE SCHEMA "+schema)
-	require.NoError(t, err, "создание схемы теста")
-
-	pool, err := newPool(ctx, adminPool.Config().ConnString(), schema)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		pool.Close()
-		// Схема убирается за собой: на общем сервере (TEST_DATABASE_URL) её
-		// иначе накопится по одной на тест на каждый прогон.
-		_, _ = adminPool.Exec(context.Background(), "DROP SCHEMA "+schema+" CASCADE")
-	})
-	return pool
+	pgtest.Short(t)
+	return pgtest.Schema(t, db)
 }
 
-func newPool(ctx context.Context, dsn, schema string) (*pgxpool.Pool, error) {
-	cfg, err := pgxpool.ParseConfig(dsn)
-	if err != nil {
-		return nil, err
-	}
-	cfg.MaxConns = maxPoolConns
-	cfg.MinConns = 0
-	if schema != "" {
-		cfg.ConnConfig.RuntimeParams["search_path"] = schema
-	}
-	return pgxpool.NewWithConfig(ctx, cfg)
-}
-
-// schemaSQL — файл читается один раз на пакет.
-var schemaSQL = sync.OnceValues(func() (string, error) {
-	raw, err := os.ReadFile("schema.sql")
-	return string(raw), err
-})
-
-func schemaUp(t *testing.T) string {
-	t.Helper()
-	raw, err := schemaSQL()
-	require.NoError(t, err)
-	up, ok := gooseSection(raw, gooseUp)
-	require.True(t, ok, "в schema.sql нет маркера %s", gooseUp)
-	return up
-}
-
-// testNow — микросекунды: timestamptz хранит их, наносекунды Go теряет, и
-// сравнение прочитанного времени с исходным иначе всегда красное.
-func testNow() time.Time { return time.Now().UTC().Truncate(time.Microsecond) }
+// testNow — момент так, как его хранит timestamptz: UTC и микросекунды.
+func testNow() time.Time { return pgtest.Now() }
 
 // intent — намерение в том виде, в каком его отдаёт payment.Service.Start.
 func intent(mods ...func(*payment.Intent)) payment.Intent {
