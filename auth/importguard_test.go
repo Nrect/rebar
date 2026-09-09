@@ -19,6 +19,7 @@ import (
 // свою криптографию в пакете аутентификации. Библиотека одна, каталог один.
 var allowedByDir = map[string][]string{
 	".":        {"github.com/google/uuid"},
+	"loginid":  {"golang.org/x/text"},
 	"password": {"golang.org/x/crypto"},
 	"token":    {},
 	"pwzxcvbn": {"github.com/trustelem/zxcvbn"},
@@ -49,16 +50,31 @@ func TestImportGuard_Fires(t *testing.T) {
 	module, _ := selfImportPath(t)
 	corpus := map[string][]string{"testdata/badcore": {}}
 	found := scan(t, "testdata/badcore", module, module, corpus)
-	if len(found) != 1 {
-		t.Fatalf("страж не сработал на корпусе с запрещённым импортом: находок %d, ожидалась одна: %v", len(found), found)
+
+	// В корпусе два файла и два разных класса нарушения: чужая библиотека
+	// (драйвер) и СОСЕДНИЙ МОДУЛЬ тулкита. Второй важнее: он выглядит «своим»,
+	// запрет на драйвер его не ловит, а ADR-0005 разрешает внутри rebar только
+	// kit, postgres/pgtest из тестов и postgres — адаптерам хранилища.
+	for _, want := range []string{"pgx", "rebar/postgres"} {
+		var hit bool
+		for _, v := range found {
+			if strings.Contains(v, want) {
+				hit = true
+				break
+			}
+		}
+		if !hit {
+			t.Fatalf("страж не сработал на импорте %s: находки %v", want, found)
+		}
 	}
-	if !strings.Contains(found[0], "pgx") {
-		t.Fatalf("находка не про запрещённый импорт: %s", found[0])
+	if len(found) != 2 {
+		t.Fatalf("ожидались две находки, получено %d: %v", len(found), found)
 	}
 
-	// Каталог без записи в белом списке тоже обязан ронять тест: новый
-	// подпакет объявляет свои зависимости явно, а не наследует чужие.
-	if undeclared := scan(t, "testdata/badcore", module, module, map[string][]string{}); len(undeclared) != 1 {
+	// Каталог без записи в белом списке тоже обязан ронять тест — по находке
+	// на файл: новый подпакет объявляет свои зависимости явно, а не наследует
+	// чужие.
+	if undeclared := scan(t, "testdata/badcore", module, module, map[string][]string{}); len(undeclared) != len(found) {
 		t.Fatalf("каталог без записи в белом списке прошёл молча: %v", undeclared)
 	}
 }
