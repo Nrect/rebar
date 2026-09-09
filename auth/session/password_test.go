@@ -376,3 +376,37 @@ func (s *stand) mustID(t *testing.T, login string) uuid.UUID {
 	require.NoError(t, err)
 	return id.ID
 }
+
+// Повторная отправка ссылки подтверждения РАБОТАЕТ — тихий no-op бывает только
+// у неизвестного, негодного и уже подтверждённого адреса.
+func TestService_RequestVerification_SendsLinkToUnverified(t *testing.T) {
+	t.Parallel()
+
+	st := newStand(t)
+	id := st.seed(t, knownLogin, func(id *auth.Identity) { id.Verified = false })
+
+	require.NoError(t, st.svc.RequestVerification(t.Context(), knownLogin))
+
+	note, ok := st.tokens.LastIssued()
+	require.True(t, ok, "ссылка подтверждения обязана уйти")
+	assert.Equal(t, session.NotifyVerify, note.Kind)
+	assert.Equal(t, knownLogin, note.Login)
+	assert.Equal(t, 1, st.tokens.Live(testRealm, id.ID, token.PurposeVerify))
+	assert.Equal(t, 1, st.journal.CountOf(session.EventTokenIssued))
+}
+
+// Сбой выдачи токена наружу не проглатывается: «ссылка отправлена» при
+// незаписанной строке — это письмо в никуда, которого человек будет ждать.
+func TestService_RequestReset_FailsClosedWhenIssueFails(t *testing.T) {
+	t.Parallel()
+
+	st := newStand(t)
+	st.seed(t, knownLogin)
+	st.tokens.Err = authtest.ErrInjected
+
+	err := st.svc.RequestReset(t.Context(), knownLogin)
+
+	require.ErrorIs(t, err, auth.ErrUnavailable)
+	assert.Zero(t, st.journal.CountOf(session.EventTokenIssued),
+		"событие «токен выдан» без выданного токена — ложь в журнале")
+}

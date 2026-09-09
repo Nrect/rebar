@@ -24,7 +24,14 @@ func testConfig() password.HasherConfig {
 	cfg.Time = 1
 	cfg.Threads = 1
 	cfg.Slots = password.MinSlots
-	cfg.MaxWait = 50 * time.Millisecond
+	// ДЛИННОЕ ОЖИДАНИЕ СЛОТА, И ЭТО НЕ ЩЕДРОСТЬ. Потолок один на процесс (два
+	// слота), а параллельных тестов, гоняющих настоящий argon2id, в бинаре
+	// десятки: под -race на загруженной машине очередь перерастала полсекунды,
+	// и половина набора падала «перегрузкой» вместо своего сценария —
+	// мигающий тест, который травит весь прогон мутантов (docs/CHIP.md).
+	// Сам ErrBusy проверяется детерминированно, заполнением семафора
+	// (TestHasher_BusyIsIdenticalForVerifyAndEqualize), и от MaxWait не зависит.
+	cfg.MaxWait = 30 * time.Second
 	return cfg
 }
 
