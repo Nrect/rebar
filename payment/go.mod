@@ -10,6 +10,7 @@ toolchain go1.26.6
 require (
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.10.0
+	github.com/nrect/rebar/postgres v0.0.0-20260908221018-051fd21c2237
 	github.com/testcontainers/testcontainers-go v0.44.0
 )
 
@@ -47,7 +48,6 @@ require (
 	github.com/moby/sys/user v0.4.1 // indirect
 	github.com/moby/sys/userns v0.1.0 // indirect
 	github.com/moby/term v0.5.2 // indirect
-	github.com/nrect/rebar/postgres v0.0.0-20260908221018-051fd21c2237 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.1 // indirect
 	github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 // indirect

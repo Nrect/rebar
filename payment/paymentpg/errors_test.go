@@ -12,6 +12,7 @@ import (
 
 	"github.com/nrect/rebar/payment"
 	"github.com/nrect/rebar/payment/paymentpg"
+	"github.com/nrect/rebar/postgres"
 )
 
 // В Detail Postgres кладёт «Failing row contains (…)» — всю строку целиком:
@@ -49,9 +50,15 @@ func TestStore_Error_DoesNotLeakRowContents(t *testing.T) {
 	assert.NotContains(t, err.Error(), "Failing row")
 	assert.NotContains(t, err.Error(), "sku-secret")
 
-	// PgError не заворачивается в цепочку: иначе Detail достался бы через
-	// errors.As ниже по стеку, где о нём уже никто не думает.
+	// ПРОВЕРКА ПО ТИПУ, А НЕ ПО ТЕКСТУ: *pgconn.PgError не заворачивается в
+	// цепочку (иначе Detail достался бы через errors.As ниже по стеку, где о
+	// нём уже никто не думает), а вместо него едет очищенный *postgres.Error —
+	// по нему и разбирают конфликт по имени.
 	assert.NotErrorAs(t, err, &pgErr, "*pgconn.PgError не уезжает наружу")
+	var sanitized *postgres.Error
+	require.ErrorAs(t, err, &sanitized, "наружу едет очищенная ошибка postgres")
+	assert.Equal(t, "payment_intents_currency_chk", sanitized.Constraint)
+	assert.NotContains(t, sanitized.Message, secretReference)
 
 	// То же на пути книги: там в строке лежат суммы.
 	in := mustCreate(t, store, intent())
