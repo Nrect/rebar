@@ -77,7 +77,9 @@ func TestMinIO_TamperedSignatureIsRejected(t *testing.T) {
 	link, err := store.Presign(t.Context(), key, objectstore.MethodGet, time.Minute)
 	require.NoError(t, err)
 
-	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, link[:len(link)-1]+"0", http.NoBody)
+	tampered := tamper(link)
+	require.NotEqual(t, link, tampered, "порча подписи обязана менять ссылку")
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, tampered, http.NoBody)
 	require.NoError(t, err)
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
@@ -114,6 +116,23 @@ func TestMinIO_CollectorRemovesOrphans(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, page.Objects, 1)
 	assert.Equal(t, "uploads/kept.png", page.Objects[0].Key)
+}
+
+// tamper меняет последний символ подписи на ЗАВЕДОМО другой.
+//
+// Подстановка фиксированного символа («заменим на 0») ссылку не меняет, если
+// он там уже стоял, — и тест раз в шестнадцать прогонов зеленел на неиспорченной
+// подписи. Мигающий тест не просто врёт: он убивает всех мутантов своего
+// прогона (docs/CHIP.md).
+func tamper(link string) string {
+	b := []byte(link)
+	last := len(b) - 1
+	if b[last] == '0' {
+		b[last] = '1'
+	} else {
+		b[last] = '0'
+	}
+	return string(b)
 }
 
 func skipWithoutDocker(t *testing.T) {

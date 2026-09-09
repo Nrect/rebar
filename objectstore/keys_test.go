@@ -52,6 +52,10 @@ func TestCheckKey_AcceptsOrdinaryKeys(t *testing.T) {
 		"a",
 		"a/b/c/d.pdf",
 		"uploads/файл.png",
+		// Пробел в ключе законен (S3 кодирует его %20). Граница управляющих
+		// символов проходит РОВНО под ним: сдвиг её на 0x20 запретил бы
+		// законный ключ, и до мутационного прогона этого никто не проверял.
+		"uploads/файл с пробелом.png",
 		strings.Repeat("a", objectstore.MaxKeyLen),
 	}
 	for _, key := range good {

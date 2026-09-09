@@ -22,6 +22,19 @@ func TestAllMethods_IsComplete(t *testing.T) {
 	}
 }
 
+// Valid — та проверка, которой пользуется каждый адаптер; тесты ядра обязаны
+// её звать, иначе она покрыта только чужими пакетами и мутант в ней невидим.
+func TestMethodValid_AcceptsExactlyAllMethods(t *testing.T) {
+	t.Parallel()
+
+	for _, m := range objectstore.AllMethods {
+		assert.Truef(t, m.Valid(), "метод %q из AllMethods признан негодным", m)
+	}
+	for _, m := range []objectstore.Method{"", "delete", "GET", "post", "head"} {
+		assert.Falsef(t, m.Valid(), "метод %q вне AllMethods признан годным", m)
+	}
+}
+
 func TestAllCollectModes_IsComplete(t *testing.T) {
 	t.Parallel()
 
