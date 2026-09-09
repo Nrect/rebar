@@ -122,3 +122,56 @@ func TestMemIdentities_IsRaceSafe(t *testing.T) {
 	wg.Wait()
 	assert.Equal(t, 1, m.Len(), "уникальность логина не пережила гонку")
 }
+
+// ВЛАДЕНИЕ ДАННЫМИ ТО ЖЕ, ЧТО У АДАПТЕРА (docs/PATTERNS.md, паттерн 7).
+// У pg-адаптера строка приходит свежей из запроса, и правка, сделанная
+// потребителем над полученным значением, до базы не доезжает. Двойник, отдавший
+// свою память, тихо принял бы такую правку и разошёлся бы с продом в месте,
+// которого не видно ни в одном тесте. Здесь это держится тем, что auth.Identity
+// состоит из значений; тест сторожит инвариант на случай, если в неё добавят
+// срез или карту.
+func TestMemIdentities_HandsOutCopies(t *testing.T) {
+	t.Parallel()
+
+	m := authtest.NewMemIdentities()
+	id, err := m.Create(t.Context(), "a@example.org", "hash", time.Time{})
+	require.NoError(t, err)
+
+	got, err := m.ByID(t.Context(), id)
+	require.NoError(t, err)
+	got.Login = "attacker@example.org"
+	got.PasswordHash = "overwritten"
+	got.Disabled = true
+	// Правка обязана состояться над полученным значением — иначе тест ниже
+	// зелен просто потому, что менять было нечего.
+	require.Equal(t, "attacker@example.org", got.Login)
+	require.Equal(t, "overwritten", got.PasswordHash)
+	require.True(t, got.Disabled)
+
+	after, err := m.ByID(t.Context(), id)
+	require.NoError(t, err)
+	assert.Equal(t, "a@example.org", after.Login, "правка полученного значения изменила состояние двойника")
+	assert.Equal(t, "hash", after.PasswordHash)
+	assert.False(t, after.Disabled)
+
+	// То же для Record: он уходит наружу целиком.
+	rec, ok := m.Get(id)
+	require.True(t, ok)
+	rec.Identity.Login = "attacker@example.org"
+	rec.CreatedAt = time.Unix(1, 0)
+	require.Equal(t, "attacker@example.org", rec.Identity.Login)
+	require.Equal(t, time.Unix(1, 0), rec.CreatedAt)
+
+	again, ok := m.Get(id)
+	require.True(t, ok)
+	assert.Equal(t, "a@example.org", again.Identity.Login)
+	assert.Equal(t, time.Time{}, again.CreatedAt)
+
+	// И для Put: аргумент не должен оставаться связанным с хранилищем.
+	seed := auth.Identity{ID: uuid.New(), Login: "b@example.org"}
+	m.Put(seed, time.Time{})
+	seed.Login = "attacker@example.org"
+	stored, err := m.ByID(t.Context(), seed.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "b@example.org", stored.Login, "двойник запомнил ссылку на аргумент")
+}
