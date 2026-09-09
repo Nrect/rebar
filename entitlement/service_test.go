@@ -42,14 +42,22 @@ func TestService_DeniesWithoutGrant(t *testing.T) {
 	// ЗАВЕДОМЫЙ ОТКАЗ НЕ СТОИТ КРУГА В БАЗУ. Гвард домена, повторённый в
 	// хранилище, был бы неотличим через порт: убивать его надо утверждением о
 	// вызове (docs/CHIP.md, «Мутационное тестирование»).
-	t.Run("нулевой субъект и пустой предмет до хранилища не доезжают", func(t *testing.T) {
+	t.Run("нулевой субъект и негодный предмет до хранилища не доезжают", func(t *testing.T) {
 		t.Parallel()
 		svc, store, _ := newService(t)
 
-		assert.Equal(t, entitlement.ReasonNoGrant, decide(t, svc, uuid.Nil, itemAlgebra).Reason)
+		// СУБЪЕКТА НЕТ — ОТДЕЛЬНАЯ ПРИЧИНА, и это не придирка к словарю: на
+		// дашборде всплеск «не покупал» и всплеск «пришли без сессии» — два
+		// разных инцидента, и второй значит, что у потребителя отвалилась
+		// передача принципала.
+		assert.Equal(t, entitlement.ReasonNoSubject, decide(t, svc, uuid.Nil, itemAlgebra).Reason)
+
+		// Негодный предмет остаётся на no_grant: выдачи на невозможный
+		// идентификатор и правда быть не может, ответ фактически верен.
 		assert.Equal(t, entitlement.ReasonNoGrant, decide(t, svc, uuid.New(), "").Reason)
 		longItem := string(make([]byte, entitlement.MaxItemIDLen+1))
 		assert.Equal(t, entitlement.ReasonNoGrant, decide(t, svc, uuid.New(), longItem).Reason)
+
 		assert.Zero(t, store.Opens(), "за заведомым отказом в хранилище не ходят")
 	})
 }

@@ -35,7 +35,15 @@ type Reason string
 const (
 	// ReasonAllow — предмет открыт: выдача есть и срок не вышел.
 	ReasonAllow Reason = "allow"
-	// ReasonNoGrant — записи о выдаче нет: запрет по умолчанию.
+	// ReasonNoSubject — субъекта нет (нулевой идентификатор). Отдельно от
+	// no_grant: «пришёл без сессии» — дефект проводки потребителя, а не отказ
+	// по правилу, и на дашборде это обязано быть другим числом. Иначе всплеск
+	// «не покупал» выглядит маркетинговой проблемой, а на деле у кого-то
+	// отвалилась передача принципала.
+	ReasonNoSubject Reason = "deny_no_subject"
+	// ReasonNoGrant — записи о выдаче нет: запрет по умолчанию. Сюда же
+	// негодный идентификатор предмета: выдачи на невозможный предмет и правда
+	// быть не может, так что ответ фактически верен.
 	ReasonNoGrant Reason = "deny_no_grant"
 	// ReasonExpired — выдача есть, но срок вышел. Отдельно от no_grant:
 	// «купил и кончилось» и «не покупал» — разные разговоры с клиентом.
@@ -48,6 +56,7 @@ const (
 // AllReasons — полный набор; держит guard-тест.
 var AllReasons = []Reason{
 	ReasonAllow,
+	ReasonNoSubject,
 	ReasonNoGrant,
 	ReasonExpired,
 	ReasonError,

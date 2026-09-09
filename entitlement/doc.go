@@ -20,10 +20,11 @@
 // Безопасность:
 //
 //  1. ЗАПРЕТ ПО УМОЛЧАНИЮ. Нет записи о выдаче — нет доступа (deny_no_grant);
-//     нулевой субъект и пустой предмет — отказ, причём без похода в
-//     хранилище; несобранный сервис отвечает отказом и ErrUnavailable, а не
-//     «разрешено». Нулевое значение Decision — тоже отказ: забытое
-//     присваивание не открывает доступ.
+//     нулевой субъект — отказ с ОТДЕЛЬНОЙ причиной (deny_no_subject: это
+//     дефект проводки потребителя, а не отказ по правилу), негодный предмет —
+//     тоже отказ; оба без похода в хранилище. Несобранный сервис отвечает
+//     отказом и ErrUnavailable, а не «разрешено». Нулевое значение Decision —
+//     тоже отказ: забытое присваивание не открывает доступ.
 //  2. СБОЙ ХРАНИЛИЩА — НЕДОСТУПНОСТЬ, А НЕ ОТКАЗ В ПРАВАХ. ErrUnavailable и
 //     503, никогда ErrDenied и 403: «доступа нет» во время упавшей базы —
 //     ложь клиенту и утопленный инцидент, потому что чинить будут права, а не
@@ -78,7 +79,7 @@
 //	CREATE TABLE entitlement_product_items (
 //	    product_id uuid NOT NULL REFERENCES entitlement_products (id) ON DELETE CASCADE,
 //	    item_id    text NOT NULL,
-//	    CONSTRAINT pk_entitlement_product_items PRIMARY KEY (product_id, item_id)
+//	    PRIMARY KEY (product_id, item_id)  -- без имени: код его не называет
 //	);
 //
 //	-- Выдача. subject_id без внешнего ключа: имени таблицы пользователей
@@ -89,15 +90,21 @@
 //	    expires_at timestamptz,           -- NULL — бессрочно
 //	    granted_at timestamptz NOT NULL,  -- время параметром, не DEFAULT now()
 //	    source     text        NOT NULL,  -- заказ, промо, ручная выдача
-//	    CONSTRAINT pk_entitlement_grants PRIMARY KEY (subject_id, item_id)
+//	    CONSTRAINT ux_entitlement_grants_subject_item PRIMARY KEY (subject_id, item_id)
 //	);
 //
 // Store.Open читается префиксом первичного ключа
 // (WHERE subject_id = $1 AND (expires_at IS NULL OR expires_at > $2)),
 // поэтому отдельного индекса не нужно. Граница строгая: момент истечения уже
 // закрыт — та же граница, что у Grant.Open. Повторная выдача продлевает срок
-// (INSERT … ON CONFLICT ON CONSTRAINT pk_entitlement_grants DO UPDATE), а не
-// удваивает строку: повтор покупки — штатное событие.
+// (INSERT … ON CONFLICT ON CONSTRAINT ux_entitlement_grants_subject_item
+// DO UPDATE), а не удваивает строку: повтор покупки — штатное событие.
+//
+// ИМЯ ДАЁТСЯ ТОМУ, ЧТО АДРЕСУЕТ КОД. Первичный ключ выдач адресуется
+// (ON CONFLICT на продление), поэтому имя ему нужно и оно контракт; ключ
+// entitlement_product_items не называет никто, и безымянный он честнее —
+// имя без потребителя пришлось бы тащить вечно. Префикс ux_ у именованных
+// PRIMARY KEY — общий с тулкитом (ux_payment_events_dedup).
 //
 // Чего в пакете нет (решения, не пробелы):
 //
