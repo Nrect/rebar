@@ -6,6 +6,7 @@ use (
 	./audit
 	./auth
 	./authz
+	./entitlement
 	./kit
 	./mail
 	./otelboot
