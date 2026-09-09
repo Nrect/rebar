@@ -46,10 +46,10 @@ default-deny — и это единственная из трёх частей, 
 
 ```
 auth/                     модуль github.com/nrect/rebar/auth
-  doc.go, realm.go        Realm, Principal, Identity, порт Identities
-  token.go                Generate (crypto/rand), Hash (HMAC-SHA256), Secret >= 32 байт
-  password/               argon2id PHC, Hasher с глобальным семафором, Policy
-  zxcvbn/                 адаптер StrengthChecker
+  doc.go, realm.go        Realm, Principal, Identity, порт Identities, NormalizeLogin
+  token/                  Generate (crypto/rand), Hash (HMAC-SHA256), Secret >= 32 байт, Purpose
+  password/               argon2id PHC, Hasher с глобальным семафором, Policy, NeedsRehash
+  pwzxcvbn/               адаптер StrengthChecker
   session/                Service: регистрация, вход, сессии, одноразовые токены, Sweep
   authpg/                 адаптер Sessions/Attempts + хелперы Tokens; schema.sql; CheckSchema
   authhttp/               кука, CSRF double-submit, middleware; ошибки через kit/httperr
@@ -65,9 +65,22 @@ entitlement/              модуль github.com/nrect/rebar/entitlement
   entitlementtest/        двойники
 ```
 
-Помощники для токенов (генерация, HMAC, тип секрета) лежат в корне `auth`, а не
-отдельным пакетом: их три функции, и они нужны и `session`, и потребителю,
-который реализует порт `Tokens`. `auth/authhttp` — одна из двух разрешённых
+Помощники для токенов лежат подпакетом `auth/token`, а не в корне `auth`
+(изменено 2026-09-09, при реализации). Они нужны и `session`, и `authpg`, и
+потребителю, который реализует порт `Tokens`; в корне они заставляли бы того,
+кому нужны пятьдесят строк, тянуть в импорт весь `auth`. Адаптер силы пароля
+называется `pwzxcvbn`, а не `zxcvbn`, по той же причине, по какой каталоги
+адаптеров вообще называются по НАЗНАЧЕНИЮ: библиотеку меняют, назначение — нет.
+
+**Нормализация логина — в корне `auth`, одной функцией, и это инвариант
+безопасности, а не удобство хранения.** Счётчик блокировок ведётся по логину и
+для несуществующих тоже; если `Alice@x.ru` и `alice@x.ru` — два разных ключа
+счётчика, атакующий получает `LockoutAttempts` попыток на каждый регистр одного
+адреса. Второй нормализации при этом не возникает: пакет нормализует один раз и
+отдаёт результат в порт, а уникальный индекс потребителя ставится на
+СОХРАНЁННУЮ колонку, а не на вычисляемое в SQL выражение. Ровно так же устроен
+`mail.NormalizeKey` — «ключ приходит уже нормализованным, ни адаптер, ни стор
+его не трогают». `auth/authhttp` — одна из двух разрешённых
 межмодульных зависимостей (`kit/httperr`), см. [ADR-0005](0005-packaging.md).
 
 ## `auth`: модель и порты
