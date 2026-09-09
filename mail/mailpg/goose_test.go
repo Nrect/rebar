@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/nrect/rebar/mail"
 	"github.com/nrect/rebar/postgres/pgtest"
 )
 
@@ -54,6 +55,7 @@ func TestSchemaFile_HoldsContract(t *testing.T) {
 		"ux_email_outbox_dedup", // имя индекса — часть контракта Store.Enqueue
 		"ix_email_outbox_due",
 		"ix_email_outbox_terminal",
+		"email_outbox_status_chk", // имя — контракт: по нему разбирают конфликт
 		"email_outbox_body_cleared_chk",
 		"email_outbox_lock_chk",
 	} {
@@ -62,4 +64,37 @@ func TestSchemaFile_HoldsContract(t *testing.T) {
 	assert.NotContains(t, up, "DROP TABLE")
 	assert.Contains(t, down, "DROP TABLE email_outbox")
 	assert.NotContains(t, down, "CREATE TABLE")
+}
+
+// CHECK ⊇ AllStatuses (CONVENTIONS §9): словарь кода и словарь базы обязаны
+// совпадать, иначе расхождение всплывает в проде на первом новом статусе —
+// база отобьёт строку, которую домен считает законной. Тест стал возможен
+// только после того, как ограничению дали имя: адресовать безымянный CHECK
+// нечем.
+func TestSchemaFile_ChecksMirrorClosedSets(t *testing.T) {
+	t.Parallel()
+
+	statuses := checkValues(t, pgtest.GooseUp(t, schemaPath), "email_outbox_status_chk")
+	for _, st := range mail.AllStatuses {
+		assert.Contains(t, statuses, string(st), "статус %q не зеркалится CHECK", st)
+	}
+	assert.Len(t, statuses, len(mail.AllStatuses), "CHECK и AllStatuses разъехались")
+}
+
+// checkValues — литералы из IN (...) именованного CHECK.
+func checkValues(t *testing.T, sql, constraint string) []string {
+	t.Helper()
+	_, rest, ok := strings.Cut(sql, "CONSTRAINT "+constraint)
+	require.True(t, ok, "в схеме нет ограничения %s", constraint)
+	_, rest, ok = strings.Cut(rest, "IN (")
+	require.True(t, ok, "у %s нет списка IN (...)", constraint)
+	list, _, ok := strings.Cut(rest, ")")
+	require.True(t, ok)
+
+	items := strings.Split(list, ",")
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		out = append(out, strings.Trim(strings.TrimSpace(item), "'"))
+	}
+	return out
 }

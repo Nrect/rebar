@@ -68,6 +68,14 @@ func TestCheckSchema_ReportsEveryMismatchByName(t *testing.T) {
 			want: []string{"ограничения email_outbox_lock_chk нет"},
 		},
 		{
+			// Схема, скопированная до v0.2.0, держит тот же CHECK под именем от
+			// Postgres: CheckSchema обязан сказать об этом на старте, а не
+			// оставить потребителя с ограничением, которого код не знает.
+			name: "словарь статусов под чужим именем",
+			ddl:  []string{`ALTER TABLE email_outbox DROP CONSTRAINT email_outbox_status_chk`},
+			want: []string{"ограничения email_outbox_status_chk нет"},
+		},
+		{
 			name: "нет колонки и другой тип",
 			ddl: []string{
 				`ALTER TABLE email_outbox DROP COLUMN provider_message_id`,

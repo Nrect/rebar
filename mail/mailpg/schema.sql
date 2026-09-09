@@ -16,7 +16,7 @@ CREATE TABLE email_outbox (
     dedup_key           TEXT NOT NULL,
     fingerprint         BYTEA NOT NULL,
     message_id          TEXT NOT NULL,
-    status              TEXT NOT NULL CHECK (status IN ('pending','sending','sent','failed','expired','suppressed')),
+    status              TEXT NOT NULL,
     attempts            INT NOT NULL DEFAULT 0 CHECK (attempts >= 0),
     next_attempt_at     TIMESTAMPTZ NOT NULL,
     locked_until        TIMESTAMPTZ,
@@ -28,6 +28,8 @@ CREATE TABLE email_outbox (
     created_at          TIMESTAMPTZ NOT NULL,
     updated_at          TIMESTAMPTZ NOT NULL,
     sent_at             TIMESTAMPTZ,
+    -- словарь базы зеркалит mail.AllStatuses; имя — контракт, по нему сверяют
+    CONSTRAINT email_outbox_status_chk CHECK (status IN ('pending','sending','sent','failed','expired','suppressed')),
     -- тело стёрто в терминальном статусе: контракт Store.Finish
     CONSTRAINT email_outbox_body_cleared_chk CHECK (
         status IN ('pending','sending')

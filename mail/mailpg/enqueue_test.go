@@ -73,6 +73,13 @@ func TestStore_Enqueue_SameIDDifferentKeyIsError(t *testing.T) {
 
 // Отвергнутая строка целиком уезжает в PgError.Detail вместе с телом письма:
 // самый честный тест на утечку — INSERT, потому что тело в ней ещё есть.
+// bodyConstraint — ограничение, которым база отбивает эту вставку. Строка с
+// телом и чужим статусом нарушает СРАЗУ ДВА CHECK (словарь статусов и «тело
+// стёрто в терминальном статусе»), а Postgres называет одно; проверено — он
+// называет ограничение тела. Имя объявлено в schema.sql, поэтому это контракт,
+// а не соглашение об именовании Postgres.
+const bodyConstraint = "email_outbox_body_cleared_chk"
+
 func TestStore_Enqueue_ErrorHidesBody(t *testing.T) {
 	t.Parallel()
 	store, pool := newStore(t)
@@ -92,7 +99,7 @@ func TestStore_Enqueue_ErrorHidesBody(t *testing.T) {
 	var raw *pgconn.PgError
 	require.ErrorAs(t, rawInsertError(t, pool), &raw)
 	require.Contains(t, raw.Detail, secretLink, "в Detail драйвера лежит вся строка вместе с телом")
-	require.NotEmpty(t, raw.ConstraintName, "иначе проверке имени ниже нечего доказывать")
+	require.Equal(t, bodyConstraint, raw.ConstraintName, "имя ограничения — контракт схемы")
 
 	var leaked *pgconn.PgError
 	assert.NotErrorAs(t, err, &leaked,
@@ -105,7 +112,7 @@ func TestStore_Enqueue_ErrorHidesBody(t *testing.T) {
 	// как у остальных адаптеров хранилища.
 	var sanitized *postgres.Error
 	require.ErrorAs(t, err, &sanitized, "наружу едет очищенная ошибка postgres")
-	assert.Equal(t, raw.ConstraintName, sanitized.Constraint)
+	assert.Equal(t, bodyConstraint, sanitized.Constraint)
 	assert.NotContains(t, sanitized.Message, secretLink)
 }
 
