@@ -86,6 +86,25 @@ func grant(t *testing.T, svc *entitlement.Service, subjectID uuid.UUID, g entitl
 	require.NoError(t, svc.Grant(t.Context(), subjectID, g))
 }
 
+// entryWait — потолок ожидания входа в загрузку. Здоровый код проходит его за
+// микросекунды, поэтому запас тысячекратный; верхняя граница важнее нижней —
+// потолок обязан срабатывать ЗАМЕТНО РАНЬШЕ бюджета gremlins, иначе мутант,
+// подвесивший тест, возвращается просрочкой вместо убитого.
+const entryWait = 3 * time.Second
+
+// waitEntered — дождаться входа в загрузку. Потолок здесь не доказывает
+// инвариант (инвариант доказан заполнением — задержкой Hold), а лишь заставляет
+// сломанный код падать тестом, а не висеть (docs/CHIP.md, «Мутационное
+// тестирование»).
+func waitEntered(t *testing.T, store *entitlementtest.MemStore) {
+	t.Helper()
+	select {
+	case <-store.Entered():
+	case <-time.After(entryWait):
+		t.Fatal("загрузка так и не началась")
+	}
+}
+
 // staleStore — хранилище, нарушившее контракт: отдаёт выдачу, истёкшую в
 // запрошенный момент. Нужен второму рубежу — сверке срока на выдаче решения.
 type staleStore struct{ grants []entitlement.Grant }

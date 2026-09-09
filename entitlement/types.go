@@ -66,6 +66,17 @@ type Decision struct {
 func allow() Decision        { return Decision{Allowed: true, Reason: ReasonAllow} }
 func deny(r Reason) Decision { return Decision{Reason: r} }
 
+// clone — копия выдачи с СОБСТВЕННЫМ временем. Копии структуры мало: срок
+// лежит за указателем, и отданный наружу указатель дал бы потребителю право
+// править содержимое снимка в кэше — тем самым продлевая себе доступ.
+func (g Grant) clone() Grant {
+	if g.ExpiresAt != nil {
+		moment := *g.ExpiresAt
+		g.ExpiresAt = &moment
+	}
+	return g
+}
+
 // validItemID — непустой идентификатор в пределах потолка. Пустой запрещён
 // отдельно: выдача с пустым предметом вела бы себя как шаблон «всё открыто».
 func validItemID(itemID string) bool {

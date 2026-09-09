@@ -114,6 +114,25 @@ func TestService_StoreFailureIsUnavailableNotDenied(t *testing.T) {
 		requireUnavailable(t, err)
 	})
 
+	// СБОЙ НЕ ЗАЛИПАЕТ: неудачная загрузка не оставляет в кэше мёртвую
+	// запись, иначе субъект получал бы ту же ошибку и после того, как база
+	// поднялась, — до перезапуска процесса.
+	t.Run("после сбоя следующий запрос идёт в хранилище заново", func(t *testing.T) {
+		t.Parallel()
+		svc, store, _ := newService(t)
+		subject := uuid.New()
+		grant(t, svc, subject, entitlement.Grant{ItemID: itemAlgebra})
+
+		store.SetErr(errStore)
+		_, err := svc.Allows(t.Context(), subject, itemAlgebra)
+		requireUnavailable(t, err)
+		require.Equal(t, 1, store.Opens())
+
+		store.SetErr(nil)
+		assert.True(t, decide(t, svc, subject, itemAlgebra).Allowed, "поднявшаяся база обязана открыть доступ")
+		assert.Equal(t, 2, store.Opens())
+	})
+
 	t.Run("сбой на записи — тоже недоступность", func(t *testing.T) {
 		t.Parallel()
 		svc, store, _ := newService(t)
@@ -215,12 +234,19 @@ func TestService_OpenReturnsCopy(t *testing.T) {
 	first, err := svc.Open(t.Context(), subject)
 	require.NoError(t, err)
 	require.Len(t, first, 1)
+	require.NotNil(t, first[0].ExpiresAt)
 	first[0].ItemID = "подменённый"
+	// Правка ЧЕРЕЗ УКАЗАТЕЛЬ — тот же класс, что и правка среза: срок лежит
+	// за указателем, и общий указатель дал бы потребителю продлевать себе
+	// доступ прямо в снимке.
+	*first[0].ExpiresAt = base.AddDate(100, 0, 0)
 
 	again, err := svc.Open(t.Context(), subject)
 	require.NoError(t, err)
 	require.Len(t, again, 1)
 	assert.Equal(t, itemAlgebra, again[0].ItemID)
+	require.NotNil(t, again[0].ExpiresAt)
+	assert.True(t, again[0].ExpiresAt.Equal(*at(time.Hour)), "срок в снимке правке снаружи не подлежит")
 
 	empty, err := svc.Open(t.Context(), uuid.Nil)
 	require.NoError(t, err)
@@ -241,4 +267,37 @@ func requireUnavailable(t *testing.T, err error) {
 	t.Helper()
 	require.ErrorIs(t, err, entitlement.ErrUnavailable)
 	require.NotErrorIs(t, err, entitlement.ErrDenied)
+}
+
+// НИ СУБЪЕКТА, НИ ПРЕДМЕТА В ТЕКСТЕ ОШИБКИ. Ошибка доезжает до лога, до
+// ответа клиенту и до метки метрики; идентификаторы там взрывают
+// кардинальность и уносят персональные данные туда, откуда их не удалить по
+// требованию субъекта (CORRECTNESS, закон 10). Кто именно и над чем — в аудит
+// потребителя, где этому место.
+func TestErrors_CarryNoIdentifiers(t *testing.T) {
+	t.Parallel()
+
+	svc, store, _ := newService(t)
+	subject := uuid.MustParse("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
+	secretItem := "course.oncology-therapy-2026"
+
+	errs := make([]error, 0, 4)
+	errs = append(errs, svc.Require(t.Context(), subject, secretItem))
+
+	// Снимок сброшен: иначе следующий запрос возьмёт тёплый кэш и до
+	// упавшего хранилища не дойдёт.
+	svc.Invalidate(subject)
+	store.SetErr(errStore)
+	_, unavailable := svc.Allows(t.Context(), subject, secretItem)
+	errs = append(errs,
+		unavailable,
+		svc.Grant(t.Context(), subject, entitlement.Grant{ItemID: ""}),
+		svc.Revoke(t.Context(), subject, ""),
+	)
+
+	for _, err := range errs {
+		require.Error(t, err)
+		assert.NotContains(t, err.Error(), subject.String(), "субъект в тексте ошибки")
+		assert.NotContains(t, err.Error(), secretItem, "предмет в тексте ошибки")
+	}
 }

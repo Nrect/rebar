@@ -30,13 +30,17 @@ type Config struct {
 	LoadTimeout time.Duration
 }
 
+// validate — цепочкой if, а НЕ switch: условия внутри `switch { case cond: }`
+// мутационный прогон показывает непокрытыми, и сдвиг границы здесь прошёл бы
+// молча (docs/CHIP.md, «Мутационное тестирование»).
 func (c Config) validate() error {
-	switch {
-	case c.TTL <= 0:
+	if c.TTL <= 0 {
 		return errors.New("Config.TTL must be positive")
-	case c.MaxSubjects <= 0:
+	}
+	if c.MaxSubjects <= 0 {
 		return errors.New("Config.MaxSubjects must be positive")
-	case c.LoadTimeout <= 0:
+	}
+	if c.LoadTimeout <= 0 {
 		return errors.New("Config.LoadTimeout must be positive")
 	}
 	return nil

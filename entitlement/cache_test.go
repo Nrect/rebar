@@ -91,6 +91,13 @@ func TestCache_SingleLoadUnderRace(t *testing.T) {
 	svc, store, _ := newService(t)
 	subject := uuid.New()
 	grant(t, svc, subject, entitlement.Grant{ItemID: itemAlgebra})
+	// Проводка проверяется ДО задержки: код, который вообще не доходит до
+	// хранилища, обязан падать здесь и сразу, а не висеть на ожидании волны.
+	// Висящая проверка приходит из мутационного прогона просрочкой, и мутант
+	// остаётся неразобранным (docs/CHIP.md).
+	require.True(t, decide(t, svc, subject, itemAlgebra).Allowed)
+	require.Equal(t, 1, store.Opens())
+	svc.Invalidate(subject)
 	store.Hold()
 
 	type outcome struct {
@@ -122,7 +129,7 @@ func TestCache_SingleLoadUnderRace(t *testing.T) {
 		require.NoError(t, got.err)
 		require.True(t, got.decision.Allowed)
 	}
-	assert.Equal(t, 1, store.Opens(), "волна параллельных запросов обязана дать ровно одну загрузку")
+	assert.Equal(t, 2, store.Opens(), "волна параллельных запросов обязана дать ровно одну загрузку сверх прогрева")
 }
 
 // ОТМЕНА ЖДУЩЕГО НЕ РОНЯЕТ ЗАГРУЗКУ: клиент, закрывший соединение, уходит
@@ -134,6 +141,10 @@ func TestService_WaiterCancelDoesNotKillLoad(t *testing.T) {
 	svc, store, _ := newService(t)
 	subject := uuid.New()
 	grant(t, svc, subject, entitlement.Grant{ItemID: itemAlgebra})
+	// Проводка — до задержки, по той же причине, что и в тесте на волну.
+	require.True(t, decide(t, svc, subject, itemAlgebra).Allowed)
+	require.Equal(t, 1, store.Opens())
+	svc.Invalidate(subject)
 	store.Hold()
 
 	ctx, cancel := context.WithCancel(t.Context())
@@ -143,7 +154,7 @@ func TestService_WaiterCancelDoesNotKillLoad(t *testing.T) {
 		leader <- err
 	}()
 
-	<-store.Entered()
+	waitEntered(t, store)
 	cancel()
 	err := <-leader
 	require.ErrorIs(t, err, context.Canceled)
@@ -152,7 +163,7 @@ func TestService_WaiterCancelDoesNotKillLoad(t *testing.T) {
 
 	store.Release()
 	assert.True(t, decide(t, svc, subject, itemAlgebra).Allowed)
-	assert.Equal(t, 1, store.Opens(), "отмена ждущего не должна была уронить загрузку")
+	assert.Equal(t, 2, store.Opens(), "отмена ждущего не должна была уронить загрузку")
 }
 
 // Run — форма scheduler.Job: убирает негодные снимки и говорит сколько.
