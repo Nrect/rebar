@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -113,7 +114,7 @@ func (m *MemStore) List(_ context.Context, prefix, cursor string, limit int) (ob
 	}
 	keys := make([]string, 0, len(m.rows))
 	for key := range m.rows {
-		if len(key) >= len(prefix) && key[:len(prefix)] == prefix && key > cursor {
+		if strings.HasPrefix(key, prefix) && key > cursor {
 			keys = append(keys, key)
 		}
 	}

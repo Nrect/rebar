@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 )
 
 // service — область подписи; у S3-совместимых она та же.
@@ -93,6 +92,3 @@ func (c Config) publicBase() string {
 	}
 	return strings.TrimSuffix(c.Endpoint, "/") + "/" + c.Bucket
 }
-
-// presignLimit — потолок X-Amz-Expires у SigV4.
-const presignLimit = 7 * 24 * time.Hour

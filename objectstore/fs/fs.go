@@ -256,6 +256,8 @@ func (s *Store) walk(prefix, cursor string) ([]string, error) {
 
 // writeAtomic пишет во временный файл рядом и переименовывает его на место.
 func writeAtomic(name string, body io.Reader) (int64, error) {
+	// CreateTemp создаёт файл с правами 0600 — отдельный Chmod дал бы ветку
+	// ошибки, до которой не дойти.
 	tmp, err := os.CreateTemp(filepath.Dir(name), ".objectstore-*")
 	if err != nil {
 		return 0, ioError("create", err)
@@ -267,10 +269,6 @@ func writeAtomic(name string, body io.Reader) (int64, error) {
 	if err != nil {
 		_ = os.Remove(tmp.Name())
 		return 0, ioError("write", err)
-	}
-	if err = os.Chmod(tmp.Name(), 0o600); err != nil {
-		_ = os.Remove(tmp.Name())
-		return 0, ioError("chmod", err)
 	}
 	if err = os.Rename(tmp.Name(), name); err != nil {
 		_ = os.Remove(tmp.Name())
