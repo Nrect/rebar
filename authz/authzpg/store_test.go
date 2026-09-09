@@ -5,11 +5,13 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/nrect/rebar/authz"
 	"github.com/nrect/rebar/authz/authzpg"
+	"github.com/nrect/rebar/postgres"
 )
 
 // Выдача и чтение: роли возвращаются по порядку, реалмы разделены.
@@ -282,10 +284,24 @@ func TestStore_ErrorHasNoRowData(t *testing.T) {
 	err := store.Assign(t.Context(), grant(authz.Subject{Realm: "staff", ID: canary}, "Manager"))
 
 	require.ErrorIs(t, err, authz.ErrUnavailable, "нарушение CHECK — сбой записи")
+
+	// ПО ТИПУ, А НЕ ПО ТЕКСТУ. Проверка текста проходит и на строке, собранной
+	// руками, — до первого места, где ошибку развернут ниже по стеку и достанут
+	// из неё Detail. Поэтому проверяется, что ошибка разворачивается в границу с
+	// безопасными полями и НЕ разворачивается в ошибку драйвера.
+	var safe *postgres.Error
+	require.ErrorAs(t, err, &safe, "ошибка обязана разворачиваться в postgres.Error")
+	assert.Equal(t, "23514", safe.Code, "check_violation")
+	assert.Equal(t, "authz_role_assignments_role_chk", safe.Constraint, "имя ограничения — не данные")
+
+	var raw *pgconn.PgError
+	assert.NotErrorAs(t, err, &raw,
+		"ошибка драйвера обязана быть снята с цепочки: в её Detail лежит вся строка")
+
+	// Текст — вторая линия, а не первая.
 	assert.NotContains(t, err.Error(), canary)
 	assert.NotContains(t, err.Error(), "Failing row")
 	assert.NotContains(t, err.Error(), "admin-1")
-	assert.Contains(t, err.Error(), "authz_role_assignments_role_chk", "имя ограничения — не данные")
 }
 
 // Аноним до базы не доходит: у субъекта, которого нет, не может быть ролей.

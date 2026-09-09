@@ -1,48 +1,52 @@
 package authzpg_test
 
 import (
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/nrect/rebar/postgres/pgtest"
 )
 
-const (
-	gooseUp   = "-- +goose Up"
-	gooseDown = "-- +goose Down"
-)
+// schemaPath — файл схемы; он же артефакт для goose потребителя.
+const schemaPath = "schema.sql"
 
-// gooseSection — тело секции goose: строки между маркером и следующей
-// директивой «-- +goose» или концом файла; ok = false, если маркера нет.
-func gooseSection(sql, marker string) (body string, ok bool) {
-	var out strings.Builder
-	inside := false
-	for line := range strings.SplitSeq(sql, "\n") {
-		if directive := strings.TrimSpace(line); strings.HasPrefix(directive, "-- +goose") {
-			inside = directive == marker
-			ok = ok || inside
-			continue
-		}
-		if inside {
-			out.WriteString(line)
-			out.WriteString("\n")
-		}
-	}
-	return out.String(), ok
+// readSchema — файл целиком.
+func readSchema(t *testing.T) string {
+	t.Helper()
+	raw, err := os.ReadFile(schemaPath)
+	require.NoError(t, err)
+	return string(raw)
+}
+
+// gooseDown — тело обратной секции. pgtest отдаёт только Up, а заводить
+// вторую копию разбора секций незачем: в схемах тулкита Down последняя,
+// поэтому это всё, что идёт после её маркера. Единственность маркера и
+// порядок секций проверяет TestSchemaFile_HoldsContract.
+func gooseDown(t *testing.T) string {
+	t.Helper()
+	_, down, ok := strings.Cut(readSchema(t), pgtest.GooseDownMarker)
+	require.True(t, ok, "в %s нет маркера %q", schemaPath, pgtest.GooseDownMarker)
+	return down
 }
 
 // Схема — артефакт для goose потребителя: имена, на которые опирается адаптер,
-// проверяются в файле, а не в его копии в коде.
+// проверяются в файле, а не в его копии в коде. Заодно это проверка
+// допущения, на котором стоит gooseDown: маркер Down один и стоит после Up.
 func TestSchemaFile_HoldsContract(t *testing.T) {
 	t.Parallel()
 
-	raw, err := schemaSQL()
-	require.NoError(t, err)
-	up, ok := gooseSection(raw, gooseUp)
-	require.True(t, ok)
-	down, ok := gooseSection(raw, gooseDown)
-	require.True(t, ok)
+	raw := readSchema(t)
+	up := pgtest.GooseUp(t, schemaPath)
+	down := gooseDown(t)
+
+	require.Equal(t, 1, strings.Count(raw, pgtest.GooseDownMarker), "маркер Down обязан быть один")
+	require.Equal(t, 1, strings.Count(raw, pgtest.GooseUpMarker), "маркер Up обязан быть один")
+	require.Less(t, strings.Index(raw, pgtest.GooseUpMarker), strings.Index(raw, pgtest.GooseDownMarker),
+		"Down обязана идти после Up: на этом стоит разбор обратной секции")
 
 	for _, want := range []string{
 		"CREATE TABLE authz_role_assignments",
