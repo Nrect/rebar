@@ -51,6 +51,26 @@ func SVGAfterProlog() []byte {
 		`<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`)
 }
 
+// SVGBeyondSniffWindow — SVG, у которого открывающий тег ЗА пределами окна
+// снятия типа: комментарий длиннее SniffLen отодвигает "<svg" туда, где его
+// уже не ищут.
+//
+// Проверка этим входом — про ВТОРОЙ рубеж, а не про первый: поиск маркера его
+// не поймает, и отвергает файл белый список типов (пролог даёт text/xml, голый
+// комментарий — text/html, ни того ни другого в наборе нет). Первый рубеж
+// именует причину, второй закрывает то, до чего он не дотянулся; корпус нужен,
+// чтобы второй не остался никем не проверенным.
+func SVGBeyondSniffWindow(withProlog bool) []byte {
+	var out []byte
+	if withProlog {
+		out = append(out, `<?xml version="1.0" encoding="UTF-8"?>`+"\n"...)
+	}
+	out = append(out, "<!-- "...)
+	out = append(out, bytes.Repeat([]byte("padding "), 100)...)
+	return append(out, " -->\n"+
+		`<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`...)
+}
+
 // pad дополняет заголовок нулями до size байт; короче заголовка не бывает.
 func pad(head []byte, size int) []byte {
 	if size <= len(head) {
