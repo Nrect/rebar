@@ -112,7 +112,7 @@ func TestAuthorizer_RoleSourceFailureIsUnavailable(t *testing.T) {
 	down := errors.New("connection refused")
 	a, src := newAuthorizer(t, nil)
 	src.Set(subject("v"), roleViewer)
-	src.Err = down
+	src.SetErr(down)
 
 	d, err := a.Can(t.Context(), subject("v"), permRead)
 	require.ErrorIs(t, err, authz.ErrUnavailable)

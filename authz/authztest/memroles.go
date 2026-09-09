@@ -8,16 +8,12 @@ import (
 	"github.com/nrect/rebar/authz"
 )
 
-// MemRoles — authz.RoleSource в памяти. Потокобезопасен; Err задаётся до
-// начала прогона.
+// MemRoles — authz.RoleSource в памяти. Потокобезопасен целиком, включая
+// инъекцию отказа.
 type MemRoles struct {
 	mu    sync.Mutex
 	roles map[authz.Subject][]authz.Role
-
-	// Err — ошибка из RolesOf: ею проверяется, что сбой источника даёт
-	// недоступность, а не отказ в правах. Ошибка теста, а не домена: authz
-	// завернёт её в свою ErrUnavailable.
-	Err error
+	err   error
 }
 
 // NewMemRoles — пустой источник: у всех субъектов ролей нет.
@@ -57,6 +53,19 @@ func (m *MemRoles) Remove(s authz.Subject, role authz.Role) {
 	m.roles[s] = rest
 }
 
+// SetErr — отказ из RolesOf: им проверяется, что сбой источника даёт
+// недоступность, а не отказ в правах. Ошибка теста, а не домена: authz
+// завернёт её в свою ErrUnavailable.
+//
+// Метод, а не поле: двойник дёргают параллельные горутины теста на гонку, и
+// публичное поле читалось бы под мьютексом, а писалось мимо него — то есть
+// -race краснел бы у потребителя, а не у нас.
+func (m *MemRoles) SetErr(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.err = err
+}
+
 // RolesOf — роли субъекта КОПИЕЙ: правка возвращённого среза не должна менять
 // содержимое хранилища. Неизвестный субъект — пустой список и nil: это отказ
 // по правилу, а не сбой.
@@ -66,8 +75,8 @@ func (m *MemRoles) RolesOf(ctx context.Context, s authz.Subject) ([]authz.Role, 
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if m.Err != nil {
-		return nil, m.Err
+	if m.err != nil {
+		return nil, m.err
 	}
 	return slices.Clone(m.roles[s]), nil
 }

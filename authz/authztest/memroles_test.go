@@ -83,7 +83,7 @@ func TestMemRoles_Err(t *testing.T) {
 	down := errors.New("connection refused")
 	src := authztest.NewMemRoles()
 	src.Set(subj, "viewer")
-	src.Err = down
+	src.SetErr(down)
 
 	_, err := src.RolesOf(t.Context(), subj)
 	require.ErrorIs(t, err, down)

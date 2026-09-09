@@ -120,7 +120,7 @@ func TestGuard_Require(t *testing.T) {
 			h := newHarness(t)
 			*h.subject = tt.subject
 			h.src.Set(tt.subject, tt.roles...)
-			h.src.Err = tt.sourceErr
+			h.src.SetErr(tt.sourceErr)
 
 			assert.Equal(t, tt.wantCode, h.serve(t, h.guard.Require(permRead)))
 			assert.Equal(t, tt.wantServed, *h.served, "хендлер за отказом зваться не должен")
