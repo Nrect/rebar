@@ -58,9 +58,12 @@ func TestPackageImportsAreWhitelisted(t *testing.T) {
 // allowedByDir — белый список внешних импортов по каталогу. Новый подпакет
 // добавляется сюда тем же коммитом, что и каталог.
 var allowedByDir = map[string][]string{
-	".":                {"github.com/google/uuid"},
-	"mailtest":         {"github.com/google/uuid"},
-	"mailpg":           {"github.com/google/uuid", "github.com/jackc/pgx/v5"},
+	".":        {"github.com/google/uuid"},
+	"mailtest": {"github.com/google/uuid"},
+	// postgres — граница ошибки (postgres.Sanitize), разрешённая адаптерам
+	// хранилища с 2026-09-09: ADR-0005, «Межмодульные зависимости». Ядру mail и
+	// остальным каталогам она по-прежнему закрыта — там нет SQL.
+	"mailpg":           {"github.com/google/uuid", "github.com/jackc/pgx/v5", "github.com/nrect/rebar/postgres"},
 	"smtp":             {"github.com/google/uuid", "github.com/wneessen/go-mail"},
 	"sesv2":            {"github.com/google/uuid"},
 	"internal/sesfake": {"github.com/google/uuid"},

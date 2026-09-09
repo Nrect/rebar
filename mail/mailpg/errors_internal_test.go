@@ -9,19 +9,23 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/nrect/rebar/mail"
+	"github.com/nrect/rebar/postgres"
 )
 
 // Detail нарушения CHECK — «Failing row contains (…)» со всей строкой, включая
-// тело письма: ни в тексте ошибки, ни в её цепочке его быть не должно.
+// тело письма: ни в тексте ошибки, ни в её цепочке его быть не должно. Имя
+// ограничения, наоборот, обязано доехать: по нему потребитель отличает один
+// конфликт от другого.
 func TestStoreError_FoldsPgErrorWithoutDetail(t *testing.T) {
 	t.Parallel()
 
 	const body = "Ссылка: https://example.ru/verify?token=SECRET-TOKEN-42"
 	pgErr := &pgconn.PgError{
-		Severity: "ERROR",
-		Code:     "23514",
-		Message:  `new row for relation "email_outbox" violates check constraint "email_outbox_fail_reason_check"`,
-		Detail:   "Failing row contains (7b1c…, verify, " + body + ", …).",
+		Severity:       "ERROR",
+		Code:           "23514",
+		Message:        `new row for relation "email_outbox" violates check constraint "email_outbox_fail_reason_check"`,
+		ConstraintName: "email_outbox_fail_reason_check",
+		Detail:         "Failing row contains (7b1c…, verify, " + body + ", …).",
 	}
 
 	err := storeError("finish", pgErr)
@@ -34,6 +38,11 @@ func TestStoreError_FoldsPgErrorWithoutDetail(t *testing.T) {
 
 	var unwrapped *pgconn.PgError
 	assert.NotErrorAs(t, err, &unwrapped, "*PgError в цепочке отдал бы Detail через errors.As")
+
+	var sanitized *postgres.Error
+	require.ErrorAs(t, err, &sanitized, "наружу едет очищенная ошибка общей границы")
+	assert.Equal(t, "email_outbox_fail_reason_check", sanitized.Constraint)
+	assert.NotContains(t, sanitized.Message, body)
 }
 
 // Сетевой сбой и отмена ctx остаются видимыми: по ним вызывающий отличает
