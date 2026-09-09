@@ -52,9 +52,12 @@ func (s *Service) Allows(ctx context.Context, subjectID uuid.UUID, itemID string
 	if !s.ready() {
 		return deny(ReasonError), fmt.Errorf("%w: service is not configured", ErrUnavailable)
 	}
-	// До хранилища такой запрос не доезжает: круг в базу за заведомым отказом
-	// — это способ нагрузить её запросами без субъекта.
-	if subjectID == uuid.Nil || !validItemID(itemID) {
+	// До хранилища эти два запроса не доезжают: круг в базу за заведомым
+	// отказом — это способ нагрузить её запросами без субъекта.
+	if subjectID == uuid.Nil {
+		return deny(ReasonNoSubject), nil
+	}
+	if !validItemID(itemID) {
 		return deny(ReasonNoGrant), nil
 	}
 	grants, err := s.snapshot(ctx, subjectID)
