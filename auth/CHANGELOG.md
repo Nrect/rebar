@@ -59,6 +59,10 @@
   `Config` с шестью инвариантами ADR-0003 и потолками `ResetTTL <= 1h`,
   `VerifyTTL <= 72h`; `Secret` типом `token.Secret`, поэтому паника
   `token.Hash` на ненастроенном секрете из рабочего кода недостижима.
+- `auth/session/doc.go`: таблица «метрика — тип — что» с закрытыми наборами
+  меток и порогами алертов. Декоратора в v0.1 нет осознанно: счётчик снимается
+  там же, где живёт `httperr`, и второй источник тех же цифр разошёлся бы с
+  первым.
 - `auth/authpg`: `Store` (`session.Sessions` + `session.Attempts`) и
   `Store.Tokens()` — половина порта `Tokens` на `postgres.Querier`: `Insert`,
   `ConsumeRow`, `RevokeOfSubject`, `PurgeExpired`. `New(pool)`, `WithTx(tx)`,
