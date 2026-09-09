@@ -156,6 +156,37 @@ func TestUploader_RejectsSVGRegardlessOfHeader(t *testing.T) {
 	}
 }
 
+// ВТОРОЙ РУБЕЖ. Маркер "<svg" за пределами окна снятия типа поиском не
+// ловится — и не должен: окно на то и окно. Отвергает такой файл белый список
+// типов, потому что пролог даёт text/xml, а голый комментарий text/html, и ни
+// того ни другого в наборе нет.
+//
+// Тест сторожит именно ЭТУ связку. Она держится на том, что набор типов закрыт
+// кодом, а не настройкой: допиши потребитель text/xml «чтобы принимать
+// выгрузки» — и рубеж исчез бы молча, а первый его не подстраховал бы.
+func TestUploader_RejectsSVGHiddenBeyondTheSniffWindow(t *testing.T) {
+	t.Parallel()
+	for name, withProlog := range map[string]bool{"за прологом": true, "за комментарием": false} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			body := objectstoretest.SVGBeyondSniffWindow(withProlog)
+			require.Greater(t, bytes.Index(body, []byte("<svg")), objectstore.SniffLen,
+				"корпус сломан: маркер обязан лежать ЗА окном, иначе тест проверяет первый рубеж")
+			up, store := newUploader(t, objectstore.UploaderConfig{
+				Prefix: testPrefix, MaxSize: testMaxSize, Accept: objectstore.AllContentTypes,
+			})
+
+			_, err := up.Upload(t.Context(), objectstore.UploadRequest{
+				Body: bytes.NewReader(body), Size: -1, ContentType: "image/png",
+			})
+
+			require.ErrorIs(t, err, objectstore.ErrUnsupportedType,
+				"SVG за окном принят: белый список типов его не удержал")
+			assert.Empty(t, store.Keys())
+		})
+	}
+}
+
 // Поля «принимать SVG» в конфиге нет, и добавить его списком тоже нельзя:
 // image/svg+xml не входит в AllContentTypes, а Config паникует на чужом типе.
 func TestUploaderConfig_SVGCannotBeAcceptedByConfiguration(t *testing.T) {
