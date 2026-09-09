@@ -9,6 +9,7 @@ use (
 	./entitlement
 	./kit
 	./mail
+	./objectstore
 	./otelboot
 	./outbox
 	./payment
