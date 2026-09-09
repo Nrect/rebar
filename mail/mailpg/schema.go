@@ -61,8 +61,13 @@ var expectedColumns = map[string]string{
 	"sent_at":             typeTimestamptz,
 }
 
-// expectedChecks — именованные CHECK: без них база не держит инварианты Finish.
-var expectedChecks = []string{"email_outbox_body_cleared_chk", "email_outbox_lock_chk"}
+// expectedChecks — именованные CHECK: без них база не держит ни словарь
+// статусов, ни инварианты Finish.
+var expectedChecks = []string{
+	"email_outbox_status_chk",
+	"email_outbox_body_cleared_chk",
+	"email_outbox_lock_chk",
+}
 
 // expectedIndexes — имя индекса → обязан ли быть уникальным.
 var expectedIndexes = map[string]bool{
