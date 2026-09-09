@@ -10,6 +10,7 @@ import (
 
 	"github.com/nrect/rebar/audit"
 	"github.com/nrect/rebar/audit/auditpg"
+	"github.com/nrect/rebar/postgres/pgtest"
 )
 
 func TestCheckSchema_FullSchemaPasses(t *testing.T) {
@@ -148,18 +149,12 @@ func TestSchema_UpAndDownApplyToEmptyDatabase(t *testing.T) {
 	pool := newSchemaPool(t)
 	ctx := context.Background()
 
-	raw, err := schemaSQL()
-	require.NoError(t, err)
-	up, ok := gooseSection(raw, gooseUp)
-	require.True(t, ok)
-	down, ok := gooseSection(raw, gooseDown)
-	require.True(t, ok)
+	up := pgtest.GooseUp(t, schemaPath)
+	down := gooseDown(t)
 
 	for range 2 {
-		_, err = pool.Exec(ctx, up)
-		require.NoError(t, err, "накат на пустую схему")
+		pgtest.Apply(t, pool, up)
 		require.NoError(t, auditpg.New(pool).CheckSchema(ctx))
-		_, err = pool.Exec(ctx, down)
-		require.NoError(t, err, "откат")
+		pgtest.Apply(t, pool, down)
 	}
 }
