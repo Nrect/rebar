@@ -60,7 +60,14 @@ func TestPackageImportsAreWhitelisted(t *testing.T) {
 var allowedByDir = map[string][]string{
 	".":          {"github.com/google/uuid"},
 	"outboxtest": {"github.com/google/uuid"},
-	"outboxpg":   {"github.com/google/uuid", "github.com/jackc/pgx/v5"},
+	// postgres — только каталогу адаптера хранилища: postgres.Sanitize это
+	// общая граница безопасности, а не удобство (ADR-0005, «Межмодульные
+	// зависимости»). Ядру и остальным каталогам он по-прежнему запрещён.
+	"outboxpg": {
+		"github.com/google/uuid",
+		"github.com/jackc/pgx/v5",
+		"github.com/nrect/rebar/postgres",
+	},
 	"outboxotel": {
 		"github.com/google/uuid",
 		"go.opentelemetry.io/otel/metric",

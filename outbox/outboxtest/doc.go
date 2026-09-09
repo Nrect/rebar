@@ -13,4 +13,7 @@
 //     сбой), PermanentFor, ThrottleFor, SkipFor, PanicFor по AggregateID или
 //     Kind, Hook для таймаутов, Handled для «ровно один раз».
 //   - Clock — управляемые часы для outbox.SetClock.
+//   - Enqueue — двойник пакетной функции адаптера (outboxpg.Enqueue): вставка
+//     и сверка отпечатка одним вызовом, чтобы тест потребителя писал ровно то
+//     же, что прод, и не разъезжался с ним на «громкой идемпотентности».
 package outboxtest
