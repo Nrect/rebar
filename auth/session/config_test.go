@@ -59,9 +59,39 @@ func TestNew_PanicsOnBadConfig(t *testing.T) {
 			defer func() {
 				got := recover()
 				require.NotNilf(t, got, "%s: конструктор обязан упасть", name)
-				assert.Containsf(t, got, tc.field, "%s: паника обязана назвать поле", name)
+				text, ok := got.(string)
+				require.Truef(t, ok, "%s: паника обязана быть текстом", name)
+				// Проверяется НАЧАЛО сообщения, а не вхождение: тексты
+				// ссылаются друг на друга («RenewEvery … less than IdleTTL»),
+				// и проверка вхождением принимала бы сообщение о соседнем поле
+				// за сообщение о нужном.
+				assert.Truef(t, strings.HasPrefix(text, "session.New: "+tc.field+" must"),
+					"%s: паника обязана начинаться с %q, получено %q", name, tc.field, text)
 			}()
 			session.New(st.deps(), cfg)
+		})
+	}
+}
+
+// ГРАНИЦЫ ВКЛЮЧИТЕЛЬНЫЕ, и это не мелочь: инвариант ADR-0003 звучит как
+// «0 < IdleTTL <= SessionTTL» и «ResetTTL <= 1h», а конструктор, отвергающий
+// само значение потолка, заставляет потребителя подгонять конфиг на глазок.
+func TestNew_AcceptsValuesExactlyAtTheBoundary(t *testing.T) {
+	t.Parallel()
+
+	for name, mutate := range map[string]func(*session.Config){
+		"скользящий срок равен абсолютному": func(c *session.Config) { c.IdleTTL = c.SessionTTL },
+		"подтверждение ровно на потолке":    func(c *session.Config) { c.VerifyTTL = session.MaxVerifyTTL },
+		"сброс ровно на потолке":            func(c *session.Config) { c.ResetTTL = session.MaxResetTTL },
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			st := newStand(t)
+			cfg := session.DefaultConfig(testRealm, testSecret())
+			mutate(&cfg)
+
+			assert.NotPanics(t, func() { session.New(st.deps(), cfg) })
 		})
 	}
 }

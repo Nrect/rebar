@@ -46,7 +46,9 @@ func TestService_Resolve_RenewsNoMoreOftenThanRenewEvery(t *testing.T) {
 	require.NoError(t, err)
 	assert.Zero(t, st.sessions.CallCount("Touch"), "до порога продлевать нечего")
 
-	st.clock.Advance(5 * time.Minute)
+	// РОВНО порог: продление обязано сработать на равенстве, иначе сессия
+	// того, кто ходит ровно раз в RenewEvery, не продлевается никогда.
+	st.clock.Advance(4 * time.Minute)
 	_, err = st.svc.Resolve(t.Context(), res.Token)
 	require.NoError(t, err)
 	assert.Equal(t, 1, st.sessions.CallCount("Touch"))
@@ -275,4 +277,50 @@ func TestService_Realms_DoNotSeeEachOther(t *testing.T) {
 	require.NoError(t, err)
 	assert.Zero(t, n)
 	assert.Equal(t, 1, shop.sessions.Len(), "чужой реалм не должен трогать наши строки")
+}
+
+// ОКНО ОТСЧИТЫВАЕТСЯ НАЗАД, А НЕ ВПЕРЁД. Уборка, зовущая Purge с now плюс
+// окном, вычищает и свежие попытки — то есть обнуляет защиту от перебора ровно
+// тем механизмом, который её обслуживает.
+func TestService_Sweep_PurgesAttemptsOlderThanTheWindow(t *testing.T) {
+	t.Parallel()
+
+	st := newStand(t, withConfig(func(c *session.Config) {
+		c.LockoutWindow = 15 * time.Minute
+		c.LockoutAttempts = 10
+	}))
+	require.ErrorIs(t, signInErr(t, st, unknownLogin), session.ErrInvalidCredentials)
+	st.clock.Advance(20 * time.Minute)
+	require.ErrorIs(t, signInErr(t, st, unknownLogin), session.ErrInvalidCredentials)
+
+	n, err := st.svc.Sweep(t.Context())
+
+	require.NoError(t, err)
+	assert.Equal(t, 1, n, "убрана обязана быть ровно одна попытка — та, что старше окна")
+	assert.Equal(t, 1, st.attempts.Len(), "свежая попытка обязана уцелеть")
+}
+
+// Sweep возвращает то, что успел убрать ДО сбоя: цифра «ноль» на прогоне, где
+// две таблицы уже вычищены, отправила бы дежурного искать несуществующую
+// проблему с уборкой сессий.
+func TestService_Sweep_ReportsWhatItManagedToClear(t *testing.T) {
+	t.Parallel()
+
+	st := newStand(t, withConfig(func(c *session.Config) {
+		c.SessionTTL = time.Hour
+		c.IdleTTL = time.Hour
+		c.RenewEvery = time.Minute
+		c.LockoutWindow = 15 * time.Minute
+	}))
+	st.seed(t, knownLogin)
+	_, err := st.signIn(t, knownLogin, goodPassword)
+	require.NoError(t, err)
+	require.ErrorIs(t, signInErr(t, st, unknownLogin), session.ErrInvalidCredentials)
+
+	st.clock.Advance(48 * time.Hour)
+	st.tokens.Err = authtest.ErrInjected
+	n, err := st.svc.Sweep(t.Context())
+
+	require.ErrorIs(t, err, auth.ErrUnavailable)
+	assert.Equal(t, 2, n, "сессия и попытка убраны — их и обязан назвать ответ")
 }
