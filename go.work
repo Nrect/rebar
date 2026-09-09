@@ -4,6 +4,7 @@ toolchain go1.26.6
 
 use (
 	./audit
+	./auth
 	./authz
 	./kit
 	./mail
