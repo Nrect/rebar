@@ -65,7 +65,10 @@ var allowedByDir = map[string][]string{
 	".":           {"github.com/google/uuid"},
 	"paymenttest": {"github.com/google/uuid"},
 	"prorate":     {},
-	"paymentpg":   {"github.com/google/uuid", "github.com/jackc/pgx/v5"},
+	// postgres — граница ошибки Postgres, разрешённая адаптерам хранилища
+	// (ADR-0005, третья межмодульная зависимость). Ядру она по-прежнему
+	// запрещена: списка "." это не касается.
+	"paymentpg":   {"github.com/google/uuid", "github.com/jackc/pgx/v5", "github.com/nrect/rebar/postgres"},
 	"yookassa":    {"github.com/google/uuid"},
 	"paymentotel": {"github.com/google/uuid", "go.opentelemetry.io/otel/metric", "go.opentelemetry.io/otel/attribute"},
 	"cmd/psfake":  {},
