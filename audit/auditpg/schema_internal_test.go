@@ -38,6 +38,8 @@ func TestExpectedColumns_MatchSchemaFile(t *testing.T) {
 	}
 	for _, name := range expectedTriggers {
 		assert.Contains(t, Schema, "CREATE TRIGGER "+name, name)
+		assert.Contains(t, Schema, "ENABLE ALWAYS TRIGGER "+name,
+			"%s объявлен, но не переведён в ENABLE ALWAYS — CheckSchema это отвергнет", name)
 	}
 }
 

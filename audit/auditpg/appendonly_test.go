@@ -90,3 +90,24 @@ func TestSchema_AllowsDeleteForRetention(t *testing.T) {
 	require.NoError(t, err)
 	assert.Zero(t, countRows(t, pool, "SELECT count(*) FROM audit_events WHERE id = $1", ev.ID))
 }
+
+// Выключенный триггер снимает append-only полностью — и поэтому его выключение
+// обязано быть расхождением схемы, а не мелочью: CheckSchema это единственное,
+// что стоит между «DISABLE TRIGGER на проде» и молча переписанной историей.
+func TestSchema_DisabledTriggerLetsUpdateThrough(t *testing.T) {
+	t.Parallel()
+
+	sink, pool := newSink(t)
+	ctx := context.Background()
+	ev := testEvent()
+	require.NoError(t, sink.Write(ctx, ev))
+
+	_, err := pool.Exec(ctx, `ALTER TABLE audit_events DISABLE TRIGGER audit_events_append_only_trg`)
+	require.NoError(t, err)
+
+	_, err = pool.Exec(ctx, `UPDATE audit_events SET outcome = 'success' WHERE id = $1`, ev.ID)
+	require.NoError(t, err, "без триггера база правку пропускает — ровно это и ловит CheckSchema")
+	assert.Equal(t, "success", readRow(t, pool, ev.ID).Outcome)
+
+	require.Error(t, sink.CheckSchema(ctx), "CheckSchema обязан назвать выключенный триггер расхождением")
+}

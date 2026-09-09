@@ -58,8 +58,8 @@ var expectedIndexes = map[string]bool{
 	"ix_audit_events_target":      false,
 }
 
-// expectedTriggers — append-only держит база, поэтому пропавший триггер это
-// расхождение схемы, а не мелочь оформления.
+// expectedTriggers — append-only держит база, поэтому пропавший или
+// выключенный триггер это расхождение схемы, а не мелочь оформления.
 var expectedTriggers = []string{"audit_events_append_only_trg"}
 
 // to_regclass ищет таблицу по search_path соединения — там же, где её найдут
@@ -76,7 +76,12 @@ const checksSQL = `SELECT conname FROM pg_constraint WHERE conrelid = $1 AND con
 const indexesSQL = `SELECT indexname, indexdef LIKE 'CREATE UNIQUE INDEX %'
 FROM pg_indexes WHERE schemaname = $1 AND tablename = $2`
 
-const triggersSQL = `SELECT tgname FROM pg_trigger WHERE tgrelid = $1 AND NOT tgisinternal`
+// tgenabled = 'A' — это ENABLE ALWAYS. Режим по умолчанию ('O'), реплика
+// ('R') и выключенный ('D') триггер в pg_trigger видны точно так же, поэтому
+// проверять одно наличие имени мало: DISABLE TRIGGER снимает append-only, не
+// трогая ни одной строки каталога, которую заметил бы поиск по имени.
+const triggersSQL = `SELECT tgname, tgenabled = 'A'
+FROM pg_trigger WHERE tgrelid = $1 AND NOT tgisinternal`
 
 // CheckSchema сверяет таблицу audit_events со schema.sql, ничего не меняя:
 // колонки и их типы, CHECK-ограничения, индексы и триггер неизменяемости.
@@ -142,7 +147,11 @@ func (s *Sink) checkColumns(ctx context.Context, schema string) ([]string, error
 }
 
 func (s *Sink) checkConstraints(ctx context.Context, oid uint32) ([]string, error) {
-	actual, err := queryNames(ctx, s.db, checksSQL, oid)
+	rows, err := s.db.Query(ctx, checksSQL, oid)
+	if err != nil {
+		return nil, storeError("check schema: constraints", err)
+	}
+	actual, err := pgx.CollectRows(rows, pgx.RowTo[string])
 	if err != nil {
 		return nil, storeError("check schema: constraints", err)
 	}
@@ -175,26 +184,22 @@ func (s *Sink) checkIndexes(ctx context.Context, schema string) ([]string, error
 }
 
 func (s *Sink) checkTriggers(ctx context.Context, oid uint32) ([]string, error) {
-	actual, err := queryNames(ctx, s.db, triggersSQL, oid)
+	actual, err := queryPairs[bool](ctx, s.db, triggersSQL, oid)
 	if err != nil {
 		return nil, storeError("check schema: triggers", err)
 	}
 	var problems []string
 	for _, name := range expectedTriggers {
-		if !slices.Contains(actual, name) {
+		always, ok := actual[name]
+		if !ok {
 			problems = append(problems, "триггера "+name+" нет: журнал перестал быть append-only")
+			continue
+		}
+		if !always {
+			problems = append(problems, "триггер "+name+" не в режиме ENABLE ALWAYS: журнал правится при репликации и после DISABLE TRIGGER")
 		}
 	}
 	return problems, nil
-}
-
-// queryNames — один столбец имён в срез.
-func queryNames(ctx context.Context, db executor, sql string, args ...any) ([]string, error) {
-	rows, err := db.Query(ctx, sql, args...)
-	if err != nil {
-		return nil, err
-	}
-	return pgx.CollectRows(rows, pgx.RowTo[string])
 }
 
 // queryPairs — строки «имя, значение» в карту.

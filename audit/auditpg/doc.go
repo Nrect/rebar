@@ -29,6 +29,9 @@
 //  3. APPEND-ONLY ДЕРЖИТ БАЗА. В адаптере нет ни UPDATE, ни DELETE
 //     (TestAdapter_HasNoUpdateOrDelete), а UPDATE отвергает триггер
 //     audit_events_append_only_trg — правку в обход пакета не примет Postgres.
+//     CheckSchema требует у триггера режим ENABLE ALWAYS, а не только его
+//     наличие: DISABLE TRIGGER и режим по умолчанию после восстановления
+//     дампа снимают append-only, не убирая триггер из каталога.
 //     DELETE база разрешает: ретеншн — политика потребителя.
 //  4. ЗАКРЫТЫЕ НАБОРЫ ЗЕРКАЛЯТСЯ CHECK: outcome и actor_kind не примут
 //     значения мимо AllOutcomes и AllActorKinds; guard-тест сверяет CHECK со
