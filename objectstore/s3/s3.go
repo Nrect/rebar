@@ -191,7 +191,7 @@ func (s *Store) Presign(_ context.Context, key string, method objectstore.Method
 	if !method.Valid() {
 		return "", objectstore.ErrBadMethod
 	}
-	if ttl <= 0 || ttl > presignLimit {
+	if ttl <= 0 || ttl > objectstore.MaxPresignTTL {
 		return "", objectstore.ErrBadTTL
 	}
 	verb := http.MethodGet

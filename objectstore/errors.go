@@ -22,8 +22,10 @@ var (
 	ErrBadMethod = errors.New("presign method is not one of AllMethods")
 	// ErrBadTTL — непозитивный или слишком долгий срок жизни подписанной ссылки.
 	ErrBadTTL = errors.New("presign ttl is not positive or exceeds the provider limit")
-	// ErrSizeUnknown — адаптеру нужен известный размер (подпись считается по телу).
-	ErrSizeUnknown = errors.New("object size must be known for this store")
+	// ErrSizeUnknown — размер не назван либо не сошёлся с телом. Адаптеру s3
+	// он нужен точным: подпись считается по телу, и тело, соврав о размере,
+	// разошлось бы с подписью.
+	ErrSizeUnknown = errors.New("object size is unknown or does not match the body")
 	// ErrNotFound — объекта нет там, где он нужен.
 	ErrNotFound = errors.New("object is not found")
 	// ErrUnavailable — сбой хранилища: повтор осмыслен, объект не тронут.
