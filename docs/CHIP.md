@@ -115,11 +115,24 @@ make lockstep
 make mutants MODULE=<модуль> MUTANTS_EXCLUDE="-E '^<адаптер>/' -E '^doc\.go$'"
 ```
 
-Docker для интеграционных тестов — colima:
+Docker для интеграционных тестов — colima. Одного `colima start` МАЛО:
+`docker ps` заработает, а testcontainers упадёт с «rootless Docker not found,
+failed to create Docker provider». Он не разбирает контекст colima и ищет сокет
+по умолчанию.
 
 ```bash
 colima start
+export DOCKER_HOST="unix://$HOME/.colima/default/docker.sock"
+export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock
 ```
+
+Нужны **обе** переменные. Первая — чтобы клиент нашёл демон; вторая — для
+уборщика контейнеров, который монтирует путь сокета ВНУТРИ виртуальной машины,
+а не на хосте. Без второй тесты пройдут, но за собой не уберут.
+
+Крайняя мера, если уборщик всё равно мешает: `TESTCONTAINERS_RYUK_DISABLED=true`.
+Тогда контейнеры остаются висеть и снимаются руками — годится для разового
+прогона, не для привычки.
 
 Если модуль поднимает контейнеры, мутантов гонять на **общей** базе, иначе
 каждый мутант поднимает свой контейнер и прогон врёт таймаутами:
