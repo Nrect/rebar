@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/nrect/rebar/mail"
+	"github.com/nrect/rebar/postgres"
 )
 
 func TestStore_Enqueue_InsertsEnvelopeAsIs(t *testing.T) {
@@ -91,12 +92,21 @@ func TestStore_Enqueue_ErrorHidesBody(t *testing.T) {
 	var raw *pgconn.PgError
 	require.ErrorAs(t, rawInsertError(t, pool), &raw)
 	require.Contains(t, raw.Detail, secretLink, "в Detail драйвера лежит вся строка вместе с телом")
+	require.NotEmpty(t, raw.ConstraintName, "иначе проверке имени ниже нечего доказывать")
 
 	var leaked *pgconn.PgError
 	assert.NotErrorAs(t, err, &leaked,
 		"ошибка драйвера обязана быть снята с цепочки: в её Detail лежит тело письма")
 	assert.NotContains(t, err.Error(), secretLink)
 	assert.NotContains(t, err.Error(), "Failing row")
+
+	// Вместо снятого *PgError наружу едет очищенная ошибка общей границы: по её
+	// имени ограничения потребитель отличает один конфликт от другого — так же,
+	// как у остальных адаптеров хранилища.
+	var sanitized *postgres.Error
+	require.ErrorAs(t, err, &sanitized, "наружу едет очищенная ошибка postgres")
+	assert.Equal(t, raw.ConstraintName, sanitized.Constraint)
+	assert.NotContains(t, sanitized.Message, secretLink)
 }
 
 // rawInsertError — то же нарушение мимо адаптера: без него проверка

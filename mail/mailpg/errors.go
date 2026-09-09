@@ -1,29 +1,26 @@
 package mailpg
 
 import (
-	"errors"
 	"fmt"
 
-	"github.com/jackc/pgx/v5/pgconn"
-
 	"github.com/nrect/rebar/mail"
+	"github.com/nrect/rebar/postgres"
 )
 
 // storeError — единственная точка перевода сбоя Postgres в ошибку порта:
 // errors.Is(err, mail.ErrUnavailable) означает «письмо осталось в очереди».
 //
-// ТЕЛО ПИСЬМА НЕ ПОПАДАЕТ В ОШИБКУ. У pgconn.PgError на нарушении CHECK или
-// уникальности в Detail лежит «Failing row contains (…)» — вся строка вместе
-// с body_text и ссылкой с токеном. Поэтому *PgError не заворачивается в
-// цепочку (иначе Detail достаётся через errors.As ниже по стеку), от него
-// остаются SQLSTATE и Message.
+// ГРАНИЦА ОШИБКИ — ОБЩАЯ, А НЕ СВОЯ КОПИЯ (ADR-0005, третья межмодульная
+// зависимость). У pgconn.PgError в Detail лежит «Failing row contains (…)» —
+// вся строка целиком, вместе с телом письма и ссылкой с токеном;
+// postgres.Sanitize оставляет от неё SQLSTATE, Message и имя ограничения и не
+// заворачивает *PgError в цепочку, поэтому Detail не достанется и через
+// errors.As ниже по стеку. Своя копия вдобавок теряла имя ограничения, и
+// потребитель mail не мог отличить один конфликт от другого так же, как у
+// соседних адаптеров.
 func storeError(op string, err error) error {
 	if err == nil {
 		return nil
 	}
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) {
-		return fmt.Errorf("%w: mailpg: %s: SQLSTATE %s: %s", mail.ErrUnavailable, op, pgErr.Code, pgErr.Message)
-	}
-	return fmt.Errorf("%w: mailpg: %s: %w", mail.ErrUnavailable, op, err)
+	return fmt.Errorf("%w: mailpg: %s: %w", mail.ErrUnavailable, op, postgres.Sanitize(err))
 }

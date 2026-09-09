@@ -2,7 +2,6 @@ package mailpg_test
 
 import (
 	"context"
-	"os"
 	"strings"
 	"testing"
 
@@ -17,9 +16,7 @@ import (
 // который он же может скопировать в миграции.
 func TestSchema_EmbedEqualsFile(t *testing.T) {
 	t.Parallel()
-	raw, err := os.ReadFile("schema.sql")
-	require.NoError(t, err)
-	assert.Equal(t, string(raw), mailpg.Schema)
+	assert.Equal(t, readSchema(t), mailpg.Schema)
 }
 
 func TestCheckSchema_FullSchemaPasses(t *testing.T) {
