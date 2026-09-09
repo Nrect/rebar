@@ -246,14 +246,21 @@ func TestStalePending_YoungIntentsAreNotStale(t *testing.T) {
 	assert.Empty(t, batch, "только что созданное намерение зависшим не считается")
 }
 
+// Негодный лимит отбивается ДО стора, и проверяется здесь именно ВЫЗОВ, а не
+// класс ошибки: стор по контракту порта отвечает на непозитивный лимит тем же
+// ErrBadTransition, поэтому по ошибке гвард домена и гвард стора неотличимы, а
+// смысл гварда домена ровно в том, чтобы не тратить круг в базу.
 func TestStalePending_BadLimit(t *testing.T) {
 	t.Parallel()
 
-	h := newHarness(t)
+	for _, limit := range []int{0, -1} {
+		h := newHarness(t)
 
-	_, err := h.svc.StalePending(context.Background(), payment.IntentCursor{}, 0)
+		_, err := h.svc.StalePending(context.Background(), payment.IntentCursor{}, limit)
 
-	require.ErrorIs(t, err, payment.ErrBadTransition)
+		require.ErrorIs(t, err, payment.ErrBadTransition, "лимит %d", limit)
+		assert.Zero(t, h.store.CallCount("StalePending"), "лимит %d до стора не доходит", limit)
+	}
 }
 
 // Счётчик зависших считается БЕЗ потолка пачки: иначе «зависших 5000»
@@ -296,9 +303,22 @@ func TestDrift(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, records, 1)
 	assert.Equal(t, payment.DriftSucceededNoCapture, records[0].Kind)
+}
 
-	_, err = h.svc.Drift(context.Background(), 0)
-	require.ErrorIs(t, err, payment.ErrBadTransition)
+// Тот же гвард и та же проверка, что у StalePending: «расхождений не нашлось» и
+// «нас не спросили» обязаны быть разными ответами, иначе алерт с порогом 1
+// молчит на пустом месте.
+func TestDrift_BadLimit(t *testing.T) {
+	t.Parallel()
+
+	for _, limit := range []int{0, -1} {
+		h := newHarness(t)
+
+		_, err := h.svc.Drift(context.Background(), limit)
+
+		require.ErrorIs(t, err, payment.ErrBadTransition, "лимит %d", limit)
+		assert.Zero(t, h.store.CallCount("Drift"), "лимит %d до стора не доходит", limit)
+	}
 }
 
 // Reconciler — задание планировщика: сигнатура Run(ctx) (int, error).

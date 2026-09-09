@@ -256,7 +256,7 @@ func (m *MemStore) ApplyEvent(_ context.Context, req payment.ApplyEventRequest,
 	in.Status = req.To
 	in.UpdatedAt = req.Now
 	if req.To == payment.StatusSucceeded {
-		settled := req.Now
+		settled := settledMoment(in, req)
 		in.SettledAt = &settled
 	}
 	// Хук зовётся после книги и до фиксации: его ошибка отменяет ВСЁ, включая
@@ -363,6 +363,9 @@ func (m *MemStore) StalePending(_ context.Context, olderThan time.Time,
 	if m.Err != nil {
 		return nil, m.Err
 	}
+	if err := checkLimit("stale pending", limit); err != nil {
+		return nil, err
+	}
 	queue := make([]payment.Intent, 0, len(m.Intents))
 	for id, in := range m.Intents {
 		if in.Status.IsOpen() && in.CreatedAt.Before(olderThan) && afterCursor(in, after) {
@@ -401,6 +404,9 @@ func (m *MemStore) Drift(_ context.Context, _ time.Time, limit int) ([]payment.D
 	m.Calls["Drift"]++
 	if m.Err != nil {
 		return nil, m.Err
+	}
+	if err := checkLimit("drift", limit); err != nil {
+		return nil, err
 	}
 	return slices.Clone(m.DriftRecords[:min(limit, len(m.DriftRecords))]), nil
 }
@@ -444,6 +450,37 @@ func (m *MemStore) apply(in payment.Intent) {
 		delete(m.ByReference, in.Reference)
 	}
 	m.LastApplySeq++
+}
+
+// settledMoment — момент зачисления: время события, зажатое в
+// [intent.CreatedAt, req.Now] (контракт Store.ApplyEvent, шаг 4).
+//
+// Берётся из события, а не из «сейчас»: событие может доехать через час после
+// списания, и выручка «за январь» уехала бы в февраль. Зажимается, потому что
+// время события приходит из внешнего мира и не проверено ничем, а колонка, по
+// которой режут выручку, после зачисления неисправима. Двойник обязан считать
+// его ТЕМ ЖЕ правилом, что адаптер: иначе потребитель, проверивший отчёт на
+// двойнике, получит в проде другие цифры.
+func settledMoment(in payment.Intent, req payment.ApplyEventRequest) time.Time {
+	at := req.Event.OccurredAt.UTC()
+	if at.Before(in.CreatedAt) {
+		at = in.CreatedAt
+	}
+	if at.After(req.Now) {
+		at = req.Now
+	}
+	return at
+}
+
+// checkLimit — непозитивный размер пачки это ошибка программиста (контракт
+// StalePending и Drift), а не пустая выборка и не паника: двойник обязан
+// переживать те же пограничные аргументы, что и адаптер.
+func checkLimit(op string, limit int) error {
+	if limit <= 0 {
+		return fmt.Errorf("%w: %s limit must be positive, got %d",
+			payment.ErrBadTransition, op, limit)
+	}
+	return nil
 }
 
 // checkApplyPredicate — предикат ApplyEvent в порядке контракта порта: статус,
