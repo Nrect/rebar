@@ -17,12 +17,21 @@ import (
 // golang.org/x/crypto в ядре password — единственное исключение из правила
 // «ядро это stdlib»: argon2id в stdlib нет, а писать его самим означало бы
 // свою криптографию в пакете аутентификации. Библиотека одна, каталог один.
+//
+// github.com/nrect/rebar/postgres в authpg — вторая из трёх межмодульных
+// зависимостей, разрешённых ADR-0005, и только адаптерам хранилища: Sanitize
+// это граница безопасности, а пять её копий в пяти адаптерах — пять шансов
+// разойтись там, где расхождение стоит утечки строки. Ядру она запрещена
+// по-прежнему: SQL там нет и не должно быть.
 var allowedByDir = map[string][]string{
 	".":        {"github.com/google/uuid"},
 	"loginid":  {"golang.org/x/text"},
 	"password": {"golang.org/x/crypto"},
 	"token":    {},
 	"pwzxcvbn": {"github.com/trustelem/zxcvbn"},
+	"session":  {"github.com/google/uuid"},
+	"authpg":   {"github.com/google/uuid", "github.com/jackc/pgx/v5", "github.com/nrect/rebar/postgres"},
+	"authhttp": {},
 	"authtest": {"github.com/google/uuid"},
 }
 
