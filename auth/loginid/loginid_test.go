@@ -1,4 +1,4 @@
-package auth_test
+package loginid_test
 
 import (
 	"strings"
@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/nrect/rebar/auth"
+	"github.com/nrect/rebar/auth/loginid"
 )
 
 // Видимые формы записаны литералом с пояснением: без него проверка
@@ -36,7 +36,7 @@ const (
 // у того, кто уже зарегистрирован. Порядок «NFKC, потом регистр» выбран
 // из-за этого: знак обслуживания превращается в заглавные SM, и приведение
 // регистра обязано идти после, иначе SM так и останется заглавным.
-func FuzzNormalizeLogin_IsIdempotent(f *testing.F) {
+func FuzzNormalize_IsIdempotent(f *testing.F) {
 	for _, seed := range []string{
 		"", " ", "a@b.example", "Alice@X.RU", "  Alice@x.ru  ",
 		nbsp + "alice@x.ru" + nbsp,
@@ -48,7 +48,7 @@ func FuzzNormalizeLogin_IsIdempotent(f *testing.F) {
 		fullwidthA + "lice@x.ru",
 		romanTwelve + "@x.ru",
 		zeroWidth + "alice@x.ru",
-		strings.Repeat("a", auth.MaxLoginLen+1),
+		strings.Repeat("a", loginid.MaxLen+1),
 		strings.Repeat(arabicLong, 40),
 		"\x00\n\t \U0001F525 mixed",
 	} {
@@ -56,27 +56,27 @@ func FuzzNormalizeLogin_IsIdempotent(f *testing.F) {
 	}
 
 	f.Fuzz(func(t *testing.T, raw string) {
-		once, err := auth.NormalizeLogin(raw)
+		once, err := loginid.Normalize(raw)
 		if err != nil {
-			require.ErrorIs(t, err, auth.ErrInvalidLogin)
+			require.ErrorIs(t, err, loginid.ErrInvalid)
 			require.Empty(t, once, "отказ обязан отдавать пустую строку, иначе её сохранят")
 			return
 		}
 
-		twice, err := auth.NormalizeLogin(once)
+		twice, err := loginid.Normalize(once)
 		require.NoErrorf(t, err, "нормализованный логин не прошёл повторную нормализацию: %q", once)
 		require.Equalf(t, once, twice, "второй проход изменил строку: %q -> %q", once, twice)
 
 		// Пост-условия, на которые опирается вызывающий.
 		require.NotEmpty(t, once)
-		require.LessOrEqual(t, len(once), auth.MaxLoginLen)
+		require.LessOrEqual(t, len(once), loginid.MaxLen)
 		require.Equal(t, strings.TrimSpace(once), once, "остались пробелы по краям")
 	})
 }
 
 // Разные написания одного адреса дают ОДИН ключ: иначе счётчик блокировок
 // обходится сменой регистра или совместимой формой Unicode.
-func TestNormalizeLogin_FoldsSpellingsOfTheSameAddress(t *testing.T) {
+func TestNormalize_FoldsSpellingsOfTheSameAddress(t *testing.T) {
 	t.Parallel()
 
 	const want = "alice@x.ru"
@@ -89,22 +89,22 @@ func TestNormalizeLogin_FoldsSpellingsOfTheSameAddress(t *testing.T) {
 		"полноширинная a":      fullwidthA + "lice@x.ru",
 		"полноширинная собака": "alice" + fullwidthAt + "x.ru",
 	} {
-		got, err := auth.NormalizeLogin(raw)
+		got, err := loginid.Normalize(raw)
 		require.NoErrorf(t, err, "%s", name)
 		assert.Equalf(t, want, got, "%s: %q дало другой ключ счётчика", name, raw)
 	}
 
 	// Составная и предсоставленная формы одной буквы — одна строка.
-	composed, err := auth.NormalizeLogin(eComposed + "@x.ru")
+	composed, err := loginid.Normalize(eComposed + "@x.ru")
 	require.NoError(t, err)
-	precomposed, err := auth.NormalizeLogin(ePrecomposed + "@x.ru")
+	precomposed, err := loginid.Normalize(ePrecomposed + "@x.ru")
 	require.NoError(t, err)
 	assert.Equal(t, precomposed, composed, "составная и предсоставленная формы дали разные ключи")
 }
 
 // Разные адреса не склеиваются: нормализация обязана складывать написания
 // ОДНОГО адреса, а не разные адреса в один.
-func TestNormalizeLogin_KeepsDifferentAddressesApart(t *testing.T) {
+func TestNormalize_KeepsDifferentAddressesApart(t *testing.T) {
 	t.Parallel()
 
 	seen := make(map[string]string, 8)
@@ -112,7 +112,7 @@ func TestNormalizeLogin_KeepsDifferentAddressesApart(t *testing.T) {
 		"alice@x.ru", "bob@x.ru", "alice@y.ru", "alice+tag@x.ru",
 		"a" + cyrillicEl + "ice@x.ru",
 	} {
-		got, err := auth.NormalizeLogin(raw)
+		got, err := loginid.Normalize(raw)
 		require.NoError(t, err)
 		if prev, ok := seen[got]; ok {
 			t.Fatalf("%q и %q склеились в %q", prev, raw, got)
@@ -121,34 +121,34 @@ func TestNormalizeLogin_KeepsDifferentAddressesApart(t *testing.T) {
 	}
 }
 
-func TestNormalizeLogin_Rejects(t *testing.T) {
+func TestNormalize_Rejects(t *testing.T) {
 	t.Parallel()
 
 	for name, raw := range map[string]string{
 		"пусто":                  "",
 		"одни пробелы":           " \t\n ",
 		"одни неразрывные":       nbsp + nbsp,
-		"длиннее потолка":        strings.Repeat("a", auth.MaxLoginLen+1),
+		"длиннее потолка":        strings.Repeat("a", loginid.MaxLen+1),
 		"перевод строки":         "alice\n@x.ru",
 		"возврат каретки":        "alice\r@x.ru",
 		"нулевой байт":           "alice\x00@x.ru",
 		"раздувается за потолок": strings.Repeat(arabicLong, 40),
 	} {
-		got, err := auth.NormalizeLogin(raw)
-		require.ErrorIsf(t, err, auth.ErrInvalidLogin, "%s: %q принят", name, raw)
+		got, err := loginid.Normalize(raw)
+		require.ErrorIsf(t, err, loginid.ErrInvalid, "%s: %q принят", name, raw)
 		assert.Emptyf(t, got, "%s: отказ вернул непустую строку", name)
 	}
 
 	// Ровно потолок принимается: граница проверяется с обеих сторон.
-	atLimit := strings.Repeat("a", auth.MaxLoginLen-5) + "@x.ru"
-	require.Len(t, atLimit, auth.MaxLoginLen)
-	got, err := auth.NormalizeLogin(atLimit)
+	atLimit := strings.Repeat("a", loginid.MaxLen-5) + "@x.ru"
+	require.Len(t, atLimit, loginid.MaxLen)
+	got, err := loginid.Normalize(atLimit)
 	require.NoError(t, err, "логин ровно в потолок обязан приниматься")
-	require.Len(t, got, auth.MaxLoginLen)
+	require.Len(t, got, loginid.MaxLen)
 }
 
 // Логин — персональные данные: в тексте ошибки его быть не должно.
-func TestNormalizeLogin_ErrorCarriesNoLogin(t *testing.T) {
+func TestNormalize_ErrorCarriesNoLogin(t *testing.T) {
 	t.Parallel()
 
 	for name, raw := range map[string]string{
@@ -156,7 +156,7 @@ func TestNormalizeLogin_ErrorCarriesNoLogin(t *testing.T) {
 		"невидимый символ":   "victim.person" + zeroWidth + "@example.org",
 		"длиннее потолка":    strings.Repeat("victim.person@example.org", 20),
 	} {
-		_, err := auth.NormalizeLogin(raw)
+		_, err := loginid.Normalize(raw)
 		require.Errorf(t, err, "%s", name)
 		assert.NotContainsf(t, err.Error(), "victim", "%s: логин в тексте ошибки", name)
 		assert.NotContainsf(t, err.Error(), "example.org", "%s: домен в тексте ошибки", name)
@@ -167,10 +167,10 @@ func TestNormalizeLogin_ErrorCarriesNoLogin(t *testing.T) {
 // печатаются одинаково, а ключами счётчика и строками в базе они разные. Это
 // та же беда, что и с составной формой буквы, только NFKC её не лечит —
 // символы форматирования он оставляет как есть.
-func TestNormalizeLogin_RejectsInvisibleCharacters(t *testing.T) {
+func TestNormalize_RejectsInvisibleCharacters(t *testing.T) {
 	t.Parallel()
 
-	visible, err := auth.NormalizeLogin("alice@x.ru")
+	visible, err := loginid.Normalize("alice@x.ru")
 	require.NoError(t, err)
 
 	for name, raw := range map[string]string{
@@ -179,8 +179,8 @@ func TestNormalizeLogin_RejectsInvisibleCharacters(t *testing.T) {
 		"мягкий перенос":    "ali\u00adce@x.ru",
 		"метка направления": "alice@x.ru\u200e",
 	} {
-		got, err := auth.NormalizeLogin(raw)
-		require.ErrorIsf(t, err, auth.ErrInvalidLogin, "%s: %q принят и выглядит как %q", name, raw, visible)
+		got, err := loginid.Normalize(raw)
+		require.ErrorIsf(t, err, loginid.ErrInvalid, "%s: %q принят и выглядит как %q", name, raw, visible)
 		assert.Emptyf(t, got, "%s", name)
 	}
 }

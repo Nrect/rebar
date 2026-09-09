@@ -1,6 +1,7 @@
-package auth
+package loginid
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"unicode"
@@ -9,10 +10,15 @@ import (
 	"golang.org/x/text/unicode/norm"
 )
 
-// MaxLoginLen — потолок длины логина: 64 + '@' + 255, граница RFC 5321.
-const MaxLoginLen = 320
+// MaxLen — потолок длины логина: 64 + '@' + 255, граница RFC 5321.
+const MaxLen = 320
 
-// NormalizeLogin — ЕДИНСТВЕННАЯ ТОЧКА НОРМАЛИЗАЦИИ ЛОГИНА в тулките.
+// ErrInvalid — логин пуст, длиннее MaxLen, не UTF-8 или содержит управляющий
+// либо невидимый символ. Самого логина в тексте ошибки нет: он персональные
+// данные, а текст ошибки доезжает до лога.
+var ErrInvalid = errors.New("login is invalid")
+
+// Normalize — ЕДИНСТВЕННАЯ ТОЧКА НОРМАЛИЗАЦИИ ЛОГИНА в тулките.
 //
 // ЭТО ПОЛОВИНА ЗАЩИТЫ ОТ ПЕРЕБОРА, А НЕ УДОБСТВО ХРАНЕНИЯ. Счётчик блокировок
 // ведётся по логину — и по несуществующему тоже. Если Alice@x.ru и alice@x.ru
@@ -21,16 +27,14 @@ const MaxLoginLen = 320
 // самое делают совместимые формы Unicode: составное «é» и его же
 // предсоставленный вид выглядят одинаково, а ключами были бы разными.
 //
-// ВТОРОЙ НОРМАЛИЗАЦИИ НЕ БУДЕТ. Порт Identities получает логин уже
+// ВТОРОЙ НОРМАЛИЗАЦИИ НЕ БУДЕТ. Порт auth.Identities получает логин уже
 // нормализованным, а уникальный индекс потребитель строит на СОХРАНЁННОЙ
 // колонке, а не на выражении в SQL. Тогда точка нормализации ровно одна — эта,
 // — и расходиться нечему; функция в индексе была бы второй точкой, которая
 // разъедется с первой на первом же обновлении ICU.
-//
-// Ошибки: ErrInvalidLogin. Самого логина в тексте нет — он персональные данные.
-func NormalizeLogin(raw string) (string, error) {
-	if len(raw) > MaxLoginLen {
-		return "", fmt.Errorf("%w: %d bytes before normalization, maximum is %d", ErrInvalidLogin, len(raw), MaxLoginLen)
+func Normalize(raw string) (string, error) {
+	if len(raw) > MaxLen {
+		return "", fmt.Errorf("%w: %d bytes before normalization, maximum is %d", ErrInvalid, len(raw), MaxLen)
 	}
 	// НЕГОДНЫЙ UTF-8 ОТВЕРГАЕТСЯ ДО НОРМАЛИЗАЦИИ, И ЭТО НЕ ПРИДИРЧИВОСТЬ.
 	// На испорченной последовательности NFKC не идемпотентен: ведущий байт
@@ -38,7 +42,7 @@ func NormalizeLogin(raw string) (string, error) {
 	// неразвёрнутой, а на втором проходе разворачивается — и сохранённый логин
 	// перестаёт совпадать с искомым. Нашёл фаззер, вход лежит в testdata.
 	if !utf8.ValidString(raw) {
-		return "", fmt.Errorf("%w: not valid UTF-8", ErrInvalidLogin)
+		return "", fmt.Errorf("%w: not valid UTF-8", ErrInvalid)
 	}
 	// NFKC ДВАЖДЫ, И ВТОРОЙ РАЗ — НЕ ПЕРЕСТРАХОВКА. Приведение регистра умеет
 	// выводить строку из нормальной формы: у буквы с кольцом сверху нижний
@@ -54,10 +58,10 @@ func NormalizeLogin(raw string) (string, error) {
 	login := strings.TrimSpace(folded)
 
 	if login == "" {
-		return "", fmt.Errorf("%w: empty after normalization", ErrInvalidLogin)
+		return "", fmt.Errorf("%w: empty after normalization", ErrInvalid)
 	}
-	if len(login) > MaxLoginLen {
-		return "", fmt.Errorf("%w: %d bytes after normalization, maximum is %d", ErrInvalidLogin, len(login), MaxLoginLen)
+	if len(login) > MaxLen {
+		return "", fmt.Errorf("%w: %d bytes after normalization, maximum is %d", ErrInvalid, len(login), MaxLen)
 	}
 	// НЕВИДИМЫЕ И УПРАВЛЯЮЩИЕ СИМВОЛЫ — ОТКАЗ, И ПРИЧИН ДВЕ. Управляющий даёт
 	// перевод строки в записи аудита и в логе потребителя, то есть подделку
@@ -67,7 +71,7 @@ func NormalizeLogin(raw string) (string, error) {
 	// будет другим — та же беда, что с составной формой буквы.
 	for _, r := range login {
 		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
-			return "", fmt.Errorf("%w: contains a control or invisible formatting character", ErrInvalidLogin)
+			return "", fmt.Errorf("%w: contains a control or invisible formatting character", ErrInvalid)
 		}
 	}
 	return login, nil

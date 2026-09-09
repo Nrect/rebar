@@ -18,7 +18,8 @@ import (
 // «ядро это stdlib»: argon2id в stdlib нет, а писать его самим означало бы
 // свою криптографию в пакете аутентификации. Библиотека одна, каталог один.
 var allowedByDir = map[string][]string{
-	".":        {"github.com/google/uuid", "golang.org/x/text"},
+	".":        {"github.com/google/uuid"},
+	"loginid":  {"golang.org/x/text"},
 	"password": {"golang.org/x/crypto"},
 	"token":    {},
 	"pwzxcvbn": {"github.com/trustelem/zxcvbn"},
