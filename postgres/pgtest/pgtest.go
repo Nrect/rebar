@@ -63,7 +63,12 @@ func (o Options) withDefaults() Options {
 type DB struct {
 	pool *pgxpool.Pool
 	dsn  string
-	stop func(ctx context.Context)
+	// maxConns — потолок из Options, разрешённый withDefaults. Хранится,
+	// потому что его просит и Schema: тест, которому нужно больше соединений,
+	// задаёт число один раз в TestMain, а не узнаёт на гонке, что пул схемы
+	// молча взял умолчание.
+	maxConns int32
+	stop     func(ctx context.Context)
 }
 
 // Start — из TestMain, один раз на тестовый бинарь.
@@ -155,7 +160,7 @@ func createDB(ctx context.Context, admin *pgx.Conn, server string, opts Options)
 		drop(context.WithoutCancel(ctx))
 		return nil, err
 	}
-	return &DB{pool: pool, dsn: dsn, stop: drop}, nil
+	return &DB{pool: pool, dsn: dsn, maxConns: opts.MaxConns, stop: drop}, nil
 }
 
 // sweep убирает базы своего префикса старше часа: прерванный Ctrl+C прогон

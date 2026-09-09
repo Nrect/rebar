@@ -29,7 +29,7 @@ func Schema(t *testing.T, db *DB) *pgxpool.Pool {
 	if _, err = db.Pool().Exec(t.Context(), "CREATE SCHEMA "+name); err != nil {
 		t.Fatalf("pgtest: CREATE SCHEMA %s: %v", name, err)
 	}
-	pool, err := newPool(t.Context(), db.DSN(), defaultMaxConns, name)
+	pool, err := newPool(t.Context(), db.DSN(), db.maxConns, name)
 	if err != nil {
 		t.Fatalf("pgtest: пул схемы %s: %v", name, err)
 	}

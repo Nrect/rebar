@@ -63,7 +63,7 @@ func startContainer(ctx context.Context, opts Options) (*DB, error) {
 		_ = ctr.Terminate(context.WithoutCancel(ctx))
 		return nil, err
 	}
-	return &DB{pool: pool, dsn: dsn, stop: func(ctx context.Context) {
+	return &DB{pool: pool, dsn: dsn, maxConns: opts.MaxConns, stop: func(ctx context.Context) {
 		_ = ctr.Terminate(ctx)
 	}}, nil
 }

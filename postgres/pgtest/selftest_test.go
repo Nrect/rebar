@@ -129,6 +129,26 @@ func TestStart_ServerMode(t *testing.T) {
 	assert.False(t, dbExists(t, admin, cfg.Database), "база прогона не удалена на Close")
 }
 
+// Потолок пула из Options действует и на пул СХЕМЫ, а не только на пул базы
+// прогона.
+//
+// Схема — это то, чем пользуются тесты, и потолок нужен именно ей: адаптеру с
+// несколькими параллельными транзакциями. Пока Schema брала умолчание, число,
+// заданное в TestMain, молча не действовало, и упереться в потолок можно было
+// только на гонке — то есть в самом дорогом месте.
+func TestSchema_HonoursMaxConns(t *testing.T) {
+	pgtest.Short(t)
+	ctx := t.Context()
+
+	t.Setenv(pgtest.EnvDatabaseURL, db.DSN())
+	fresh, err := pgtest.Start(ctx, pgtest.Options{MaxConns: 7})
+	require.NoError(t, err)
+	defer fresh.Close(context.WithoutCancel(ctx))
+
+	assert.Equal(t, int32(7), fresh.Pool().Config().MaxConns, "пул базы прогона")
+	assert.Equal(t, int32(7), pgtest.Schema(t, fresh).Config().MaxConns, "пул схемы")
+}
+
 func dbExists(t *testing.T, admin *pgx.Conn, name string) bool {
 	t.Helper()
 	var exists bool
