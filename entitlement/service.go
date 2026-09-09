@@ -109,7 +109,7 @@ func (s *Service) Open(ctx context.Context, subjectID uuid.UUID) ([]Grant, error
 	out := make([]Grant, 0, len(grants))
 	for _, g := range grants {
 		if g.Open(now) {
-			out = append(out, g)
+			out = append(out, g.clone())
 		}
 	}
 	return out, nil
