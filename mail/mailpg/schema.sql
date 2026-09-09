@@ -17,11 +17,11 @@ CREATE TABLE email_outbox (
     fingerprint         BYTEA NOT NULL,
     message_id          TEXT NOT NULL,
     status              TEXT NOT NULL,
-    attempts            INT NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    attempts            INT NOT NULL DEFAULT 0,
     next_attempt_at     TIMESTAMPTZ NOT NULL,
     locked_until        TIMESTAMPTZ,
     last_error          TEXT NOT NULL DEFAULT '',
-    fail_reason         TEXT NOT NULL DEFAULT '' CHECK (fail_reason IN ('', 'rejected','exhausted','uncertain')),
+    fail_reason         TEXT NOT NULL DEFAULT '',
     transport           TEXT NOT NULL DEFAULT '',
     provider_message_id TEXT NOT NULL DEFAULT '',
     not_after           TIMESTAMPTZ,
@@ -30,6 +30,10 @@ CREATE TABLE email_outbox (
     sent_at             TIMESTAMPTZ,
     -- словарь базы зеркалит mail.AllStatuses; имя — контракт, по нему сверяют
     CONSTRAINT email_outbox_status_chk CHECK (status IN ('pending','sending','sent','failed','expired','suppressed')),
+    -- словарь базы ⊇ mail.AllFailReasons: пустая строка — «не падало», её в
+    -- закрытом наборе домена нет и быть не должно
+    CONSTRAINT email_outbox_fail_reason_chk CHECK (fail_reason IN ('', 'rejected','exhausted','uncertain')),
+    CONSTRAINT email_outbox_attempts_chk CHECK (attempts >= 0),
     -- тело стёрто в терминальном статусе: контракт Store.Finish
     CONSTRAINT email_outbox_body_cleared_chk CHECK (
         status IN ('pending','sending')
