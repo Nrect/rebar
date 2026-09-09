@@ -7,6 +7,9 @@ import "errors"
 var (
 	// ErrInvalidRealm — реалм не соответствует форме [a-z0-9_]{1,32}.
 	ErrInvalidRealm = errors.New("realm is invalid")
+	// ErrInvalidLogin — логин пуст, длиннее MaxLoginLen или содержит
+	// управляющий символ. Самого логина в тексте ошибки нет.
+	ErrInvalidLogin = errors.New("login is invalid")
 	// ErrIdentityNotFound — личности с таким логином или идентификатором нет.
 	// Отсутствие строки, а не сбой: вход отвечает на неё тем же, чем на
 	// неверный пароль.

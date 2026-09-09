@@ -111,3 +111,38 @@ func (h *Hasher) Equalize(ctx context.Context, password string) error {
 	argon2.IDKey([]byte(password), salt, h.params.time, h.params.memoryKiB, h.params.threads, h.params.keyLen)
 	return nil
 }
+
+// NeedsRehash — стоит ли пересчитать хэш при следующем удачном входе.
+//
+// ЖИВЁТ ЗДЕСЬ, А НЕ В СЕРВИСЕ СЕССИЙ, потому что от пароля не зависит: это
+// сравнение параметров РАЗОБРАННОЙ строки с нынешними. Разбор PHC наружу не
+// торчит, и вынос решения выше означал бы либо экспорт decode, либо второй
+// разборщик того же формата.
+//
+// true на неразбираемой строке: битую колонку надо переписать при первом же
+// входе, который её пережил. Хэш с параметрами ВЫШЕ нынешних не трогается —
+// пересчёт ослабил бы его.
+func (h *Hasher) NeedsRehash(encoded string) bool {
+	d, err := decode(encoded)
+	if err != nil {
+		return true
+	}
+	// Цепочка if, а не одно выражение с ||: мутанты в слитом условии
+	// разбираются хуже, а границ здесь пять.
+	if d.params.memoryKiB < h.params.memoryKiB {
+		return true
+	}
+	if d.params.time < h.params.time {
+		return true
+	}
+	if d.params.threads < h.params.threads {
+		return true
+	}
+	if d.params.keyLen < h.params.keyLen {
+		return true
+	}
+	if d.params.saltLen < h.params.saltLen {
+		return true
+	}
+	return false
+}
