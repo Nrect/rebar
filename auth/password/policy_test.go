@@ -1,0 +1,172 @@
+package password_test
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/nrect/rebar/auth/password"
+)
+
+// fixedStrength — проверка силы с заданным ответом и записью того, что ей
+// показали: длина показанного — единственный способ доказать, что оценка идёт
+// по префиксу, не полагаясь на секундомер.
+type fixedStrength struct {
+	score int
+	seen  []string
+	users [][]string
+}
+
+func (s *fixedStrength) Score(pw string, userInputs []string) int {
+	s.seen = append(s.seen, pw)
+	s.users = append(s.users, userInputs)
+	return s.score
+}
+
+func policy(t *testing.T, score int) (*password.Policy, *fixedStrength) {
+	t.Helper()
+
+	checker := &fixedStrength{score: score}
+	return password.NewPolicy(checker, password.DefaultPolicyConfig()), checker
+}
+
+// Границы политики: ровно на границе — принято, на шаг за ней — отказ.
+func TestPolicy_LengthBounds(t *testing.T) {
+	t.Parallel()
+
+	p, _ := policy(t, password.ScoreMax)
+	require.Equal(t, 10, p.MinLength())
+	require.Equal(t, password.MaxAllowedLength, p.MaxLength())
+
+	require.ErrorIs(t, p.Check(strings.Repeat("a", 9)), password.ErrTooShort)
+	require.NoError(t, p.Check(strings.Repeat("a", 10)), "ровно минимум обязан проходить")
+	require.NoError(t, p.Check(strings.Repeat("a", password.MaxAllowedLength)), "ровно максимум обязан проходить")
+	require.ErrorIs(t, p.Check(strings.Repeat("a", password.MaxAllowedLength+1)), password.ErrTooLong)
+}
+
+// Граница политики проверяется с обеих сторон: односторонний тест пропускает
+// сдвиг на единицу внутрь, то есть настройку, которая обязана приниматься, но
+// начинает ронять конструктор у потребителя.
+func TestPolicyConfig_AcceptsEveryBoundary(t *testing.T) {
+	t.Parallel()
+
+	for name, cfg := range map[string]password.PolicyConfig{
+		"минимум на полу":         {MinLength: password.MinAllowedLength, MaxLength: 64, MinScore: 2},
+		"максимум на потолке":     {MinLength: 10, MaxLength: password.MaxAllowedLength, MinScore: 2},
+		"минимум равен максимуму": {MinLength: 12, MaxLength: 12, MinScore: 2},
+		"порог на нуле":           {MinLength: 10, MaxLength: 64, MinScore: password.ScoreMin},
+		"порог на потолке":        {MinLength: 10, MaxLength: 64, MinScore: password.ScoreMax},
+	} {
+		assert.NotPanicsf(t, func() { password.NewPolicy(&fixedStrength{}, cfg) },
+			"%s: годная политика отвергнута", name)
+	}
+}
+
+// Порог силы: ровно порог проходит, на единицу ниже — нет.
+func TestPolicy_ScoreThreshold(t *testing.T) {
+	t.Parallel()
+
+	strong, _ := policy(t, 2)
+	require.NoError(t, strong.Check("password on the threshold"), "оценка ровно на пороге обязана проходить")
+
+	weak, _ := policy(t, 1)
+	require.ErrorIs(t, weak.Check("password below the threshold"), password.ErrTooWeak)
+
+	// Верх шкалы тоже граница: оценка ScoreMax при пороге ScoreMax обязана
+	// проходить, иначе сведение «вне шкалы — ноль» съедает законный максимум.
+	top := password.NewPolicy(&fixedStrength{score: password.ScoreMax},
+		password.PolicyConfig{MinLength: 10, MaxLength: 64, MinScore: password.ScoreMax})
+	require.NoError(t, top.Check("password at the very top"))
+}
+
+// Длина проверяется ДО силы: гигантский ввод не должен доходить до оценки,
+// квадратичной по длине, — иначе форма регистрации, открытая без входа,
+// становится вектором отказа в обслуживании.
+func TestPolicy_LengthIsCheckedBeforeStrength(t *testing.T) {
+	t.Parallel()
+
+	p, checker := policy(t, password.ScoreMax)
+	require.ErrorIs(t, p.Check(strings.Repeat("a", password.MaxAllowedLength+1)), password.ErrTooLong)
+	require.ErrorIs(t, p.Check("short"), password.ErrTooShort)
+	assert.Empty(t, checker.seen, "оценку звали на пароле, забракованном по длине")
+}
+
+// Оценивается только префикс: длина показанного не превышает ScoreSampleLen.
+func TestPolicy_ScoresOnlyThePrefix(t *testing.T) {
+	t.Parallel()
+
+	p, checker := policy(t, password.ScoreMax)
+	long := strings.Repeat("aA1!xY9z", 100)[:800]
+	require.NoError(t, p.Check(long, "user@example.org"))
+
+	require.Len(t, checker.seen, 1)
+	assert.Len(t, checker.seen[0], password.ScoreSampleLen)
+	assert.Equal(t, long[:password.ScoreSampleLen], checker.seen[0])
+	assert.Equal(t, []string{"user@example.org"}, checker.users[0], "данные человека до оценки не доехали")
+}
+
+// Ответ вне шкалы — испорченный адаптер. Считать его нулём единственно
+// безопасно: любое другое сведение открыло бы проверку целиком.
+func TestPolicy_OutOfRangeScoreIsWeakest(t *testing.T) {
+	t.Parallel()
+
+	for _, score := range []int{-1, password.ScoreMax + 1, 1 << 30} {
+		p, _ := policy(t, score)
+		require.ErrorIsf(t, p.Check("some long enough password"), password.ErrTooWeak,
+			"оценка %d вне шкалы обязана считаться нулевой", score)
+	}
+}
+
+// Составных правил нет осознанно: пароль без цифр и знаков проходит, если он
+// достаточно длинный и не угадывается.
+func TestPolicy_HasNoCompositionRules(t *testing.T) {
+	t.Parallel()
+
+	p, _ := policy(t, password.ScoreMax)
+	require.NoError(t, p.Check("correcthorsebatterystaple"))
+}
+
+// Ошибки политики не носят самого пароля.
+func TestPolicy_ErrorsCarryNoPassword(t *testing.T) {
+	t.Parallel()
+
+	const secret = "sup3r-sekrit-passphrase"
+	p, _ := policy(t, 0)
+	err := p.Check(secret)
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), secret)
+}
+
+// Конструктор роняет процесс на негодной политике и на отсутствующей проверке
+// силы: «только длина» — это подмена порта двойником, а не поле конфигурации.
+func TestNewPolicy_PanicsOnBadConfig(t *testing.T) {
+	t.Parallel()
+
+	assert.PanicsWithValue(t, "password.NewPolicy: checker must not be nil", func() {
+		password.NewPolicy(nil, password.DefaultPolicyConfig())
+	})
+
+	for want, mutate := range map[string]func(*password.PolicyConfig){
+		"password.NewPolicy: PolicyConfig.MinLength must be at least 8": func(c *password.PolicyConfig) {
+			c.MinLength = 7
+		},
+		"password.NewPolicy: PolicyConfig.MaxLength must not exceed 1024": func(c *password.PolicyConfig) {
+			c.MaxLength = password.MaxAllowedLength + 1
+		},
+		"password.NewPolicy: PolicyConfig.MaxLength must be at least PolicyConfig.MinLength": func(c *password.PolicyConfig) {
+			c.MinLength, c.MaxLength = 20, 19
+		},
+		"password.NewPolicy: PolicyConfig.MinScore must be in [0, 4]": func(c *password.PolicyConfig) {
+			c.MinScore = password.ScoreMax + 1
+		},
+	} {
+		cfg := password.DefaultPolicyConfig()
+		mutate(&cfg)
+		assert.PanicsWithValue(t, want, func() { password.NewPolicy(&fixedStrength{}, cfg) })
+	}
+
+	// Нулевая политика — отказ, а не «без ограничений».
+	assert.Panics(t, func() { password.NewPolicy(&fixedStrength{}, password.PolicyConfig{}) })
+}
