@@ -45,11 +45,53 @@
   сохранённой колонке. Отдельным каталогом ради `golang.org/x/text`: корень
   импортируют все, включая слой хранения потребителя, и таблицы Unicode в его
   графе зависимостей — последнее, чего он ждёт.
+- `auth/session`: `Service` одного реалма — `Register` (семантика «принято»:
+  занятый адрес отвечает так же, а письмо уходит владельцу), `SignIn`
+  (`ErrInvalidCredentials | ErrTooManyAttempts | ErrNotVerified`, результат, а
+  не голый токен — шов для второго фактора), `Resolve` со скользящим
+  продлением не чаще `RenewEvery` и немедленным отказом отключённому субъекту,
+  `SignOut`/`SignOutAll`, `ChangePassword` с отзывом ВСЕХ сессий и ВСЕХ токенов
+  сброса, `Request/Confirm` для подтверждения адреса, сброса пароля и смены
+  логина, `Sweep(ctx) (int, error)` в подписи `scheduler.Job.Run`, `SetClock`.
+  Порты `Sessions`, `Attempts` (ключ — нормализованный логин, в том числе
+  несуществующий), `Tokens` (реализует ПОТРЕБИТЕЛЬ), `Notifier`, `Auditor`
+  (nil допустим); закрытые наборы `NotificationKind` и `EventKind` с `All*`.
+  `Config` с шестью инвариантами ADR-0003 и потолками `ResetTTL <= 1h`,
+  `VerifyTTL <= 72h`; `Secret` типом `token.Secret`, поэтому паника
+  `token.Hash` на ненастроенном секрете из рабочего кода недостижима.
+- `auth/authpg`: `Store` (`session.Sessions` + `session.Attempts`) и
+  `Store.Tokens()` — половина порта `Tokens` на `postgres.Querier`: `Insert`,
+  `ConsumeRow`, `RevokeOfSubject`, `PurgeExpired`. `New(pool)`, `WithTx(tx)`,
+  `schema.sql` с goose-маркерами и тремя таблицами ADR-0003 (`auth_sessions`,
+  `auth_tokens`, `auth_login_attempts`), `Schema` и `CheckSchema`, который
+  сверяет и ничего не меняет. Ошибки через общий `postgres.Sanitize`.
+- `auth/authhttp`: `CookieConfig` с инвариантами (`SameSite` обязателен явно,
+  `SameSite=None` требует `Secure`, префикс `__Host-` требует `Secure`,
+  `Path="/"` и пустого `Domain`), `Middleware`, `PrincipalFrom`,
+  `WithPrincipal`, `SetSession` (сессионная кука `HttpOnly`, CSRF-кука — нет),
+  `ClearSession`. CSRF double-submit через `subtle.ConstantTimeCompare` на
+  небезопасных методах; 401 и 403 пишет `Deny` потребителя.
+- `auth/authtest`: двойники портов второй половины — `MemSessions`,
+  `MemAttempts`, `MemTokens` (связан с `MemIdentities` и честно применяет
+  эффект назначения токена), `RecordingNotifier`, `RecordingAuditor`, `Clock`,
+  счётчик `Calls`. Контрактные наборы `RunSessionsSuite` и `RunAttemptsSuite`
+  на голом `testing` — гоняются и по двойнику, и по адаптеру в одном бинаре.
 - `Hasher.NeedsRehash` — назначить ли пересчёт хэша при следующем удачном
   входе: параметры ниже нынешних или неразбираемая строка. Хэш с параметрами
   ВЫШЕ нынешних не трогается — пересчёт ослабил бы его.
 
 ### Testing
+- Названные тесты контрактов: `TestStore_WithTx_IsAtomic` (эффект потребителя
+  и строка токена откатываются вместе, чтение из базы ПОСЛЕ отката),
+  `TestConsume_IsOnceUnderRace` (восемь транзакций на один токен, выигрывает
+  одна) и его же вариант по двойнику, `TestService_SignIn_ParityForUnknownLogin`
+  (паритет ответов И обращений к портам, отдельно при `ErrBusy`),
+  `TestService_Lockout_CountsUnknownLogins`, `TestSQL_HasRealmInEveryWhere`,
+  `TestCSRF_ComparisonIsConstantTime`, `TestService_ChangePassword_RevokesAll`.
+- У каждого нового стража есть тест на СРАБАТЫВАНИЕ: `TestSQL_RealmGuardFires`
+  и `TestCSRF_ConstantTimeGuardFires` гоняют его по корпусу с заведомым
+  нарушением. Страж, который молчит всегда, выглядит ровно как страж, который
+  работает.
 - gremlins по ядру: 148 мутантов, из них 2 выживших и 1 «не покрытый»,
   efficacy 98,67 %, прогон 46 с при бюджете 10 мин. Ещё три при плотной
   загрузке машины получают TIMED OUT вместо KILLED (отчего Killed скачет между
@@ -65,6 +107,22 @@
   до приведения регистра и после).
 
 ### Security
+- Вход отвечает одинаково на «нет логина», «не тот пароль», «битый хэш в
+  колонке» и «отключён», а на `password.ErrBusy` — одним
+  `ErrTooManyAttempts` для существующего и несуществующего логина. Счётчик
+  попыток ведётся по нормализованному логину независимо от его существования и
+  НЕ пополняется поверх блокировки: иначе любой желающий запирает чужой адрес
+  навсегда. Перегрузка попыткой не считается — всплеск не должен запирать
+  законных владельцев.
+- Смена пароля отзывает все сессии и все токены сброса, причём ОТЗЫВ ИДЁТ ДО
+  записи нового хэша: на сбое записи владелец всего лишь выкинут из своих
+  сессий, а обратный порядок оставил бы чужую сессию живой рядом с новым
+  паролем.
+- Реалм стоит в каждом `WHERE` адаптера (страж по тексту SQL), в базе лежат
+  только HMAC, сырой токен не попадает ни в ошибку, ни в событие аудита.
+- Сбой хранилища — `auth.ErrUnavailable` (503), а не «неверные данные»:
+  непрочитанный счётчик, незаписанная попытка и неудавшееся продление сессии
+  закрывают вход, а не пропускают его.
 - `loginid.Normalize` отвергает негодный UTF-8, управляющие и невидимые символы
   форматирования. Первое — потому что на испорченной последовательности NFKC
   не идемпотентен (нашёл фаззер): сохранённый логин переставал бы находиться.
@@ -75,6 +133,14 @@
   модулей тулкита (VERSIONING, «Единая версия Go и общих зависимостей»).
 
 ### Notes
+- `github.com/nrect/rebar/postgres` (псевдоверсия `v0.0.0-20260908221018-051fd21c2237`,
+  та же, что у `outbox` и `payment`) — вторая из трёх межмодульных
+  зависимостей ADR-0005 и только в каталоге `authpg`: `postgres.Sanitize` это
+  граница безопасности, и пять её копий в пяти адаптерах — пять шансов
+  разойтись. Ядру она по-прежнему запрещена стражем импортов.
+- `github.com/jackc/pgx/v5` v5.10.0 и `github.com/testcontainers/testcontainers-go`
+  v0.44.0 (второй — только из `_test.go`) — версии те же, что у `outbox` и
+  `payment`.
 - `golang.org/x/text` v0.41.0 (версия та же, что у `mail`, `otelboot` и
   `postgres`) — нужна ради NFKC, в stdlib нормализации Unicode нет. Заперта в
   каталоге `loginid`: `go list -deps` по корню `auth` её не показывает.
