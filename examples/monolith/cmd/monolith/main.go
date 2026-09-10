@@ -49,7 +49,12 @@ func run() error {
 		}
 	}()
 
-	app.Jobs().Start(ctx)
+	// Первый снимок гейджей — сразу, а не через такт (App.Start). Его сбой не
+	// повод падать: задача повторит снимок на своём такте, а сбой уже виден в
+	// cron_runs{job="gauges_snapshot"}.
+	if startErr := app.Start(ctx); startErr != nil {
+		slog.Warn("первый снимок гейджей не снят", "err", startErr)
+	}
 	defer app.Jobs().Stop()
 
 	return serve(ctx, cfg.Addr, app.Handler())

@@ -25,8 +25,7 @@ GOWORK=off go run ./cmd/monolith
 - `http://localhost:8025` — Mailpit: письма со ссылками подтверждения и оплаты;
 - `http://localhost:8080/metrics` — `build_info`, `cron_*`, `outbox_*`, `emails_*`,
   `payments_total`, `payment_*`; гейджи обновляет задача `gauges_snapshot` раз в
-  `GAUGES_TICK` (минута), а не scrape, — первый снимок через такт после старта,
-  до него гейджи показывают нули;
+  `GAUGES_TICK` (минута), а не scrape; первый снимок — сразу при старте;
 - `http://localhost:8080/healthz` — жив ли процесс.
 
 Ручки: `POST /register`, `GET /confirm?token=`, `POST /signin`, `POST /signout`,

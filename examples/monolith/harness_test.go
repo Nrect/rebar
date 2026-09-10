@@ -111,8 +111,9 @@ func tryBuildApp(t *testing.T, overrides map[string]string) (app *monolith.App, 
 }
 
 // standEnv — окружение прогона: общая база, общий Mailpit, свой каталог
-// файлов. Планировщик не тикает — задачи гоняются руками (RunNow), иначе
-// результат зависел бы от времени прогона.
+// файлов. Такты — час: планировщик либо не стартует, либо не успевает тикнуть,
+// и задачи гоняются руками (RunNow) — иначе результат зависел бы от времени
+// прогона.
 func standEnv(t *testing.T, dsn string) map[string]string {
 	t.Helper()
 	return map[string]string{
@@ -122,6 +123,7 @@ func standEnv(t *testing.T, dsn string) map[string]string {
 		"SMTP_PORT":    strconv.Itoa(box.smtp),
 		"FILES_DIR":    t.TempDir(),
 		"TICK":         "1h",
+		"GAUGES_TICK":  "1h",
 	}
 }
 

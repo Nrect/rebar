@@ -151,6 +151,26 @@ func (a *App) CookieNames() (sessionCookie, csrfCookie string) {
 // Unconfigured именно по имени (mail/unconfigured.go).
 func (a *App) Transport() mail.TransportName { return a.letters.Transport() }
 
+// Start снимает гейджи СРАЗУ и запускает фоновые задачи.
+//
+// Без прогона при старте первую минуту гейджи отдавали бы нули, а
+// payment_drift кормит денежный алерт с порогом 1: минута нулей — минута,
+// когда расхождение книг невидимо, и приходится она ровно на момент после
+// деплоя, когда что-то вероятнее всего и пошло не так.
+//
+// RunNow — ДО Start планировщика, как велит scheduler/doc.go: сам он прогона
+// при старте не делает. Наблюдается прогон как обычный, а Started прежний
+// «последний успех» не перезаписывает, так что алерт «снимки не обновляются»
+// этот прогон видит.
+//
+// Ошибка — только о первом снимке: планировщик запущен в любом случае, и
+// задача повторит снимок на своём такте.
+func (a *App) Start(ctx context.Context) error {
+	_, err := a.jobs.RunNow(ctx, jobGaugesSnapshot)
+	a.jobs.Start(ctx)
+	return err
+}
+
 // Jobs — планировщик фоновых задач.
 func (a *App) Jobs() *scheduler.Scheduler { return a.jobs }
 
