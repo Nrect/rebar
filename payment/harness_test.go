@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/nrect/rebar/payment"
@@ -27,6 +28,7 @@ type harness struct {
 	svc   *payment.Service
 	store *paymenttest.MemStore
 	prov  *paymenttest.MemProvider
+	obs   *paymenttest.Observer
 	clock *paymenttest.Clock
 	cfg   payment.Config
 }
@@ -53,11 +55,25 @@ func newHarness(t *testing.T, tweaks ...func(*payment.Config)) *harness {
 	}
 	store := paymenttest.NewMemStore()
 	prov := paymenttest.NewMemProvider(testProvider)
+	obs := paymenttest.NewObserver()
 	clock := paymenttest.NewClock(testNow)
 
-	svc := payment.NewService(store, prov, cfg)
+	svc := payment.NewService(store, prov, obs, cfg)
 	svc.SetClock(clock.Now)
-	return &harness{svc: svc, store: store, prov: prov, clock: clock, cfg: cfg}
+	t.Cleanup(func() { checkOutcomes(t, obs.Outcomes()) })
+	return &harness{svc: svc, store: store, prov: prov, obs: obs, clock: clock, cfg: cfg}
+}
+
+// checkOutcomes — страж на КАЖДОМ тесте ядра: исход уходит наблюдателю только
+// из закрытых наборов, и пустой причины не бывает — пустая метка на дашборде
+// выглядела бы как исход, которого нет.
+func checkOutcomes(t *testing.T, outcomes []paymenttest.Observed) {
+	t.Helper()
+
+	for _, o := range outcomes {
+		assert.Contains(t, payment.AllOps, o.Op, "операция вне AllOps")
+		assert.Contains(t, payment.AllReasons, o.Reason, "причина вне AllReasons")
+	}
 }
 
 // items — состав из двух позиций на testAmount.
@@ -172,11 +188,11 @@ func (h *harness) hold(t *testing.T) payment.Intent {
 func (h *harness) unstarted(t *testing.T) payment.Intent {
 	t.Helper()
 
-	h.prov.CreateErr = paymenttest.ErrProviderDown
+	h.prov.SetCreateErr(paymenttest.ErrProviderDown)
 	res, _, err := h.svc.Start(context.Background(), startReq())
 	require.Error(t, err)
 	require.Equal(t, payment.StatusCreated, res.Intent.Status)
-	h.prov.CreateErr = nil
+	h.prov.SetCreateErr(nil)
 	return res.Intent
 }
 

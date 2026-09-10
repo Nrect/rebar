@@ -27,10 +27,10 @@ func TestCapture_AuthorizedToSucceeded(t *testing.T) {
 	require.Len(t, captures, 1)
 	assert.Equal(t, in.AmountMinor, captures[0].AmountMinor)
 
-	require.Len(t, h.prov.Captures, 1)
-	assert.Equal(t, "shop:capture:"+in.ID.String(), h.prov.Captures[0].IdempotencyKey,
+	require.Len(t, h.prov.Captures(), 1)
+	assert.Equal(t, "shop:capture:"+in.ID.String(), h.prov.Captures()[0].IdempotencyKey,
 		"ключ провайдеру производный: повтор не спишет холд дважды")
-	assert.NotNil(t, h.prov.Captures[0].Receipt, "расчёт происходит в момент списания — чек уезжает сюда")
+	assert.NotNil(t, h.prov.Captures()[0].Receipt, "расчёт происходит в момент списания — чек уезжает сюда")
 }
 
 // Вебхук о том же списании приезжает следом и не делает второй строки: id
@@ -58,7 +58,7 @@ func TestCapture_UnsupportedProvider(t *testing.T) {
 
 	h := newHarness(t)
 	in := h.hold(t)
-	h.prov.NoHolds = true
+	h.prov.SetNoHolds(true)
 
 	_, reason, err := h.svc.Capture(context.Background(), in.ID, in.AmountMinor, receiptFor(testAmount), "cap-1")
 
@@ -153,7 +153,7 @@ func TestCapture_ProviderFails_HoldStays(t *testing.T) {
 
 	h := newHarness(t)
 	in := h.hold(t)
-	h.prov.CaptureErr = paymenttest.ErrProviderDown
+	h.prov.SetCaptureErr(paymenttest.ErrProviderDown)
 
 	_, reason, err := h.svc.Capture(context.Background(), in.ID, in.AmountMinor, receiptFor(testAmount), "cap-1")
 
@@ -197,7 +197,7 @@ func TestCancel_BeforeProviderKnows_Refused(t *testing.T) {
 	t.Parallel()
 
 	h := newHarness(t)
-	h.prov.CreateErr = paymenttest.ErrProviderDown
+	h.prov.SetCreateErr(paymenttest.ErrProviderDown)
 	res, _, err := h.svc.Start(context.Background(), startReq())
 	require.Error(t, err)
 	require.Equal(t, payment.StatusCreated, res.Intent.Status)
@@ -243,7 +243,7 @@ func TestCancel_UnsupportedProvider(t *testing.T) {
 
 	h := newHarness(t)
 	in := h.hold(t)
-	h.prov.NoHolds = true
+	h.prov.SetNoHolds(true)
 
 	_, reason, err := h.svc.Cancel(context.Background(), in.ID, "cancel-1")
 

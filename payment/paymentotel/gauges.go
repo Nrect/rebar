@@ -21,7 +21,7 @@ const (
 	attrKind   = "kind"
 )
 
-// Snapshot — что потребитель прочитал у сервиса после прогона сверки.
+// Snapshot — что потребитель прочитал у сервиса одним заходом.
 type Snapshot struct {
 	// Stuck — Service.CountStuckPending.
 	Stuck int64
@@ -102,9 +102,9 @@ func (g *Gauges) Unregister() error {
 	return nil
 }
 
-// Set кладёт новый снимок; зовётся потребителем после прогона сверки, а не
-// коллбэком на каждый scrape (CONVENTIONS §6). Записи Drift не хранятся —
-// только числа по роду: см. doc.go, п. 6.
+// Set кладёт новый снимок целиком; зовёт его отдельная задача планировщика
+// потребителя, не scrape и не сверка (CONVENTIONS §6, PATTERNS §8). Записи
+// Drift не хранятся — только числа по роду: см. doc.go, п. 6.
 func (g *Gauges) Set(s Snapshot) {
 	c := counts{stuck: s.Stuck, drift: make(map[payment.DriftKind]int64, len(payment.AllDriftKinds))}
 	for _, rec := range s.Drift {

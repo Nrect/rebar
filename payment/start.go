@@ -63,6 +63,13 @@ type StartResult struct {
 // ErrIdempotencyKeyReused. Reason возвращается всегда, в том числе вместе с
 // ошибкой: вызывающий метит им метрику, не разбирая ошибку по типам.
 func (s *Service) Start(ctx context.Context, req StartRequest) (StartResult, Reason, error) {
+	res, reason, err := s.start(ctx, req)
+	s.obs.Outcome(ctx, OpStart, reason)
+	return res, reason, err
+}
+
+// start — тело Start; исход отдаёт наблюдателю обёртка, одна на все пути.
+func (s *Service) start(ctx context.Context, req StartRequest) (StartResult, Reason, error) {
 	key, err := NormalizeKey(req.IdempotencyKey)
 	if err != nil {
 		return StartResult{}, ReasonKeyInvalid, err
@@ -195,17 +202,23 @@ func (s *Service) complete(ctx context.Context, in Intent, req StartRequest, rep
 		// его в момент расчёта, и второго момента не будет.
 		Receipt: req.Receipt,
 	})
+	// Определённое «нет» закрывает попытку — ErrProviderRejected (тот же ответ,
+	// что Status == EventFailed) и ErrUnsupported: провайдер ничего не создал,
+	// прийти по ней нечему. Открытой её держит только «ответа нет».
+	if errors.Is(err, ErrProviderRejected) || errors.Is(err, ErrUnsupported) {
+		return s.closeRejected(ctx, in, replay, err)
+	}
 	if err != nil {
-		// Сбой связи неотличим от «платёж создан, ответ потерялся». Намерение
-		// ОСТАЁТСЯ в created: пометить его failed значило бы закрыть попытку, на
-		// которую у провайдера уже могут прийти деньги. Доводит до конца либо
-		// ретрай клиента, либо сверка.
-		return StartResult{Intent: in}, providerReason(err),
-			fmt.Errorf("%w: create payment: %w", ErrUnavailable, err)
+		// Любая другая ошибка оставляет намерение в created: сбой связи
+		// неотличим от «платёж создан, ответ потерялся», и пометить его failed
+		// значило бы закрыть попытку, на которую у провайдера уже могут прийти
+		// деньги. Доводит до конца либо ретрай клиента, либо сверка.
+		reason, provErr := providerError("create payment", err)
+		return StartResult{Intent: in}, reason, provErr
 	}
 
 	if res.Status == EventFailed {
-		return s.closeRejected(ctx, in, replay)
+		return s.closeRejected(ctx, in, replay, ErrProviderRejected)
 	}
 	if err := checkCreated(res); err != nil {
 		// Провайдер сказал «не отказ», но платить нечем. Оставляем created и
@@ -258,8 +271,11 @@ func (s *Service) moveToPending(ctx context.Context, in Intent, res CreatePaymen
 	return finishStart(tr.Intent, replay || tr.Outcome != OutcomeApplied)
 }
 
-// closeRejected закрывает попытку, которую провайдер отверг детерминированно.
-func (s *Service) closeRejected(ctx context.Context, in Intent, replay bool) (StartResult, Reason, error) {
+// closeRejected закрывает попытку, на которую провайдер ответил определённым
+// «нет». Причина — по классу ответа why: «не умеет» чинит тот, кто настраивает
+// интеграцию, отказ по существу смотрит поддержка, и сводить их нельзя.
+func (s *Service) closeRejected(ctx context.Context, in Intent, replay bool, why error,
+) (StartResult, Reason, error) {
 	tr, err := s.store.Transition(ctx, TransitionRequest{
 		IntentID:   in.ID,
 		ExpectFrom: statusesInto(StatusFailed),
@@ -270,7 +286,17 @@ func (s *Service) closeRejected(ctx context.Context, in Intent, replay bool) (St
 		return StartResult{Intent: in}, ReasonStoreError,
 			fmt.Errorf("%w: mark intent failed: %w", ErrUnavailable, err)
 	}
-	return finishStart(tr.Intent, replay || tr.Outcome != OutcomeApplied)
+	// Строку подвинул кто-то другой — вебхук, параллельный ретрай: отдаём
+	// фактическое состояние, а не своё ожидание.
+	if tr.Outcome != OutcomeApplied {
+		return finishStart(tr.Intent, true)
+	}
+	// Причину закрытия намерение не хранит — failed один на оба класса, — и
+	// повтор ключа отдаст общий отказ; «не умеет» видно только в этом ответе.
+	if errors.Is(why, ErrUnsupported) {
+		return StartResult{Intent: tr.Intent}, ReasonUnsupported, fmt.Errorf("intent %s: %w", in.ID, why)
+	}
+	return finishStart(tr.Intent, replay)
 }
 
 // finishStart отображает ФАКТИЧЕСКОЕ состояние намерения в ответ Start.
@@ -358,11 +384,18 @@ func (s *Service) validateStart(req StartRequest) error {
 	return nil
 }
 
-// providerReason — метка для сбоя провайдера: «не умеет» отделено от «не
-// ответил», потому что первое не чинится ретраем и разбирают их разные люди.
-func providerReason(err error) Reason {
+// providerError — причина и ошибка для сбоя вызова провайдера; ОДНА точка на
+// все пять мест вызова, иначе они разойдутся следующей же правкой.
+//
+// ErrUnavailable — ТОЛЬКО «ответа нет». Окончательный отказ под ним потребитель
+// отдал бы как 503, и клиент повторял бы вечно то, что ретраем не чинится
+// никогда; поэтому ErrUnsupported и ErrProviderRejected идут своим классом.
+func providerError(op string, err error) (Reason, error) {
 	if errors.Is(err, ErrUnsupported) {
-		return ReasonUnsupported
+		return ReasonUnsupported, fmt.Errorf("%s: %w", op, err)
 	}
-	return ReasonProviderError
+	if errors.Is(err, ErrProviderRejected) {
+		return ReasonProviderRejected, fmt.Errorf("%s: %w", op, err)
+	}
+	return ReasonProviderError, fmt.Errorf("%w: %s: %w", ErrUnavailable, op, err)
 }

@@ -74,7 +74,7 @@ func TestIntentByKey_MissingIsNotAnError(t *testing.T) {
 func TestIntentByKey_StoreFailureIsUnavailable(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
-	h.store.Err = paymenttest.ErrStore
+	h.store.SetErr(paymenttest.ErrStore)
 
 	_, found, err := h.svc.IntentByKey(context.Background(), uuid.New(), "buy-1")
 	require.ErrorIs(t, err, payment.ErrUnavailable)
@@ -107,7 +107,7 @@ func TestIntentByID_MissingIsNotAnError(t *testing.T) {
 func TestIntentByID_StoreFailureIsUnavailable(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
-	h.store.Err = paymenttest.ErrStore
+	h.store.SetErr(paymenttest.ErrStore)
 
 	_, found, err := h.svc.IntentByID(context.Background(), uuid.New())
 	require.ErrorIs(t, err, payment.ErrUnavailable)
@@ -142,7 +142,7 @@ func TestLedger_EmptyIsNotAnError(t *testing.T) {
 func TestLedger_StoreFailureIsUnavailable(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
-	h.store.Err = paymenttest.ErrStore
+	h.store.SetErr(paymenttest.ErrStore)
 
 	entries, err := h.svc.Ledger(context.Background(), uuid.New())
 	require.ErrorIs(t, err, payment.ErrUnavailable)

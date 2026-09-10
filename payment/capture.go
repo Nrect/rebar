@@ -28,6 +28,15 @@ import (
 func (s *Service) Capture(ctx context.Context, intentID uuid.UUID, amountMinor int64,
 	receipt *Receipt, key string,
 ) (Intent, Reason, error) {
+	in, reason, err := s.capture(ctx, intentID, amountMinor, receipt, key)
+	s.obs.Outcome(ctx, OpCapture, reason)
+	return in, reason, err
+}
+
+// capture — тело Capture; исход отдаёт наблюдателю обёртка.
+func (s *Service) capture(ctx context.Context, intentID uuid.UUID, amountMinor int64,
+	receipt *Receipt, key string,
+) (Intent, Reason, error) {
 	if _, err := NormalizeKey(key); err != nil {
 		return Intent{}, ReasonKeyInvalid, err
 	}
@@ -58,7 +67,8 @@ func (s *Service) Capture(ctx context.Context, intentID uuid.UUID, amountMinor i
 		Receipt:           receipt,
 	})
 	if err != nil {
-		return intent, providerReason(err), fmt.Errorf("%w: capture: %w", ErrUnavailable, err)
+		reason, provErr := providerError("capture", err)
+		return intent, reason, provErr
 	}
 	return s.applyAnswer(ctx, ev, intent)
 }
@@ -87,6 +97,13 @@ func capturable(in Intent, amountMinor int64) (Reason, error) {
 // открыть окно, в котором на отменённое намерение приходят деньги. Ждать
 // нужно pending (тогда есть что отменять) или TTL.
 func (s *Service) Cancel(ctx context.Context, intentID uuid.UUID, key string) (Intent, Reason, error) {
+	in, reason, err := s.cancel(ctx, intentID, key)
+	s.obs.Outcome(ctx, OpCancel, reason)
+	return in, reason, err
+}
+
+// cancel — тело Cancel; исход отдаёт наблюдателю обёртка.
+func (s *Service) cancel(ctx context.Context, intentID uuid.UUID, key string) (Intent, Reason, error) {
 	if _, err := NormalizeKey(key); err != nil {
 		return Intent{}, ReasonKeyInvalid, err
 	}
@@ -109,7 +126,8 @@ func (s *Service) Cancel(ctx context.Context, intentID uuid.UUID, key string) (I
 	ev, err := s.provider.Cancel(ctx, intent.ProviderPaymentID,
 		providerCancelKey(s.cfg.ProviderKeyPrefix, intent.ID))
 	if err != nil {
-		return intent, providerReason(err), fmt.Errorf("%w: cancel: %w", ErrUnavailable, err)
+		reason, provErr := providerError("cancel", err)
+		return intent, reason, provErr
 	}
 	return s.applyAnswer(ctx, ev, intent)
 }

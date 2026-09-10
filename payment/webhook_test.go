@@ -3,6 +3,7 @@ package payment_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 
@@ -70,7 +71,7 @@ func TestWebhook_BadSignature_NothingWritten(t *testing.T) {
 	t.Parallel()
 
 	h := newHarness(t)
-	h.prov.BadSignature = true
+	h.prov.SetBadSignature(true)
 
 	_, reason, err := h.svc.HandleWebhook(context.Background(), webhook())
 
@@ -114,12 +115,69 @@ func TestWebhook_ParseUnavailable_IsNotMalformed(t *testing.T) {
 	t.Parallel()
 
 	h := newHarness(t)
-	h.prov.ParseErr = payment.ErrUnavailable
+	h.prov.SetParseErr(payment.ErrUnavailable)
 
 	_, reason, err := h.svc.HandleWebhook(context.Background(), webhook())
 
 	require.ErrorIs(t, err, payment.ErrUnavailable)
 	require.NotErrorIs(t, err, payment.ErrMalformedEvent)
+	assert.Equal(t, payment.ReasonProviderError, reason)
+}
+
+// Неклассифицированная ошибка ParseWebhook — это «не уверены», и она уходит в
+// 503: ошибочный 400 стоит оплаты, ошибочный 503 — повтора.
+func TestWebhook_UnclassifiedParseError_IsUnavailable(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]error{
+		"сырой таймаут проверочного чтения": context.DeadlineExceeded,
+		"сырая ошибка адаптера":             errors.New("adapter: unexpected end of JSON input"),
+	}
+
+	for name, parseErr := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			h := newHarness(t)
+			h.prov.SetParseErr(parseErr)
+
+			_, reason, err := h.svc.HandleWebhook(context.Background(), webhook())
+
+			require.ErrorIs(t, err, payment.ErrUnavailable)
+			require.NotErrorIs(t, err, payment.ErrMalformedEvent)
+			require.ErrorIs(t, err, parseErr, "причина сбоя не теряется")
+			assert.Equal(t, payment.ReasonProviderError, reason)
+			assert.Zero(t, h.store.CallCount("ApplyEvent"), "неподтверждённое событие до стора не доходит")
+		})
+	}
+}
+
+// Мусор адаптер называет явно — и тогда это 400: повтор тела, которое не
+// разбирается, не поможет.
+func TestWebhook_ExplicitMalformed_IsNotUnavailable(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	h.prov.SetParseErr(fmt.Errorf("%w: body is not JSON", payment.ErrMalformedEvent))
+
+	_, reason, err := h.svc.HandleWebhook(context.Background(), webhook())
+
+	require.ErrorIs(t, err, payment.ErrMalformedEvent)
+	require.NotErrorIs(t, err, payment.ErrUnavailable)
+	assert.Equal(t, payment.ReasonMalformedEvent, reason)
+	assert.Zero(t, h.store.CallCount("ApplyEvent"))
+}
+
+// Ошибка с обоими классами — тоже «не уверены»: побеждает повтор.
+func TestWebhook_UnavailableWinsOverMalformed(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	h.prov.SetParseErr(fmt.Errorf("%w: %w", payment.ErrMalformedEvent, payment.ErrUnavailable))
+
+	_, reason, err := h.svc.HandleWebhook(context.Background(), webhook())
+
+	require.ErrorIs(t, err, payment.ErrUnavailable)
 	assert.Equal(t, payment.ReasonProviderError, reason)
 }
 
@@ -289,7 +347,7 @@ func TestWebhook_StoreFails_IsUnavailable(t *testing.T) {
 	h := newHarness(t)
 	in := h.start(t, startReq())
 	h.prov.Push(h.event(in, payment.EventSucceeded, in.AmountMinor))
-	h.store.Err = paymenttest.ErrStore
+	h.store.SetErr(paymenttest.ErrStore)
 
 	_, reason, err := h.svc.HandleWebhook(context.Background(), webhook())
 
@@ -306,7 +364,7 @@ func TestWebhook_HookFails_RollsBackEverything(t *testing.T) {
 	h := newHarness(t)
 	in := h.start(t, startReq())
 	ev := h.event(in, payment.EventSucceeded, in.AmountMinor)
-	h.store.OnSettled = func(payment.Intent, payment.LedgerEntry) error { return errHook }
+	h.store.SetOnSettled(func(payment.Intent, payment.LedgerEntry) error { return errHook })
 	h.prov.Push(ev)
 	h.prov.Push(ev)
 
@@ -317,7 +375,7 @@ func TestWebhook_HookFails_RollsBackEverything(t *testing.T) {
 	assert.Empty(t, h.store.EntriesOf(in.ID, payment.LedgerCapture))
 	assert.Zero(t, h.store.Deliveries(ev), "строка дедупа откатилась вместе со всем остальным")
 
-	h.store.OnSettled = nil
+	h.store.SetOnSettled(nil)
 	_, reason, err = h.svc.HandleWebhook(context.Background(), webhook())
 
 	require.NoError(t, err)
@@ -334,10 +392,10 @@ func TestWebhook_HookSeesIntentAndEntry(t *testing.T) {
 	in := h.start(t, startReq())
 	var gotItems []payment.OrderItem
 	var gotAmount int64
-	h.store.OnSettled = func(hooked payment.Intent, entry payment.LedgerEntry) error {
+	h.store.SetOnSettled(func(hooked payment.Intent, entry payment.LedgerEntry) error {
 		gotItems, gotAmount = hooked.Items, entry.AmountMinor
 		return nil
-	}
+	})
 
 	h.settle(t, in)
 

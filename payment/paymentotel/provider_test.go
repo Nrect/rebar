@@ -17,31 +17,47 @@ import (
 	"github.com/nrect/rebar/payment/paymenttest"
 )
 
-// Исход считается по КЛАССУ ошибки ядра на каждом методе порта: декоратор не
-// знает, чей адаптер под ним, и обёртка адаптера класс не прячет.
+// Исход считается по КЛАССУ ошибки ядра на каждом методе порта, с той же
+// границей, что у сервиса: у ParseWebhook окончательны подпись и явный мусор, у
+// остальных — отказ и «не умеет». Декоратор не знает, чей адаптер под ним, и
+// обёртка адаптера класс не прячет.
 func TestWrap_ClassifiesByErrorClass(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		name string
-		err  error
-		want paymentotel.Result
+		name    string
+		err     error
+		webhook paymentotel.Result
+		other   paymentotel.Result
 	}{
-		{"успех", nil, paymentotel.ResultOK},
-		{"отказ по существу", payment.ErrProviderRejected, paymentotel.ResultRejected},
-		{"отказ под обёрткой адаптера", fmt.Errorf("adapter: 422: %w", payment.ErrProviderRejected), paymentotel.ResultRejected},
-		{"операции у адаптера нет", fmt.Errorf("adapter: holds: %w", payment.ErrUnsupported), paymentotel.ResultRejected},
-		{"вебхук не подтверждён", payment.ErrInvalidSignature, paymentotel.ResultRejected},
-		{"тело вебхука не разбирается", fmt.Errorf("%w: bad json", payment.ErrMalformedEvent), paymentotel.ResultRejected},
-		{"провайдер не ответил", fmt.Errorf("%w: 503", payment.ErrUnavailable), paymentotel.ResultError},
-		{"таймаут", context.DeadlineExceeded, paymentotel.ResultError},
-		{"обрыв соединения", io.ErrUnexpectedEOF, paymentotel.ResultError},
-		{"неизвестная ошибка — молчание, а не отказ", errors.New("adapter: odd"), paymentotel.ResultError},
+		{"успех", nil, paymentotel.ResultOK, paymentotel.ResultOK},
+		{"отказ по существу", payment.ErrProviderRejected,
+			paymentotel.ResultError, paymentotel.ResultRejected},
+		{"отказ под обёрткой адаптера", fmt.Errorf("adapter: 422: %w", payment.ErrProviderRejected),
+			paymentotel.ResultError, paymentotel.ResultRejected},
+		{"операции у адаптера нет", fmt.Errorf("adapter: holds: %w", payment.ErrUnsupported),
+			paymentotel.ResultError, paymentotel.ResultRejected},
+		{"вебхук не подтверждён", payment.ErrInvalidSignature,
+			paymentotel.ResultRejected, paymentotel.ResultError},
+		{"тело не разбирается", fmt.Errorf("%w: bad json", payment.ErrMalformedEvent),
+			paymentotel.ResultRejected, paymentotel.ResultError},
+		{"мусор поверх недоступности", fmt.Errorf("%w: %w", payment.ErrMalformedEvent, payment.ErrUnavailable),
+			paymentotel.ResultError, paymentotel.ResultError},
+		{"провайдер не ответил", fmt.Errorf("%w: 503", payment.ErrUnavailable),
+			paymentotel.ResultError, paymentotel.ResultError},
+		{"таймаут", context.DeadlineExceeded, paymentotel.ResultError, paymentotel.ResultError},
+		{"обрыв соединения", io.ErrUnexpectedEOF, paymentotel.ResultError, paymentotel.ResultError},
+		{"неизвестная ошибка — молчание, а не отказ", errors.New("adapter: odd"),
+			paymentotel.ResultError, paymentotel.ResultError},
 	}
 	for _, pc := range everyCall() {
 		for _, tc := range cases {
 			t.Run(string(pc.typ)+"/"+tc.name, func(t *testing.T) {
 				t.Parallel()
 				p, reader := wrap(t, newStub(tc.err))
+				want := tc.other
+				if pc.typ == paymentotel.CallParseWebhook {
+					want = tc.webhook
+				}
 
 				err := pc.do(context.Background(), p)
 
@@ -51,8 +67,8 @@ func TestWrap_ClassifiesByErrorClass(t *testing.T) {
 					require.ErrorIs(t, err, tc.err)
 				}
 				ms := collect(t, reader)
-				assert.Len(t, callPoints(t, ms), 1, "ровно одна пара меток")
-				assert.Equal(t, int64(1), callCount(t, ms, pc.typ, tc.want))
+				assert.Len(t, callPoints(t, ms), 1, "ровно одна тройка меток")
+				assert.Equal(t, int64(1), callCount(t, ms, pc.typ, want))
 			})
 		}
 	}
@@ -98,7 +114,7 @@ func TestWrap_FailedPaymentStateIsAnAnswer(t *testing.T) {
 }
 
 // Класс отказа ищется раньше молчания: ErrUnavailable поверх ErrUnsupported —
-// всё ещё отказ по конструкции, как в providerReason ядра.
+// всё ещё отказ по конструкции, как в providerError ядра.
 func TestWrap_RejectedClassWinsOverUnavailable(t *testing.T) {
 	t.Parallel()
 	p, reader := wrap(t, newStub(fmt.Errorf("%w: capture: %w", payment.ErrUnavailable, payment.ErrUnsupported)))
@@ -169,29 +185,69 @@ func requireSameError(t *testing.T, got error, want *adapterError) {
 	assert.Same(t, want, typed)
 }
 
-// Name пробрасывается как есть — по нему сервис узнаёт провайдера в каждом
-// событии — и не считается: вызова провайдера за ним нет.
+// Имя для метки читается один раз, при сборке, а Name пробрасывается как есть —
+// по нему сервис узнаёт провайдера в каждом событии — и не считается: вызова
+// провайдера за ним нет.
 func TestWrap_NameIsPassedThroughAndNotCounted(t *testing.T) {
 	t.Parallel()
 	stub := newStub(nil)
 	stub.name = "yookassa"
 	p, reader := wrap(t, stub)
+	assert.Equal(t, 1, stub.names, "имя для метки прочитано при сборке")
 
 	assert.Equal(t, payment.ProviderName("yookassa"), p.Name())
-	assert.Equal(t, 1, stub.names)
+	assert.Equal(t, 2, stub.names, "Name пробрасывается, а не отдаёт запомненное")
 	assert.Empty(t, callPoints(t, collect(t, reader)), "Name счётчик не трогает")
 }
 
-// Декоратор подставляется вместо порта: сервис собирается на нём, имя проходит
-// проверку формы, а классы ошибок доезжают до Reason ядра.
+// Два провайдера на одном метре — два ряда, а не один: иначе «провайдер
+// недоступен» не сказал бы, какой.
+func TestWrap_ProviderLabelSeparatesProviders(t *testing.T) {
+	t.Parallel()
+	reader, meter := newMeter(t)
+	alpha, beta := newStub(context.DeadlineExceeded), newStub(nil)
+	alpha.name, beta.name = "alpha", "beta"
+	pa, err := paymentotel.Wrap(alpha, meter)
+	require.NoError(t, err)
+	pb, err := paymentotel.Wrap(beta, meter)
+	require.NoError(t, err)
+
+	_, _ = pa.GetPayment(context.Background(), "pay-1")
+	_, _ = pb.GetPayment(context.Background(), "pay-2")
+
+	ms := collect(t, reader)
+	assert.Equal(t, int64(1), callCountOf(t, ms, "alpha", paymentotel.CallGetPayment, paymentotel.ResultError))
+	assert.Equal(t, int64(1), callCountOf(t, ms, "beta", paymentotel.CallGetPayment, paymentotel.ResultOK))
+	assert.Zero(t, callCountOf(t, ms, "beta", paymentotel.CallGetPayment, paymentotel.ResultError))
+}
+
+// Метка provider — форма [a-z0-9_]{1,32}, и проверяет её сервис: декоратор с
+// негодным именем в собранный сервис не попадёт, а значит, и в метку.
+func TestWrap_InvalidProviderNameNeverAssembles(t *testing.T) {
+	t.Parallel()
+	stub := newStub(nil)
+	stub.name = "YooKassa Prod"
+	p, reader := wrap(t, stub)
+
+	assert.PanicsWithValue(t, "payment.NewService: provider.Name() must match [a-z0-9_]{1,32}", func() {
+		payment.NewService(paymenttest.NewMemStore(), p, paymenttest.NewObserver(), serviceConfig())
+	})
+	assert.Empty(t, callPoints(t, collect(t, reader)))
+}
+
+// Декоратор и наблюдатель подставляются вместо портов: сервис собирается на
+// них, имя проходит проверку формы, классы ошибок доезжают до Reason ядра, а
+// исходы — до payments_total.
 func TestWrap_DropsInForThePort(t *testing.T) {
 	t.Parallel()
 	reader, meter := newMeter(t)
 	prov := paymenttest.NewMemProvider("memprov")
-	prov.RejectFor["order-rejected"] = true
+	prov.RejectReference("order-rejected")
 	p, err := paymentotel.Wrap(prov, meter)
 	require.NoError(t, err)
-	svc := payment.NewService(paymenttest.NewMemStore(), p, serviceConfig())
+	obs, err := paymentotel.NewObserver(meter)
+	require.NoError(t, err)
+	svc := payment.NewService(paymenttest.NewMemStore(), p, obs, serviceConfig())
 	svc.SetClock(paymenttest.NewClock(time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)).Now)
 	ctx := context.Background()
 
@@ -201,25 +257,29 @@ func TestWrap_DropsInForThePort(t *testing.T) {
 	require.ErrorIs(t, err, payment.ErrProviderRejected)
 	assert.Equal(t, payment.ReasonProviderRejected, reason)
 
-	prov.BadSignature = true
+	prov.SetBadSignature(true)
 	_, reason, err = svc.HandleWebhook(ctx, payment.WebhookRequest{Raw: []byte(`{}`)})
 	require.ErrorIs(t, err, payment.ErrInvalidSignature)
 	assert.Equal(t, payment.ReasonSignatureInvalid, reason)
 
 	// Проверочное чтение не удалось: ErrUnavailable обязан доехать до сервиса,
 	// иначе тот ответит провайдеру 400 вместо 503.
-	prov.BadSignature = false
-	prov.ParseErr = fmt.Errorf("%w: verification read", payment.ErrUnavailable)
+	prov.SetBadSignature(false)
+	prov.SetParseErr(fmt.Errorf("%w: verification read", payment.ErrUnavailable))
 	_, reason, err = svc.HandleWebhook(ctx, payment.WebhookRequest{Raw: []byte(`{}`)})
 	require.ErrorIs(t, err, payment.ErrUnavailable)
 	assert.Equal(t, payment.ReasonProviderError, reason, "503, а не malformed_event")
 
 	assert.Equal(t, payment.ProviderName("memprov"), svc.Provider())
 	ms := collect(t, reader)
-	assert.Equal(t, int64(1), callCount(t, ms, paymentotel.CallCreatePayment, paymentotel.ResultOK))
+	assert.Equal(t, int64(1), callCountOf(t, ms, "memprov", paymentotel.CallCreatePayment, paymentotel.ResultOK))
 	assert.Equal(t, int64(1), callCount(t, ms, paymentotel.CallCreatePayment, paymentotel.ResultRejected))
 	assert.Equal(t, int64(1), callCount(t, ms, paymentotel.CallParseWebhook, paymentotel.ResultRejected))
 	assert.Equal(t, int64(1), callCount(t, ms, paymentotel.CallParseWebhook, paymentotel.ResultError))
+	assert.Equal(t, int64(1), outcomeCount(t, ms, payment.OpStart, payment.ReasonCreated))
+	assert.Equal(t, int64(1), outcomeCount(t, ms, payment.OpStart, payment.ReasonProviderRejected))
+	assert.Equal(t, int64(1), outcomeCount(t, ms, payment.OpWebhook, payment.ReasonSignatureInvalid))
+	assert.Equal(t, int64(1), outcomeCount(t, ms, payment.OpWebhook, payment.ReasonProviderError))
 }
 
 // Таймаут — главный источник error, и ctx к моменту записи уже отменён: вызов
@@ -238,7 +298,8 @@ func TestWrap_CountsUnderCanceledContext(t *testing.T) {
 }
 
 // Ни сумма, ни валюта, ни id намерения, ни ссылка заказа, ни текст ошибки в
-// метки не попадают: это данные, а не словарь.
+// метки не попадают: это данные, а не словарь. provider — имя провайдера, и
+// только оно.
 func TestWrap_NoDataInLabels(t *testing.T) {
 	t.Parallel()
 	intentID := uuid.New()
@@ -254,11 +315,14 @@ func TestWrap_NoDataInLabels(t *testing.T) {
 	points := callPoints(t, collect(t, reader))
 	require.Len(t, points, 1)
 	for _, kv := range points[0].Attributes.ToSlice() {
-		assert.Contains(t, []string{"type", "result"}, string(kv.Key), "лишняя метка")
+		assert.Contains(t, []string{"provider", "type", "result"}, string(kv.Key), "лишняя метка")
 		for _, data := range []string{"4111", "order-777", "119800", "RUB", intentID.String(), "buyer@"} {
 			assert.NotContains(t, kv.Value.AsString(), data)
 		}
 	}
+	name, ok := points[0].Attributes.Value("provider")
+	require.True(t, ok, "у точки нет метки provider")
+	assert.Equal(t, "stub", name.AsString())
 }
 
 // Nil-порт и nil-метр — паника на старте, как у payment.NewService.

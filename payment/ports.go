@@ -444,6 +444,31 @@ type WebhookRequest struct {
 //
 // Пакет не знает ни HTTP-схемы провайдера, ни его JSON, ни его словаря
 // статусов: всё это знает адаптер.
+//
+// # Классы ошибок
+//
+// Сервис различает ошибки адаптера только по классу (errors.Is), и класс
+// решает, повторять ли операцию:
+//
+//   - ErrProviderRejected — провайдер ответил отказом по существу; окончателен.
+//     У CreatePayment это тот же ответ, что Status == EventFailed: попытка
+//     закрывается;
+//   - ErrUnsupported — операции у адаптера нет по конструкции; окончателен.
+//     У CreatePayment тоже закрывает попытку, но с причиной unsupported:
+//     «не умеет» чинит тот, кто настраивает интеграцию, а не поддержка;
+//   - ErrUnavailable и ЛЮБАЯ неклассифицированная ошибка — ответа нет: сервис
+//     вернёт ErrUnavailable (503), повтор осмыслен.
+//
+// Окончательные классы сервис отдаёт без ErrUnavailable. Законны они не везде:
+//
+//	CreatePayment    ErrProviderRejected, ErrUnsupported (холд у адаптера без холдов)
+//	GetPayment       ErrProviderRejected
+//	Capture, Cancel  ErrProviderRejected, ErrUnsupported
+//	Refund           ErrProviderRejected, ErrUnsupported
+//	ParseWebhook     ErrInvalidSignature, ErrMalformedEvent — см. сам метод
+//
+// Класс у ошибки один: ErrUnavailable поверх отказа сервис прочтёт как отказ,
+// а потребитель, ветвящийся по ErrUnavailable, — как недоступность.
 type Provider interface {
 	// Name — имя провайдера: попадает в БД, в ключ дедупа и в метку метрики.
 	Name() ProviderName
@@ -476,6 +501,11 @@ type Provider interface {
 	// Неподтверждённое уведомление — ErrInvalidSignature, и тело при этом не
 	// разбирается вовсе. Событие, которое адаптер не сумел отобразить в
 	// известный EventType, получает EventIgnored.
+	//
+	// Мусор — тело не разбирается, событие непригодно — адаптер называет
+	// ErrMalformedEvent ЯВНО. Неклассифицированную ошибку сервис считает
+	// недоступностью (503): ошибочный 400 стоит оплаты, ошибочный 503 — лишь
+	// повтора.
 	ParseWebhook(ctx context.Context, req WebhookRequest) (Event, error)
 
 	// GetPayment — состояние платежа у провайдера; кормит сверку потерянных

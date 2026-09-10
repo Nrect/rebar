@@ -21,8 +21,8 @@ func TestStoreContract(t *testing.T) {
 		t.Parallel()
 		paymenttest.RunStoreSuite(t, func(_ *testing.T, hook *paymenttest.Hook) payment.Store {
 			mem := paymenttest.NewMemStore()
-			mem.OnSettled = hook.Call
-			mem.OnRefunded = hook.Call
+			mem.SetOnSettled(hook.Call)
+			mem.SetOnRefunded(hook.Call)
 			return mem
 		})
 	})

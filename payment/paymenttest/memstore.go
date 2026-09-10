@@ -15,7 +15,7 @@ import (
 	"github.com/nrect/rebar/payment"
 )
 
-// ErrStore — универсальный сбой хранилища для поля Err.
+// ErrStore — универсальный сбой хранилища для SetErr.
 var ErrStore = errors.New("paymenttest: store is down")
 
 // MemStore — потокобезопасная реализация payment.Store.
@@ -25,46 +25,42 @@ var ErrStore = errors.New("paymenttest: store is down")
 // то поведение, которое будет в бою. Отката при этом не моделируется — в памяти
 // откатывать нечего, потому что мутации применяются после всех проверок и все
 // разом, включая строку дедупа.
+//
+// ПУБЛИЧНЫХ ПОЛЕЙ НЕТ. Всё, что методы читают под замком, правится только
+// методами под тем же замком: тест потребителя меняет ручки, пока ручка его
+// HTTP-сервера в другой горутине зовёт стор, и поле, записанное мимо замка,
+// дало бы гонку под -race — у потребителя, а не у нас.
+//
+// ХУКИ ЗОВУТСЯ ПОД ЗАМКОМ ДВОЙНИКА — как у адаптера внутри транзакции, где
+// строка намерения заблокирована. Отпусти двойник замок на время хука, и
+// параллельный вызов вклинился бы между предикатом и применением: двойник стал
+// бы мягче базы. Отсюда контракт — хук двойник не трогает: обращение к MemStore
+// из хука повиснет, а всё, что хуку нужно, приходит аргументами.
 type MemStore struct {
 	mu sync.Mutex
 
-	// Intents — намерения по id; ByKey — индекс уникальности (payer|key);
-	// ByReference — «одно живое намерение на Reference».
-	Intents     map[uuid.UUID]payment.Intent
-	ByKey       map[string]uuid.UUID
-	ByReference map[string]uuid.UUID
-	// Entries — книга в порядке вставки.
-	Entries []payment.LedgerEntry
-	// Events — дедуп событий: "provider|event_id" → счётчик доставок.
-	Events map[string]int
-	// DriftRecords — что вернёт Drift; ставится тестом.
-	DriftRecords []payment.DriftRecord
+	// intents — намерения по id; byKey — индекс уникальности (payer|key);
+	// byReference — «одно живое намерение на Reference».
+	intents     map[uuid.UUID]payment.Intent
+	byKey       map[string]uuid.UUID
+	byReference map[string]uuid.UUID
+	// entries — книга в порядке вставки.
+	entries []payment.LedgerEntry
+	// events — дедуп событий: "provider|event_id" → счётчик доставок.
+	events map[string]int
+	// drift — что вернёт Drift.
+	drift []payment.DriftRecord
 
-	// OnSettled и OnRefunded — хук потребителя, тот же контракт, что у адаптера
-	// (см. payment/ports.go, «Хук потребителя»), но без tx: зовётся ПОСЛЕ книги
-	// и ДО применения мутаций, и его ошибка отменяет всё, включая строку дедупа
-	// события. Так потребитель проверяет состав транзакции юнит-тестом.
-	OnSettled  func(in payment.Intent, entry payment.LedgerEntry) error
-	OnRefunded func(in payment.Intent, entry payment.LedgerEntry) error
+	onSettled  func(in payment.Intent, entry payment.LedgerEntry) error
+	onRefunded func(in payment.Intent, entry payment.LedgerEntry) error
 
-	// Err — если не nil, КАЖДЫЙ вызов возвращает её. Так проверяется, что при
-	// сбое стора наружу едет ErrUnavailable и ничего не записывается.
-	Err error
-	// RefundTooLargeOnce — следующий ApplyRefund ответит OutcomeRefundTooLarge:
-	// так двойник изображает чужой возврат, проехавший между проверкой домена и
-	// записью. Деньги у провайдера к этому моменту уже ушли, и домен обязан
-	// ответить громко, а не тихо.
-	RefundTooLargeOnce bool
-	// RaceOnce — следующий CreateIntent вернёт ErrIdempotencyRace, вставив при
-	// этом ЧУЖУЮ строку под тот же ключ: так двойник изображает победившую
-	// параллельную транзакцию, чей результат мы обязаны отдать как повтор.
-	RaceOnce bool
+	err                error
+	refundTooLargeOnce bool
+	raceOnce           bool
 
-	// Calls — сколько раз какой метод звали: проверка «к стору не ходили лишний
-	// раз» и «второй вебхук не дошёл до книги».
-	Calls map[string]int
-	// LastApplySeq — номер последней мутации; растёт при каждой записи.
-	LastApplySeq int64
+	calls map[string]int
+	// lastApplySeq — номер последней мутации; растёт при каждой записи.
+	lastApplySeq int64
 }
 
 var _ payment.Store = (*MemStore)(nil)
@@ -72,37 +68,99 @@ var _ payment.Store = (*MemStore)(nil)
 // NewMemStore создаёт пустой двойник хранилища.
 func NewMemStore() *MemStore {
 	return &MemStore{
-		Intents:     map[uuid.UUID]payment.Intent{},
-		ByKey:       map[string]uuid.UUID{},
-		ByReference: map[string]uuid.UUID{},
-		Events:      map[string]int{},
-		Calls:       map[string]int{},
+		intents:     map[uuid.UUID]payment.Intent{},
+		byKey:       map[string]uuid.UUID{},
+		byReference: map[string]uuid.UUID{},
+		events:      map[string]int{},
+		calls:       map[string]int{},
 	}
+}
+
+// SetErr — если не nil, КАЖДЫЙ вызов возвращает её; nil снимает сбой. Так
+// проверяется, что при сбое стора наружу едет ErrUnavailable и ничего не
+// записывается.
+func (m *MemStore) SetErr(err error) { m.set(func() { m.err = err }) }
+
+// SetRaceOnce — следующий CreateIntent вернёт ErrIdempotencyRace, вставив при
+// этом ЧУЖУЮ строку под тот же ключ: так двойник изображает победившую
+// параллельную транзакцию, чей результат домен обязан отдать как повтор.
+func (m *MemStore) SetRaceOnce(v bool) { m.set(func() { m.raceOnce = v }) }
+
+// SetRefundTooLargeOnce — следующий ApplyRefund ответит OutcomeRefundTooLarge:
+// так двойник изображает чужой возврат, проехавший между проверкой домена и
+// записью. Деньги у провайдера к этому моменту уже ушли, и домен обязан
+// ответить громко, а не тихо.
+func (m *MemStore) SetRefundTooLargeOnce(v bool) { m.set(func() { m.refundTooLargeOnce = v }) }
+
+// SetDriftRecords — что вернёт Drift; двойник держит свою копию.
+func (m *MemStore) SetDriftRecords(records []payment.DriftRecord) {
+	records = slices.Clone(records)
+	m.set(func() { m.drift = records })
+}
+
+// SetOnSettled и SetOnRefunded — хук потребителя, тот же контракт, что у
+// адаптера (payment/ports.go, «Хук потребителя»), но без tx: зовётся ПОСЛЕ
+// книги и ДО применения мутаций, под замком двойника, и его ошибка отменяет
+// всё, включая строку дедупа события. MemStore из хука трогать нельзя — см.
+// «ХУКИ ЗОВУТСЯ ПОД ЗАМКОМ» у MemStore.
+func (m *MemStore) SetOnSettled(hook func(in payment.Intent, entry payment.LedgerEntry) error) {
+	m.set(func() { m.onSettled = hook })
+}
+
+func (m *MemStore) SetOnRefunded(hook func(in payment.Intent, entry payment.LedgerEntry) error) {
+	m.set(func() { m.onRefunded = hook })
 }
 
 // Seed кладёт намерение напрямую, мимо проверок: так тест готовит состояние, до
 // которого иначе пришлось бы доводить сервис.
-func (m *MemStore) Seed(in payment.Intent) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.put(in)
-}
+func (m *MemStore) Seed(in payment.Intent) { m.set(func() { m.put(in) }) }
 
 // SeedEntry кладёт запись книги напрямую.
 func (m *MemStore) SeedEntry(e payment.LedgerEntry) {
+	m.set(func() { m.entries = append(m.entries, e) })
+}
+
+// SeedKey кладёт в индекс уникальности ключ, указывающий на строку id, — даже
+// если такой строки нет: так тест изображает разъехавшийся индекс либо чтение
+// с отставшей реплики.
+func (m *MemStore) SeedKey(payerID uuid.UUID, key string, id uuid.UUID) {
+	m.set(func() { m.byKey[keyOf(payerID, key)] = id })
+}
+
+// ClearEntries стирает книгу целиком: так тест изображает расхождение
+// «оплачено без записи зачисления», которого append-only книга сама не
+// допустит.
+func (m *MemStore) ClearEntries() { m.set(func() { m.entries = nil }) }
+
+// Entries — вся книга в порядке вставки; копия, а не своя память двойника.
+func (m *MemStore) Entries() []payment.LedgerEntry {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.Entries = append(m.Entries, e)
+	return slices.Clone(m.entries)
+}
+
+// LastApplySeq — номер последней мутации; растёт при каждой записи.
+func (m *MemStore) LastApplySeq() int64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.lastApplySeq
+}
+
+// set — мутация ручки под тем же замком, под которым её читают методы.
+func (m *MemStore) set(mutate func()) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	mutate()
 }
 
 func (m *MemStore) put(in payment.Intent) {
 	in.Items = slices.Clone(in.Items)
-	m.Intents[in.ID] = in
+	m.intents[in.ID] = in
 	if in.IdempotencyKey != "" {
-		m.ByKey[keyOf(in.PayerID, in.IdempotencyKey)] = in.ID
+		m.byKey[keyOf(in.PayerID, in.IdempotencyKey)] = in.ID
 	}
 	if in.Reference != "" && in.Status.IsOpen() {
-		m.ByReference[in.Reference] = in.ID
+		m.byReference[in.Reference] = in.ID
 	}
 }
 
@@ -111,24 +169,24 @@ func (m *MemStore) put(in payment.Intent) {
 func (m *MemStore) CreateIntent(_ context.Context, in payment.Intent) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.Calls["CreateIntent"]++
-	if m.Err != nil {
-		return m.Err
+	m.calls["CreateIntent"]++
+	if m.err != nil {
+		return m.err
 	}
 	key := keyOf(in.PayerID, in.IdempotencyKey)
-	if m.RaceOnce {
-		m.RaceOnce = false
+	if m.raceOnce {
+		m.raceOnce = false
 		winner := in
 		winner.ID = uuid.New()
 		m.put(winner)
 		return payment.ErrIdempotencyRace
 	}
-	if _, taken := m.ByKey[key]; taken {
+	if _, taken := m.byKey[key]; taken {
 		return payment.ErrIdempotencyRace
 	}
 	// Частичный уникальный индекс по ссылке: живое намерение ровно одно, а
 	// после терминального статуса первого ссылка освобождается.
-	if id, busy := m.ByReference[in.Reference]; busy && m.Intents[id].Status.IsOpen() {
+	if id, busy := m.byReference[in.Reference]; busy && m.intents[id].Status.IsOpen() {
 		return payment.ErrReferenceBusy
 	}
 	m.put(in)
@@ -142,18 +200,18 @@ func (m *MemStore) IntentByKey(_ context.Context, payerID uuid.UUID, key string,
 ) (payment.Intent, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.Calls["IntentByKey"]++
-	if m.Err != nil {
-		return payment.Intent{}, false, m.Err
+	m.calls["IntentByKey"]++
+	if m.err != nil {
+		return payment.Intent{}, false, m.err
 	}
-	id, ok := m.ByKey[keyOf(payerID, key)]
+	id, ok := m.byKey[keyOf(payerID, key)]
 	if !ok {
 		return payment.Intent{}, false, nil
 	}
 	// Индекс без строки — это не «нашли пустое намерение», а разъехавшийся
 	// индекс либо чтение с отставшей реплики. Двойник обязан отвечать так же,
 	// как база: строки нет.
-	if _, exists := m.Intents[id]; !exists {
+	if _, exists := m.intents[id]; !exists {
 		return payment.Intent{}, false, nil
 	}
 	return m.snapshot(id), true, nil
@@ -163,11 +221,11 @@ func (m *MemStore) IntentByKey(_ context.Context, payerID uuid.UUID, key string,
 func (m *MemStore) IntentByID(_ context.Context, id uuid.UUID) (payment.Intent, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.Calls["IntentByID"]++
-	if m.Err != nil {
-		return payment.Intent{}, false, m.Err
+	m.calls["IntentByID"]++
+	if m.err != nil {
+		return payment.Intent{}, false, m.err
 	}
-	if _, ok := m.Intents[id]; !ok {
+	if _, ok := m.intents[id]; !ok {
 		return payment.Intent{}, false, nil
 	}
 	return m.snapshot(id), true, nil
@@ -176,7 +234,7 @@ func (m *MemStore) IntentByID(_ context.Context, id uuid.UUID) (payment.Intent, 
 // snapshot — копия намерения с копией состава: вызывающий вправе править
 // полученное, и правка не должна доезжать до «базы».
 func (m *MemStore) snapshot(id uuid.UUID) payment.Intent {
-	in := m.Intents[id]
+	in := m.intents[id]
 	in.Items = slices.Clone(in.Items)
 	return in
 }
@@ -186,11 +244,11 @@ func (m *MemStore) Transition(_ context.Context, req payment.TransitionRequest,
 ) (payment.TransitionResult, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.Calls["Transition"]++
-	if m.Err != nil {
-		return payment.TransitionResult{}, m.Err
+	m.calls["Transition"]++
+	if m.err != nil {
+		return payment.TransitionResult{}, m.err
 	}
-	in, ok := m.Intents[req.IntentID]
+	in, ok := m.intents[req.IntentID]
 	if !ok {
 		return payment.TransitionResult{Outcome: payment.OutcomeUnknownIntent}, nil
 	}
@@ -219,27 +277,27 @@ func (m *MemStore) ApplyEvent(_ context.Context, req payment.ApplyEventRequest,
 ) (payment.ApplyEventResult, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.Calls["ApplyEvent"]++
-	if m.Err != nil {
-		return payment.ApplyEventResult{}, m.Err
+	m.calls["ApplyEvent"]++
+	if m.err != nil {
+		return payment.ApplyEventResult{}, m.err
 	}
 
 	ek := eventKey(req.Event)
-	if seen := m.Events[ek]; seen > 0 {
-		m.Events[ek] = seen + 1
+	if seen := m.events[ek]; seen > 0 {
+		m.events[ek] = seen + 1
 		return payment.ApplyEventResult{
-			Outcome: payment.OutcomeDuplicateEvent, Intent: m.Intents[req.IntentID],
+			Outcome: payment.OutcomeDuplicateEvent, Intent: m.intents[req.IntentID],
 		}, nil
 	}
 
-	in, ok := m.Intents[req.IntentID]
+	in, ok := m.intents[req.IntentID]
 	if !ok {
 		// Орфан: строка события записана, применять не к чему.
-		m.Events[ek] = 1
+		m.events[ek] = 1
 		return payment.ApplyEventResult{Outcome: payment.OutcomeUnknownIntent}, nil
 	}
 	if req.To == "" {
-		m.Events[ek] = 1
+		m.events[ek] = 1
 		return payment.ApplyEventResult{Outcome: payment.OutcomeIgnored, Intent: in}, nil
 	}
 	if len(req.ExpectFrom) == 0 {
@@ -249,7 +307,7 @@ func (m *MemStore) ApplyEvent(_ context.Context, req payment.ApplyEventRequest,
 	}
 
 	if outcome, blocked := checkApplyPredicate(in, req); blocked {
-		m.Events[ek] = 1
+		m.events[ek] = 1
 		return payment.ApplyEventResult{Outcome: outcome, Intent: in}, nil
 	}
 
@@ -262,18 +320,18 @@ func (m *MemStore) ApplyEvent(_ context.Context, req payment.ApplyEventRequest,
 	// Хук зовётся после книги и до фиксации: его ошибка отменяет ВСЁ, включая
 	// строку дедупа события, иначе повтор вебхука увидел бы дубль и не применил
 	// бы ничего.
-	if req.Ledger != nil && m.OnSettled != nil {
+	if req.Ledger != nil && m.onSettled != nil {
 		hooked := in
 		hooked.Items = slices.Clone(in.Items)
-		if err := m.OnSettled(hooked, *req.Ledger); err != nil {
+		if err := m.onSettled(hooked, *req.Ledger); err != nil {
 			return payment.ApplyEventResult{}, err
 		}
 	}
 
-	m.Events[ek] = 1
+	m.events[ek] = 1
 	m.apply(in)
 	if req.Ledger != nil {
-		m.Entries = append(m.Entries, *req.Ledger)
+		m.entries = append(m.entries, *req.Ledger)
 	}
 	return payment.ApplyEventResult{Outcome: payment.OutcomeApplied, Intent: in}, nil
 }
@@ -283,25 +341,25 @@ func (m *MemStore) ApplyRefund(_ context.Context, req payment.ApplyRefundRequest
 ) (payment.ApplyRefundResult, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.Calls["ApplyRefund"]++
-	if m.Err != nil {
-		return payment.ApplyRefundResult{}, m.Err
+	m.calls["ApplyRefund"]++
+	if m.err != nil {
+		return payment.ApplyRefundResult{}, m.err
 	}
 	if err := checkRefundShape(req); err != nil {
 		return payment.ApplyRefundResult{}, err
 	}
-	if m.RefundTooLargeOnce {
-		m.RefundTooLargeOnce = false
+	if m.refundTooLargeOnce {
+		m.refundTooLargeOnce = false
 		return payment.ApplyRefundResult{Outcome: payment.OutcomeRefundTooLarge}, nil
 	}
 	// UNIQUE (intent_id, idempotency_key): один и тот же возврат не ложится
 	// дважды, а второй частичный с другим ключом — ложится.
-	for _, e := range m.Entries {
+	for _, e := range m.entries {
 		if e.IntentID == req.IntentID && e.IdempotencyKey == req.Refund.IdempotencyKey {
 			return payment.ApplyRefundResult{Outcome: payment.OutcomeDuplicateEvent, Entry: e}, nil
 		}
 	}
-	in, ok := m.Intents[req.IntentID]
+	in, ok := m.intents[req.IntentID]
 	if !ok {
 		return payment.ApplyRefundResult{Outcome: payment.OutcomeUnknownIntent}, nil
 	}
@@ -313,16 +371,16 @@ func (m *MemStore) ApplyRefund(_ context.Context, req payment.ApplyRefundRequest
 	if req.Refund.AmountMinor > net.Minor() {
 		return payment.ApplyRefundResult{Outcome: payment.OutcomeRefundTooLarge}, nil
 	}
-	if m.OnRefunded != nil {
+	if m.onRefunded != nil {
 		hooked := in
 		hooked.Items = slices.Clone(in.Items)
-		if hookErr := m.OnRefunded(hooked, req.Refund); hookErr != nil {
+		if hookErr := m.onRefunded(hooked, req.Refund); hookErr != nil {
 			return payment.ApplyRefundResult{}, hookErr
 		}
 	}
 
-	m.Entries = append(m.Entries, req.Refund)
-	m.LastApplySeq++
+	m.entries = append(m.entries, req.Refund)
+	m.lastApplySeq++
 	return payment.ApplyRefundResult{Outcome: payment.OutcomeApplied, Entry: req.Refund}, nil
 }
 
@@ -330,16 +388,16 @@ func (m *MemStore) ApplyRefund(_ context.Context, req payment.ApplyRefundRequest
 func (m *MemStore) Ledger(_ context.Context, intentID uuid.UUID) ([]payment.LedgerEntry, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.Calls["Ledger"]++
-	if m.Err != nil {
-		return nil, m.Err
+	m.calls["Ledger"]++
+	if m.err != nil {
+		return nil, m.err
 	}
 	return m.ledgerOf(intentID), nil
 }
 
 func (m *MemStore) ledgerOf(intentID uuid.UUID) []payment.LedgerEntry {
-	out := make([]payment.LedgerEntry, 0, len(m.Entries))
-	for _, e := range m.Entries {
+	out := make([]payment.LedgerEntry, 0, len(m.entries))
+	for _, e := range m.entries {
 		if e.IntentID == intentID {
 			out = append(out, e)
 		}
@@ -359,15 +417,15 @@ func (m *MemStore) StalePending(_ context.Context, olderThan time.Time,
 ) ([]payment.Intent, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.Calls["StalePending"]++
-	if m.Err != nil {
-		return nil, m.Err
+	m.calls["StalePending"]++
+	if m.err != nil {
+		return nil, m.err
 	}
 	if err := checkLimit("stale pending", limit); err != nil {
 		return nil, err
 	}
-	queue := make([]payment.Intent, 0, len(m.Intents))
-	for id, in := range m.Intents {
+	queue := make([]payment.Intent, 0, len(m.intents))
+	for id, in := range m.intents {
 		if in.Status.IsOpen() && in.CreatedAt.Before(olderThan) && afterCursor(in, after) {
 			queue = append(queue, m.snapshot(id))
 		}
@@ -384,12 +442,12 @@ func (m *MemStore) StalePending(_ context.Context, olderThan time.Time,
 func (m *MemStore) CountStuckPending(_ context.Context, olderThan time.Time) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.Calls["CountStuckPending"]++
-	if m.Err != nil {
-		return 0, m.Err
+	m.calls["CountStuckPending"]++
+	if m.err != nil {
+		return 0, m.err
 	}
 	var n int64
-	for _, in := range m.Intents {
+	for _, in := range m.intents {
 		if in.Status.IsOpen() && in.CreatedAt.Before(olderThan) {
 			n++
 		}
@@ -397,27 +455,27 @@ func (m *MemStore) CountStuckPending(_ context.Context, olderThan time.Time) (in
 	return n, nil
 }
 
-// Drift — то, что положил тест.
+// Drift — то, что положил тест (SetDriftRecords).
 func (m *MemStore) Drift(_ context.Context, _ time.Time, limit int) ([]payment.DriftRecord, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.Calls["Drift"]++
-	if m.Err != nil {
-		return nil, m.Err
+	m.calls["Drift"]++
+	if m.err != nil {
+		return nil, m.err
 	}
 	if err := checkLimit("drift", limit); err != nil {
 		return nil, err
 	}
-	return slices.Clone(m.DriftRecords[:min(limit, len(m.DriftRecords))]), nil
+	return slices.Clone(m.drift[:min(limit, len(m.drift))]), nil
 }
 
-// CallCount — сколько раз звали метод. Через мьютекс, а не чтением Calls
-// напрямую: двойник используется и из тестов, идущих ПАРАЛЛЕЛЬНО вызовам стора,
-// и голое чтение карты там ловится -race, а не глазом.
+// CallCount — сколько раз звали метод. Через мьютекс: двойник используется и
+// из тестов, идущих ПАРАЛЛЕЛЬНО вызовам стора, и голое чтение карты там
+// ловится -race, а не глазом.
 func (m *MemStore) CallCount(method string) int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.Calls[method]
+	return m.calls[method]
 }
 
 // Deliveries — сколько раз доставляли событие: растущий счётчик это сигнал
@@ -425,7 +483,7 @@ func (m *MemStore) CallCount(method string) int {
 func (m *MemStore) Deliveries(ev payment.Event) int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.Events[eventKey(ev)]
+	return m.events[eventKey(ev)]
 }
 
 // EntriesOf — записи намерения нужного рода. «Ровно одна capture» — самое
@@ -434,7 +492,7 @@ func (m *MemStore) EntriesOf(intentID uuid.UUID, kind payment.LedgerKind) []paym
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := make([]payment.LedgerEntry, 0, 2)
-	for _, e := range m.Entries {
+	for _, e := range m.entries {
 		if e.IntentID == intentID && e.Kind == kind {
 			out = append(out, e)
 		}
@@ -444,12 +502,12 @@ func (m *MemStore) EntriesOf(intentID uuid.UUID, kind payment.LedgerKind) []paym
 
 func (m *MemStore) apply(in payment.Intent) {
 	m.put(in)
-	if !in.Status.IsOpen() && m.ByReference[in.Reference] == in.ID {
+	if !in.Status.IsOpen() && m.byReference[in.Reference] == in.ID {
 		// Терминальный статус освобождает ссылку: за тот же заказ можно
 		// заплатить новой попыткой.
-		delete(m.ByReference, in.Reference)
+		delete(m.byReference, in.Reference)
 	}
-	m.LastApplySeq++
+	m.lastApplySeq++
 }
 
 // settledMoment — момент зачисления: время события, зажатое в

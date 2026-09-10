@@ -21,8 +21,10 @@ type WebhookResult struct {
 // КОНТРАКТ ОШИБОК. Ошибка возвращается ТОЛЬКО тогда, когда провайдеру нельзя
 // отвечать 200:
 //   - ErrInvalidSignature и ErrMalformedEvent — 400: это не наш провайдер либо
-//     тело нечитаемо, ретрай не поможет;
-//   - ErrUnavailable — 503: единственный случай, когда ретрай осмыслен.
+//     тело нечитаемо, ретрай не поможет. ErrMalformedEvent — только ЯВНЫЙ:
+//     названный адаптером либо найденный проверкой разобранного события;
+//   - ErrUnavailable — 503: ретрай осмыслен. Сюда же уходит любая
+//     неклассифицированная ошибка адаптера (см. parseError).
 //
 // Всё остальное (дубль, запоздалое событие, орфан, расхождение сумм,
 // конфликт статусов) возвращается с nil-ошибкой и говорящим Reason: провайдеру
@@ -34,26 +36,44 @@ type WebhookResult struct {
 // провайдера ретраить вечно то, что уже учтено, — и после серии неуспехов
 // провайдеры отключают приёмник, то есть перестают доходить и нужные события.
 func (s *Service) HandleWebhook(ctx context.Context, req WebhookRequest) (WebhookResult, Reason, error) {
+	res, reason, err := s.handleWebhook(ctx, req)
+	s.obs.Outcome(ctx, OpWebhook, reason)
+	return res, reason, err
+}
+
+// handleWebhook — тело HandleWebhook; исход отдаёт наблюдателю обёртка.
+func (s *Service) handleWebhook(ctx context.Context, req WebhookRequest) (WebhookResult, Reason, error) {
 	// Подлинность проверяется первой и БЕЗ похода в БД: неподтверждённый запрос
 	// не должен стоить нам ни одного соединения из пула.
 	ev, err := s.provider.ParseWebhook(ctx, req)
-	if errors.Is(err, ErrInvalidSignature) {
-		return WebhookResult{}, ReasonSignatureInvalid, err
-	}
-	// Подтверждение ходит во внешний мир (ключ подписи, перечтение объекта у
-	// провайдера — порт не зря принимает ctx), и его сбой связи НЕ означает
-	// «тело нечитаемо». Без этой ветки адаптер, честно вернувший
-	// ErrUnavailable, получал Reason malformed_event, транспорт по контракту
-	// выбирал по нему 400 — и провайдер считал вебхук доставленным и больше не
-	// приходил. Тот же «200 на сбой», от которого предостерегает контракт
-	// ошибок, только через 4xx.
-	if errors.Is(err, ErrUnavailable) {
-		return WebhookResult{}, ReasonProviderError, err
-	}
 	if err != nil {
-		return WebhookResult{}, ReasonMalformedEvent, fmt.Errorf("%w: %w", ErrMalformedEvent, err)
+		reason, parseErr := parseError(err)
+		return WebhookResult{}, reason, parseErr
 	}
 	return s.apply(ctx, ev)
+}
+
+// parseError — причина и ошибка для отказа ParseWebhook.
+//
+// НЕУВЕРЕННОСТЬ ПАДАЕТ В СТОРОНУ ПОВТОРА. 400 провайдер читает как «доставлено,
+// больше не присылай», 503 — как «повтори позже». Ошибочный 503 стоит
+// ограниченного повтора заведомо плохого тела; ошибочный 400 стоит оплаты:
+// провайдер больше не придёт, и деньги останутся не зачисленными. Поэтому 400 —
+// только по явному классу, а неклассифицированная ошибка — например, сырой
+// таймаут проверочного чтения у адаптера, забывшего его обернуть, — это
+// недоступность. По той же причине ErrUnavailable проверяется раньше
+// ErrMalformedEvent.
+func parseError(err error) (Reason, error) {
+	if errors.Is(err, ErrInvalidSignature) {
+		return ReasonSignatureInvalid, err
+	}
+	if errors.Is(err, ErrUnavailable) {
+		return ReasonProviderError, err
+	}
+	if errors.Is(err, ErrMalformedEvent) {
+		return ReasonMalformedEvent, err
+	}
+	return ReasonProviderError, fmt.Errorf("%w: parse webhook: %w", ErrUnavailable, err)
 }
 
 // apply — ЕДИНСТВЕННЫЙ путь применения события: и для вебхука, и для сверки, и

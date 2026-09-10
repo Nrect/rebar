@@ -10,6 +10,7 @@ import (
 type Service struct {
 	store    Store
 	provider Provider
+	obs      Observer
 	cfg      Config
 	now      func() time.Time
 	newID    func() uuid.UUID
@@ -21,12 +22,19 @@ type Service struct {
 // Валидируются ВСЕ поля: нулевой IntentTTL сделал бы каждое намерение
 // просроченным в момент создания, нулевой MaxAmountMinor — каждое
 // неоплачиваемым, а пустая валюта прошла бы в CHAR(3) книги навсегда.
-func NewService(store Store, provider Provider, cfg Config) *Service {
+//
+// Nil-Observer — тоже паника, а не «наблюдение выключено»: забытый наблюдатель
+// дал бы молчание ровно на денежных алертах. Кому метрики не нужны —
+// LogObserver.
+func NewService(store Store, provider Provider, obs Observer, cfg Config) *Service {
 	if store == nil {
 		panic("payment.NewService: store must not be nil")
 	}
 	if provider == nil {
 		panic("payment.NewService: provider must not be nil")
+	}
+	if obs == nil {
+		panic("payment.NewService: observer must not be nil")
 	}
 	if !provider.Name().valid() {
 		panic("payment.NewService: provider.Name() must match [a-z0-9_]{1,32}")
@@ -35,7 +43,7 @@ func NewService(store Store, provider Provider, cfg Config) *Service {
 		panic("payment.NewService: " + err.Error())
 	}
 	return &Service{
-		store: store, provider: provider, cfg: cfg,
+		store: store, provider: provider, obs: obs, cfg: cfg,
 		now:   func() time.Time { return time.Now().UTC() },
 		newID: uuid.New,
 	}

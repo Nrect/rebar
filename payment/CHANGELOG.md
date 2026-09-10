@@ -8,18 +8,105 @@
 ### Added
 - Подпакет `paymentotel` — наблюдаемость на OpenTelemetry, meter
   `rebar.payment`. `Wrap(provider, meter)` — декоратор порта `Provider` со
-  счётчиком `payment_provider_calls{type,result}`: `type` — закрытый набор
-  `AllCallTypes` (шесть методов порта; `Name` пробрасывается как есть и не
-  считается), `result` — `ok` / `rejected` / `error`. Отказ и молчание
-  провайдера не сводятся: `rejected` — классы `ErrProviderRejected`,
-  `ErrUnsupported`, `ErrInvalidSignature`, `ErrMalformedEvent` и
-  `CreatePaymentResult.Status == EventFailed`; всё прочее, включая
-  неизвестную ошибку, — `error`. `NewGauges(meter)` — `payment_intents_stuck`
-  и `payment_drift{kind}` по снимку, который потребитель кладёт в `Set` после
-  сверки (`CountStuckPending`, `Drift`); записи расхождений не хранятся, род
+  счётчиком `payment_provider_calls{provider,type,result}`: `provider` —
+  `Name()` провайдера (форма `[a-z0-9_]{1,32}`, её проверяет `NewService`;
+  два провайдера на одном метре не сливаются в один ряд), `type` — закрытый
+  набор `AllCallTypes` (шесть методов порта; `Name` пробрасывается как есть и
+  не считается), `result` — `ok` / `rejected` / `error`. Отказ и молчание
+  провайдера не сводятся, и граница между ними та же, что у сервиса:
+  `rejected` — ровно те ответы, на которые сервис не отдаёт `ErrUnavailable`
+  (`ErrProviderRejected`, `ErrUnsupported`, `Status == EventFailed` у
+  `CreatePayment`; у `ParseWebhook` — `ErrInvalidSignature` и явный
+  `ErrMalformedEvent`), всё прочее, включая неизвестную ошибку, — `error`.
+  `NewGauges(meter)` — `payment_intents_stuck`
+  и `payment_drift{kind}` по снимку, который потребитель кладёт в `Set` из
+  отдельной задачи планировщика (`CountStuckPending` и `Drift` одним заходом;
+  не на scrape и не в задаче сверки); записи расхождений не хранятся, род
   вне `AllDriftKinds` идёт рядом без метки. otel стал прямой зависимостью
   модуля; ядро его по-прежнему не импортирует, а белый список стража для
   `paymentotel` сужен до `otel/metric` и `otel/attribute`.
+- Порт `Observer` (`Outcome(ctx, op, reason)`) и закрытый набор `Op` с
+  `AllOps` (`start`, `webhook`, `capture`, `cancel`, `refund`, `reconcile`):
+  сервис отдаёт наблюдателю исход КАЖДОЙ публичной операции, на успехе и на
+  ошибке, с тем же `Reason`, что вернул вызывающему. `LogObserver(l)` — явный
+  выбор того, кому метрики не нужны: тревоги с порогом 1 (`status_conflict`,
+  `amount_mismatch`) в Error, остальное в Debug. Двойник
+  `paymenttest.Observer`. `paymentotel.NewObserver(meter)` — счётчик
+  `payments_total{op,reason}`; все пары `AllOps × AllReasons` заводятся нулём
+  при сборке, иначе первый инкремент ряда не виден `increase()`, а у двух
+  денежных алертов порог 1. Обещание `payment/doc.go` про `payments_total`
+  стало правдой.
+
+### Changed
+- **Меняется HTTP-статус окончательных отказов провайдера у потребителя.**
+  Раньше `ErrProviderRejected` и `ErrUnsupported` из `Start`, `Capture`,
+  `Cancel`, `Refund` и `Reconcile` приезжали под `ErrUnavailable`, и таблица
+  «ошибка → HTTP», проверяющая `ErrUnavailable` первой, отдавала на них 503.
+  Теперь обёртки нет: `ErrProviderRejected` получит ваше правило, если оно
+  есть, а `ErrUnsupported` без правила — умолчание, то есть 500, что хуже
+  прежнего 503. Заведите правила до обновления: `ErrProviderRejected` — 409
+  или 422, `ErrUnsupported` — 501 (ретраем не чинится и не ваш баг), иначе
+  окончательный отказ станет 500. `Reason` для `ErrProviderRejected` от
+  адаптера — теперь `provider_rejected`, а не `provider_error`. Вебхук
+  меняется в обратную сторону: неклассифицированная ошибка `ParseWebhook` —
+  503 вместо 400, и провайдер повторит уведомление, которое раньше считал
+  доставленным.
+- **Ломающее:** `NewService(store, provider, obs, cfg)` — наблюдатель стал
+  обязательной зависимостью, nil — паника. Не поле `Config` и не
+  `SetObserver`: забытый вызов дал бы молчание ровно на денежных алертах.
+- **Ломающее для тестов:** у `paymenttest.MemProvider` не осталось
+  публичных полей. Ручки (`CreateErr`, `GetErr`, `CaptureErr`, `CancelErr`,
+  `RefundErr`, `ParseErr`, `NoHolds`, `BadSignature`, `NoPaymentID`,
+  `Result`, `RefundEcho`, `RejectFor`, `FailFor`, `CreateHook`) методы
+  двойника читали под своим мьютексом, а тест писал мимо него: у
+  потребителя, который гоняет двойник через живой HTTP-сервер, это гонка под
+  `-race`, и краснела бы она у него. Теперь ручки — методами под тем же
+  замком (`SetCreateErr` … `SetParseErr`, `SetNoHolds`, `SetBadSignature`,
+  `SetNoPaymentID`, `SetResult`, `SetRefundEcho`, `RejectReference`,
+  `FailReference`, `SetCreateHook`), записанные запросы — копиями
+  (`Created()`, `Captures()`, `Cancels()`, `Refunds()`). Для HTTP-теста,
+  который ссылку заказа заранее не знает, — `RejectNext()`: отказ следующему
+  новому платежу. `CreateHook` зовётся вне замка: хук вправе трогать сам
+  провайдер, под замком это была взаимная блокировка.
+- **Ломающее для тестов:** у `paymenttest.MemStore` тоже не осталось
+  публичных полей — дефект тот же, что у `MemProvider`. Ручки — методами под
+  замком: `SetErr`, `SetRaceOnce`, `SetRefundTooLargeOnce`,
+  `SetDriftRecords`, `SetOnSettled`, `SetOnRefunded`; для состояний, до
+  которых сервис не доводит, — `SeedKey` (ключ в индексе без строки) и
+  `ClearEntries` (книга стёрта мимо append-only); чтение — копиями
+  (`Entries()`, `LastApplySeq()`, прежние `EntriesOf`, `Deliveries`,
+  `CallCount`). Хуки по-прежнему зовутся ПОД замком двойника — как у
+  адаптера внутри транзакции: отпусти двойник замок, и параллельный вызов
+  вклинился бы между предикатом и применением. Отсюда контракт: хук двойник
+  не трогает.
+
+### Fixed
+- Вебхук: неклассифицированная ошибка `ParseWebhook` уходила в
+  `ReasonMalformedEvent`, то есть в 400. Сырой `context.DeadlineExceeded`
+  проверочного чтения у адаптера, забывшего его обернуть, становился 400:
+  провайдер считал уведомление доставленным и больше не приходил — оплата
+  терялась навсегда. Умолчание перевёрнуто: 400 — только по явному
+  `ErrMalformedEvent` или `ErrInvalidSignature`, всё неклассифицированное —
+  `ReasonProviderError` под `ErrUnavailable`, то есть 503. Контракт
+  `ParseWebhook` в `ports.go` говорит это прямо.
+- Окончательный отказ провайдера отдавался как «попробуйте позже». Все пять
+  мест вызова (`Start`, `Capture`, `Cancel`, `Refund`, `Reconcile`)
+  заворачивали в `ErrUnavailable` и `ErrUnsupported`, и `ErrProviderRejected`:
+  потребитель с таблицей «ошибка → HTTP» отвечал на них 503, и клиент
+  повторял вечно, а `ErrProviderRejected` вдобавок получал причину
+  `provider_error`. Теперь одна точка `providerError`: `ErrUnavailable` —
+  только «ответа нет», окончательные классы идут своим `%w` с причинами
+  `unsupported` и `provider_rejected`. Определённое «нет» от `CreatePayment` —
+  `ErrProviderRejected` или `ErrUnsupported` — закрывает попытку так же, как
+  `Status == EventFailed`: прийти по ней нечему, а открытой её держит только
+  «ответа нет». Раньше `ErrUnsupported` оставлял намерение в `created`, и
+  сверка звала `CreatePayment` до самого TTL. Причина закрытия — по классу:
+  `provider_rejected` смотрит поддержка, `unsupported` чинит тот, кто
+  настраивает интеграцию. Сама причина в намерении не хранится — `failed`
+  один на оба класса, — поэтому повтор ключа по закрытой так попытке отдаёт
+  общий окончательный отказ `provider_rejected`: не 503 и без второго похода
+  к провайдеру. Контракт `Provider` в `ports.go` называет законные классы по
+  методам.
 
 ## [0.1.0] — 2026-09-10
 
