@@ -1,0 +1,22 @@
+# Стенд примера: Postgres и Mailpit. Приложения здесь нет намеренно — оно
+# запускается из исходников (go run ./cmd/monolith), потому что пример
+# проверяет то, что лежит в дереве СЕЙЧАС, а не собранный образ.
+services:
+  postgres:
+    image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
+    environment:
+      POSTGRES_USER: monolith
+      POSTGRES_PASSWORD: monolith
+      POSTGRES_DB: monolith
+    ports: ["5432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U monolith"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # Mailpit — почтовый тупик стенда: SMTP на 1025, веб и API на 8025.
+  # Наружу ничего не уходит, поэтому письма со ссылками безопасно читать глазами.
+  mailpit:
+    image: axllent/mailpit:v1.21@sha256:81370195cd4a0eab9604d17c2617a7525b0486f9365555253b6c5376c6350f1a
+    ports: ["1025:1025", "8025:8025"]
