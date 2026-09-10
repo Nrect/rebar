@@ -6,6 +6,7 @@ import (
 
 	"github.com/nrect/rebar/outbox/outboxpg"
 	"github.com/nrect/rebar/payment"
+	"github.com/nrect/rebar/payment/paymentotel"
 	"github.com/nrect/rebar/payment/paymentpg"
 	"github.com/nrect/rebar/payment/paymenttest"
 
@@ -37,7 +38,15 @@ func (a *App) startMoney(ctx context.Context) error {
 	}
 
 	a.provider = paymenttest.NewMemProvider(providerName)
-	a.pay = payment.NewService(store, a.provider, payment.Config{
+	// НАБЛЮДАТЕЛЬ ОБЯЗАТЕЛЕН: два главных денежных алерта (status_conflict,
+	// amount_mismatch) держатся только на нём, а необязательный дал бы то же
+	// молчание через забытый вызов. Все пары op × reason рождаются нулём —
+	// иначе первый же конфликт increase() не увидел бы.
+	obs, err := paymentotel.NewObserver(a.obs.Meter.Meter("rebar.payment"))
+	if err != nil {
+		return err
+	}
+	a.pay = payment.NewService(store, a.provider, obs, payment.Config{
 		Currency:          currency,
 		MaxAmountMinor:    100_000_00,
 		MaxItems:          20,

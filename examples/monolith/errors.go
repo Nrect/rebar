@@ -131,6 +131,11 @@ func paymentRules() []rule {
 		{payment.ErrInvalidSignature, errs.IncorrectInput("webhook-not-authentic")},
 		{payment.ErrMalformedEvent, errs.IncorrectInput("webhook-malformed")},
 		{payment.ErrProviderRejected, errs.Conflict("provider-rejected")},
+		// 501, а не 409 и не 503: «не умеет» ретраем не чинится и не наш баг, а
+		// клиенты не повторяют 501 так, как повторяют 502/503/504. Правило
+		// обязательно: с тех пор как payment не заворачивает окончательный отказ
+		// в ErrUnavailable, без него ErrUnsupported падал бы в 500.
+		{payment.ErrUnsupported, errs.NotImplemented("payment-unsupported")},
 	}
 }
 

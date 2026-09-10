@@ -8,6 +8,14 @@
 
 ### Changed
 
+- Пересадка на правки `payment` (`claude/payment-fixes-abc`, `70f6053`):
+  обязательный `payment.Observer` проведён через `paymentotel.NewObserver` на
+  общем метре — `payments_total{op,reason}` в `/metrics` с нулём на каждой
+  паре; `payment.ErrUnsupported → 501 payment-unsupported` — без правила
+  окончательный отказ упал бы в 500, когда `payment` перестал заворачивать его
+  в `ErrUnavailable`. `TestErrorClasses_ReachHTTP` проверяет отказ провайдера
+  по обоим путям (статусом и ошибкой), «не умеет» и временный сбой. Двойник
+  провайдера — на сеттерах под замком.
 - Пересадка на исправленные порты: шесть обходов сняты, потому что порты
   сошлись. `shoppg.Entitlements` переписан под `Store.Grant(…, at)` —
   `GrantAt`, часы адаптера и `SetClock` ушли целиком; `Open` читает

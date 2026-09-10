@@ -239,7 +239,11 @@ func uploadFile(t *testing.T, s *stand) {
 func checkMetrics(t *testing.T, s *stand) {
 	t.Helper()
 	body := s.scrape(t)
-	for _, want := range []string{"build_info", "cron_runs", "outbox_pending", "emails_sent"} {
+	// payments_total — наблюдатель проведён: все пары op × reason
+	// рождаются нулём при сборке, поэтому ряд есть и до первой оплаты.
+	for _, want := range []string{
+		"build_info", "cron_runs", "outbox_pending", "emails_sent", "payments_total",
+	} {
 		require.Contains(t, body, want, "в /metrics нет %s", want)
 	}
 }
