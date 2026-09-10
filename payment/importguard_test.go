@@ -70,7 +70,7 @@ var allowedByDir = map[string][]string{
 	// запрещена: списка "." это не касается.
 	"paymentpg":   {"github.com/google/uuid", "github.com/jackc/pgx/v5", "github.com/nrect/rebar/postgres"},
 	"yookassa":    {"github.com/google/uuid"},
-	"paymentotel": {"github.com/google/uuid", "go.opentelemetry.io/otel/metric", "go.opentelemetry.io/otel/attribute"},
+	"paymentotel": {"go.opentelemetry.io/otel/metric", "go.opentelemetry.io/otel/attribute"}, // без uuid: id в метке — ПДн
 	"cmd/psfake":  {},
 }
 
