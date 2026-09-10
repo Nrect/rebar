@@ -3,6 +3,7 @@ package payment_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 
@@ -120,6 +121,63 @@ func TestWebhook_ParseUnavailable_IsNotMalformed(t *testing.T) {
 
 	require.ErrorIs(t, err, payment.ErrUnavailable)
 	require.NotErrorIs(t, err, payment.ErrMalformedEvent)
+	assert.Equal(t, payment.ReasonProviderError, reason)
+}
+
+// Неклассифицированная ошибка ParseWebhook — это «не уверены», и она уходит в
+// 503: ошибочный 400 стоит оплаты, ошибочный 503 — повтора.
+func TestWebhook_UnclassifiedParseError_IsUnavailable(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]error{
+		"сырой таймаут проверочного чтения": context.DeadlineExceeded,
+		"сырая ошибка адаптера":             errors.New("adapter: unexpected end of JSON input"),
+	}
+
+	for name, parseErr := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			h := newHarness(t)
+			h.prov.ParseErr = parseErr
+
+			_, reason, err := h.svc.HandleWebhook(context.Background(), webhook())
+
+			require.ErrorIs(t, err, payment.ErrUnavailable)
+			require.NotErrorIs(t, err, payment.ErrMalformedEvent)
+			require.ErrorIs(t, err, parseErr, "причина сбоя не теряется")
+			assert.Equal(t, payment.ReasonProviderError, reason)
+			assert.Zero(t, h.store.CallCount("ApplyEvent"), "неподтверждённое событие до стора не доходит")
+		})
+	}
+}
+
+// Мусор адаптер называет явно — и тогда это 400: повтор тела, которое не
+// разбирается, не поможет.
+func TestWebhook_ExplicitMalformed_IsNotUnavailable(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	h.prov.ParseErr = fmt.Errorf("%w: body is not JSON", payment.ErrMalformedEvent)
+
+	_, reason, err := h.svc.HandleWebhook(context.Background(), webhook())
+
+	require.ErrorIs(t, err, payment.ErrMalformedEvent)
+	require.NotErrorIs(t, err, payment.ErrUnavailable)
+	assert.Equal(t, payment.ReasonMalformedEvent, reason)
+	assert.Zero(t, h.store.CallCount("ApplyEvent"))
+}
+
+// Ошибка с обоими классами — тоже «не уверены»: побеждает повтор.
+func TestWebhook_UnavailableWinsOverMalformed(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	h.prov.ParseErr = fmt.Errorf("%w: %w", payment.ErrMalformedEvent, payment.ErrUnavailable)
+
+	_, reason, err := h.svc.HandleWebhook(context.Background(), webhook())
+
+	require.ErrorIs(t, err, payment.ErrUnavailable)
 	assert.Equal(t, payment.ReasonProviderError, reason)
 }
 
