@@ -5,7 +5,8 @@
 // заводится на этом сервере (CREATE DATABASE) — так тесты идут в CI, где
 // Postgres уже поднят сервисом; иначе поднимается контейнер testcontainers,
 // один на бинарь. Schema даёт каждому тесту свою схему через search_path,
-// поэтому тесты можно писать параллельными.
+// поэтому тесты можно писать параллельными; SchemaDSN отдаёт ту же схему
+// строкой соединения — для теста, который поднимает пул сам, как приложение.
 //
 //	func TestMain(m *testing.M) {
 //		flag.Parse() // testing.Short() до m.Run требует разобранных флагов
@@ -27,6 +28,12 @@
 //		pgtest.Short(t)
 //		pool := pgtest.Schema(t, db)
 //		pgtest.Apply(t, pool, pgtest.GooseUp(t, "schema.sql"))
+//		…
+//	}
+//
+//	func TestApp(t *testing.T) {
+//		pgtest.Short(t)
+//		app := start(t, pgtest.SchemaDSN(t, db)) // пул поднимает приложение
 //		…
 //	}
 //
