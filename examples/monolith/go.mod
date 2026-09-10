@@ -37,7 +37,7 @@ require (
 	github.com/nrect/rebar/otelboot v0.0.0-20260908221018-051fd21c2237
 	github.com/nrect/rebar/outbox v0.0.0-20260908221018-051fd21c2237
 	github.com/nrect/rebar/payment v0.0.0-20260908221018-051fd21c2237
-	github.com/nrect/rebar/postgres v0.0.0-20260908221018-051fd21c2237
+	github.com/nrect/rebar/postgres v0.1.0
 	github.com/nrect/rebar/scheduler v0.0.0-20260908221018-051fd21c2237
 	github.com/pressly/goose/v3 v3.27.3
 	github.com/stretchr/testify v1.12.1
