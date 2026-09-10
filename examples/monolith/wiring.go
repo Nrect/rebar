@@ -135,39 +135,47 @@ func auditOutcome(kind session.EventKind) audit.Outcome {
 	}
 }
 
-// transport — SMTP с метриками. Ошибка сборки транспорта не роняет
-// приложение: письмо подождёт в очереди, а Unconfigured честно скажет, что
-// провайдера нет.
-func (a *App) transport() mail.Transport {
-	var next mail.Transport = mail.Unconfigured{}
-	if sender, err := smtp.New(a.cfg.SMTP); err == nil {
-		next = sender
-	}
-	wrapped, err := mailotel.Wrap(next, a.obs.Meter.Meter("rebar.mail"))
+// transport — SMTP с метриками. ОБЕ ОШИБКИ ФАТАЛЬНЫ.
+//
+// smtp.New к сети не ходит (см. его doc: «строит транспорт без обращения к
+// сети»), поэтому единственное, что он может вернуть, — ErrInvalidConfig, то
+// есть опечатку в настройках. Терпеть её нечем: приложение стартует, люди
+// регистрируются, письма копятся в email_outbox с ErrTransportUnconfigured, и
+// узнаём мы об этом от гейджа «возраст старейшего pending» — если кто-то за
+// ним смотрит. Письмо подтверждения И ЕСТЬ критический путь регистрации:
+// стартовавшее приложение, которое его не отправит, — это сломанная
+// регистрация с зелёным healthz (CONVENTIONS §2).
+//
+// mail.Unconfigured — не запасной вариант на негодный конфиг, а транспорт,
+// которого СОЗНАТЕЛЬНО нет (разработка без почтовика). Подставлять его сюда
+// значило бы стереть разницу между «решили не настраивать» и «настроили с
+// ошибкой».
+//
+// Ошибка mailotel.Wrap фатальна по той же причине и ещё тише: транспорт без
+// метрик теряет наблюдаемость ровно тогда, когда что-то не так, и молчит об
+// этом.
+func (a *App) transport() (mail.Transport, error) {
+	sender, err := smtp.New(a.cfg.SMTP)
 	if err != nil {
-		return next
+		return nil, err
 	}
-	return wrapped
+	return mailotel.Wrap(sender, a.obs.Meter.Meter("rebar.mail"))
 }
 
 // newWorker — воркер outbox с хендлерами под метриками и трейсом.
 //
 // Хендлер ОБЯЗАН БЫТЬ ИДЕМПОТЕНТНЫМ: доставка at-least-once, и Reclaimed
 // говорит, что прошлая попытка могла оставить эффект (outbox/ports.go).
-func (a *App) newWorker(store outbox.Store, cfg outbox.Config) *outbox.Worker {
+func (a *App) newWorker(store outbox.Store, cfg outbox.Config) (*outbox.Worker, error) {
 	handlers, err := outboxotel.New(a.obs.Meter.Meter("rebar.outbox"),
 		a.obs.Tracer.Tracer("rebar.outbox"), cfg)
 	if err != nil {
-		panic("monolith: инструменты outbox: " + err.Error())
+		return nil, err
 	}
 	handlers.Register(kindOrderPaid, outbox.HandlerFunc(a.onOrderPaid))
 	handlers.Register(kindOrderRefunded, outbox.HandlerFunc(a.onOrderRefunded))
 
-	worker, err := outbox.NewWorker(store, handlers.Registry(), cfg)
-	if err != nil {
-		panic("monolith: воркер outbox: " + err.Error())
-	}
-	return worker
+	return outbox.NewWorker(store, handlers.Registry(), cfg)
 }
 
 // absDir — абсолютный путь каталога файлов: objectstore/fs требует именно его,

@@ -57,9 +57,31 @@ func newStand(t *testing.T) *stand {
 // подменой внутренностей.
 func newStandWith(t *testing.T, overrides map[string]string) *stand {
 	t.Helper()
+	app, dsn := buildApp(t, overrides)
+
+	srv := httptest.NewServer(app.Handler())
+	t.Cleanup(srv.Close)
+
+	jar, err := cookiejar.New(nil)
+	require.NoError(t, err)
+	return &stand{app: app, srv: srv, client: &http.Client{Jar: jar}, dsn: dsn}
+}
+
+// buildApp собирает приложение и падает на ошибке сборки.
+func buildApp(t *testing.T, overrides map[string]string) (app *monolith.App, dsn string) {
+	t.Helper()
+	app, dsn, err := tryBuildApp(t, overrides)
+	require.NoError(t, err, "сборка приложения")
+	return app, dsn
+}
+
+// tryBuildApp — то же, но ошибку отдаёт вызывающему: часть тестов проверяет
+// ИМЕННО отказ на старте.
+func tryBuildApp(t *testing.T, overrides map[string]string) (app *monolith.App, dsn string, err error) {
+	t.Helper()
 	pgtest.Short(t)
 
-	dsn := schemaDSN(t)
+	dsn = schemaDSN(t)
 	env := map[string]string{
 		"DATABASE_URL": dsn,
 		"AUTH_SECRET":  testSecret,
@@ -75,18 +97,14 @@ func newStandWith(t *testing.T, overrides map[string]string) *stand {
 		v, ok := env[key]
 		return v, ok
 	}))
-	require.NoError(t, err, "конфиг прогона")
-
-	app, err := monolith.New(t.Context(), cfg, monolith.Migrations())
-	require.NoError(t, err, "сборка приложения")
+	if err != nil {
+		return nil, dsn, err
+	}
+	if app, err = monolith.New(t.Context(), cfg, monolith.Migrations()); err != nil {
+		return nil, dsn, err
+	}
 	t.Cleanup(func() { _ = app.Close(context.WithoutCancel(t.Context())) })
-
-	srv := httptest.NewServer(app.Handler())
-	t.Cleanup(srv.Close)
-
-	jar, err := cookiejar.New(nil)
-	require.NoError(t, err)
-	return &stand{app: app, srv: srv, client: &http.Client{Jar: jar}, dsn: dsn}
+	return app, dsn, nil
 }
 
 // schemaDSN — своя схема на тест и DSN с search_path в неё.
