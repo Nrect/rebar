@@ -136,7 +136,7 @@ func (s *Settler) grantAll(ctx context.Context, tx pgx.Tx, subjectID uuid.UUID,
 ) error {
 	store := s.grants.WithTx(tx)
 	for _, g := range sortedGrants(grants) {
-		if err := store.GrantAt(ctx, subjectID, g, entry.CreatedAt, SourcePurchase); err != nil {
+		if err := store.Grant(ctx, subjectID, g, entry.CreatedAt); err != nil {
 			return err
 		}
 	}

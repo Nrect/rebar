@@ -3,8 +3,6 @@ package monolith_test
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -21,7 +19,6 @@ import (
 	"github.com/nrect/rebar/auth/authhttp"
 	"github.com/nrect/rebar/auth/token"
 	"github.com/nrect/rebar/kit/config"
-	"github.com/nrect/rebar/postgres"
 	"github.com/nrect/rebar/postgres/pgtest"
 
 	"github.com/nrect/rebar/examples/monolith"
@@ -100,7 +97,7 @@ func tryBuildApp(t *testing.T, overrides map[string]string) (app *monolith.App, 
 	t.Helper()
 	pgtest.Short(t)
 
-	dsn = schemaDSN(t)
+	dsn = pgtest.SchemaDSN(t, db)
 	env := standEnv(t, dsn)
 	cfg, err := monolith.Load(loaderOf(env, overrides))
 	if err != nil {
@@ -128,26 +125,6 @@ func standEnv(t *testing.T, dsn string) map[string]string {
 	}
 }
 
-// schemaDSN — своя схема на тест и DSN с search_path в неё.
-//
-// Написан здесь, а не взят из pgtest: Schema отдаёт ПУЛ, а приложению нужна
-// строка соединения — оно поднимает пул само
-// (doc.go, «Что не сошлось: ждёт правки портов», п. 5).
-func schemaDSN(t *testing.T) string {
-	t.Helper()
-	buf := make([]byte, 8)
-	_, err := rand.Read(buf)
-	require.NoError(t, err)
-	name := "t" + hex.EncodeToString(buf)
-
-	_, err = db.Pool().Exec(t.Context(), "CREATE SCHEMA "+name)
-	require.NoError(t, err, "CREATE SCHEMA %s", name)
-
-	dsn, err := postgres.WithRuntimeParam(db.DSN(), "search_path", name)
-	require.NoError(t, err)
-	return dsn
-}
-
 // buildAppFromConfig собирает приложение с режимом транспорта, выставленным
 // РУКАМИ, минуя Loader.
 //
@@ -158,7 +135,7 @@ func buildAppFromConfig(t *testing.T, mode monolith.TransportMode) {
 	t.Helper()
 	pgtest.Short(t)
 
-	cfg := loadConfig(t, schemaDSN(t), nil)
+	cfg := loadConfig(t, pgtest.SchemaDSN(t, db), nil)
 	cfg.Transport = mode
 	app, err := monolith.New(t.Context(), cfg, monolith.Migrations())
 	require.NoError(t, err)

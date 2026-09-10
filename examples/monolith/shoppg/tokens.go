@@ -1,9 +1,7 @@
 package shoppg
 
 import (
-	"bytes"
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -71,10 +69,9 @@ func (t *Tokens) Issue(ctx context.Context, row session.OneTimeToken, n session.
 
 // enqueueLetter кладёт письмо той же транзакцией.
 //
-// ПОВТОР ПОД ТЕМ ЖЕ КЛЮЧОМ ПРОВЕРЯЕТСЯ ЗДЕСЬ РУКАМИ. mail.Service.Enqueue
-// сверяет отпечаток сам, но он ходит в пул, а нам нужна транзакция; функции
-// вроде outbox.CheckDuplicate у mail нет
-// (doc.go, «Что не сошлось: ждёт правки портов», п. 1).
+// ГРОМКАЯ ИДЕМПОТЕНТНОСТЬ: тот же ключ на другое письмо — отказ, а не тихий
+// no-op. Сверку делает mail.CheckDuplicate — та же, что внутри Service.Enqueue,
+// но доступная на транзакционном пути, где Service не годится: он ходит в пул.
 func (t *Tokens) enqueueLetter(ctx context.Context, tx pgx.Tx, n session.Notification) error {
 	env, ok, err := t.letter(n)
 	if err != nil {
@@ -87,18 +84,8 @@ func (t *Tokens) enqueueLetter(ctx context.Context, tx pgx.Tx, n session.Notific
 	if err != nil {
 		return err
 	}
-	if res.Outcome == mail.OutcomeDuplicate && !sameLetter(res.Envelope.Fingerprint, env.Fingerprint) {
-		// Ни ключа, ни темы в тексте: ключ выводится из токена, тема — содержимое.
-		return fmt.Errorf("%w: kind %q", mail.ErrKeyReused, env.Kind)
-	}
-	return nil
-}
-
-// sameLetter — законный ли повтор. Пустой сохранённый отпечаток повтором не
-// считается: адаптер, потерявший колонку, иначе превращал бы любое письмо под
-// тем же ключом в «уже в очереди».
-func sameLetter(stored, current []byte) bool {
-	return len(stored) > 0 && bytes.Equal(stored, current)
+	_, err = mail.CheckDuplicate(env, res)
+	return err
 }
 
 // Consume гасит токен и применяет эффект назначения ОДНОЙ транзакцией.

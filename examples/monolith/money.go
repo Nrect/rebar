@@ -36,7 +36,6 @@ func (a *App) startMoney(ctx context.Context) error {
 		return err
 	}
 
-	a.payStore = store
 	a.provider = paymenttest.NewMemProvider(providerName)
 	a.pay = payment.NewService(store, a.provider, payment.Config{
 		Currency:          currency,
