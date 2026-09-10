@@ -60,11 +60,14 @@ func (a *App) startPayment(r *http.Request, subject uuid.UUID, product Product,
 	key string,
 ) (payment.StartResult, payment.Reason, error) {
 	ctx := r.Context()
-	// ПОВТОР ПОД ТЕМ ЖЕ КЛЮЧОМ НЕ ЗАВОДИТ ВТОРОЙ ЗАКАЗ. Проверка идёт мимо
-	// payment.Service: читающих методов у него нет вовсе, и намерение по
-	// ключу приходится спрашивать у стора напрямую
-	// (doc.go, «Что не сошлось: ждёт правки портов», п. 2).
-	if in, found, err := a.payStore.IntentByKey(ctx, subject, key); err == nil && found {
+	// ПОВТОР ПОД ТЕМ ЖЕ КЛЮЧОМ НЕ ЗАВОДИТ ВТОРОЙ ЗАКАЗ: без этой пробы
+	// повтор из другой вкладки создал бы вторую строку заказа, а Start вернул
+	// бы прежнее намерение с прежним Reference — заказ-сирота навсегда.
+	//
+	// Ключ нормализует сам IntentByKey, как и Start: две точки нормализации —
+	// это два ключа, и забывший нормализовать получил бы «намерения нет» на
+	// живом намерении.
+	if in, found, err := a.pay.IntentByKey(ctx, subject, key); err == nil && found {
 		return payment.StartResult{Intent: in}, "", nil
 	}
 	order := shoppg.Order{

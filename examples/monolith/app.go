@@ -57,7 +57,6 @@ type App struct {
 	worker   *outbox.Worker
 
 	pay       *payment.Service
-	payStore  payment.Store
 	reconcile *payment.Reconciler
 	provider  *paymenttest.MemProvider
 
