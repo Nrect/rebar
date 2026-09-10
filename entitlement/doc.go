@@ -89,9 +89,14 @@
 //	    item_id    text        NOT NULL,
 //	    expires_at timestamptz,           -- NULL — бессрочно
 //	    granted_at timestamptz NOT NULL,  -- момент из Store.Grant(…, at)
-//	    source     text        NOT NULL,  -- заказ, промо, ручная выдача
 //	    CONSTRAINT ux_entitlement_grants_subject_item PRIMARY KEY (subject_id, item_id)
 //	);
+//
+// СХЕМА ПОКРЫВАЕТ ТОЛЬКО ТО, ЧТО ПИШЕТ ПОРТ; свои колонки потребитель
+// добавляет сам. Колонка, которую порт заполнить не может, — противоречие, а
+// не подсказка: так здесь стоял source (заказ, промо, ручная выдача) —
+// NOT NULL, а взять значение неоткуда, потому что основание выдачи знает
+// только потребитель. Значение принадлежит ему — значит и колонка тоже.
 //
 // Store.Open читается префиксом первичного ключа
 // (WHERE subject_id = $1 AND (expires_at IS NULL OR expires_at > $2)),
