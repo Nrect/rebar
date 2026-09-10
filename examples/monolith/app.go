@@ -147,6 +147,11 @@ func (a *App) CookieNames() (sessionCookie, csrfCookie string) {
 	return a.cookies.Name, a.cookies.CSRFName
 }
 
+// Transport — имя транспорта, с которым собрана почта. Имя, а не тип:
+// декоратор метрик пробрасывает Name(), тип — нет, и Deliver узнаёт
+// Unconfigured именно по имени (mail/unconfigured.go).
+func (a *App) Transport() mail.TransportName { return a.letters.Transport() }
+
 // Jobs — планировщик фоновых задач.
 func (a *App) Jobs() *scheduler.Scheduler { return a.jobs }
 

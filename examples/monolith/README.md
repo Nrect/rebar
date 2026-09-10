@@ -16,6 +16,10 @@ GOWORK=off go run ./cmd/monolith
 Миграции накатываются на старте (goose, каталог `migrations/`), схемы адаптеров
 там лежат как есть и сверяются `CheckSchema`.
 
+Без почтовика: `SMTP_TRANSPORT=unconfigured` — письма копятся в очереди и
+честно падают с `ErrTransportUnconfigured`. Это выбор, а не запасной вариант:
+опечатка в настройках SMTP роняет старт.
+
 ## Смотреть
 
 - `http://localhost:8025` — Mailpit: письма со ссылками подтверждения и оплаты;
