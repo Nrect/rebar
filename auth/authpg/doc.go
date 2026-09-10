@@ -15,8 +15,10 @@
 // у него. Это около двадцати пяти строк поверх postgres.Runner:
 //
 //	type tokens struct {
-//		run *postgres.Runner
-//		pg  *authpg.Tokens
+//		run  *postgres.Runner
+//		pg   *authpg.Tokens
+//		mail *mail.Service   // шаблоны и адреса — его дело
+//		box  *mailpg.Store   // очередь писем, тот же пул
 //	}
 //
 //	func (t *tokens) Issue(ctx context.Context, row session.OneTimeToken, n session.Notification) error {
@@ -27,11 +29,11 @@
 //			if err := t.pg.WithTx(tx).Insert(ctx, row); err != nil {
 //				return err
 //			}
-//			env, err := mail.Prepare(letterOf(n)) // шаблон и адрес — его дело
+//			env, err := t.mail.Prepare(letterOf(n))
 //			if err != nil {
 //				return err
 //			}
-//			_, err = t.outbox.WithTx(tx).Enqueue(ctx, env) // письмо тем же коммитом
+//			_, err = t.box.WithTx(tx).Enqueue(ctx, env) // письмо тем же коммитом
 //			return err
 //		})
 //	}
