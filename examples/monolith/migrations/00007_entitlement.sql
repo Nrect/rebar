@@ -28,8 +28,7 @@ CREATE TABLE entitlement_grants (
     subject_id uuid        NOT NULL,
     item_id    text        NOT NULL,
     expires_at timestamptz,           -- NULL — бессрочно
-    granted_at timestamptz NOT NULL,  -- время параметром, не DEFAULT now()
-    source     text        NOT NULL,  -- заказ, промо, ручная выдача
+    granted_at timestamptz NOT NULL,  -- момент из Store.Grant(…, at)
     CONSTRAINT ux_entitlement_grants_subject_item PRIMARY KEY (subject_id, item_id)
 );
 

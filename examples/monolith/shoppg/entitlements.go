@@ -30,21 +30,13 @@ ORDER BY item_id`
 	// ON CONFLICT именно по имени ключа: «любое 23505 — продление» тихо съело
 	// бы чужой конфликт.
 	upsertGrantSQL = `INSERT INTO entitlement_grants
-(subject_id, item_id, expires_at, granted_at, source)
-VALUES ($1, $2, $3, $4, $5)
+(subject_id, item_id, expires_at, granted_at)
+VALUES ($1, $2, $3, $4)
 ON CONFLICT ON CONSTRAINT ` + uxGrants + ` DO UPDATE
-SET expires_at = EXCLUDED.expires_at, granted_at = EXCLUDED.granted_at, source = EXCLUDED.source`
+SET expires_at = EXCLUDED.expires_at, granted_at = EXCLUDED.granted_at`
 
 	deleteGrantSQL = `DELETE FROM entitlement_grants WHERE subject_id = $1 AND item_id = $2`
 )
-
-// sourcePurchase — значение колонки source эталонной схемы.
-//
-// КОНСТАНТА, А НЕ ПАРАМЕТР, и это вынужденно: колонка объявлена NOT NULL с
-// комментарием «заказ, промо, ручная выдача», но у порта Store.Grant места
-// под неё нет. Все выдачи этого примера приходят от оплаты, поэтому здесь
-// значение честное; потребителю с промо и ручными выдачами колонка врала бы.
-const sourcePurchase = "purchase"
 
 // Entitlements — entitlement.Store поверх эталонной схемы.
 //
@@ -125,7 +117,7 @@ func (s *Entitlements) Grant(ctx context.Context, subjectID uuid.UUID,
 		moment := g.ExpiresAt.UTC()
 		expires = &moment
 	}
-	_, err := s.db.Exec(ctx, upsertGrantSQL, subjectID, g.ItemID, expires, utc(at), sourcePurchase)
+	_, err := s.db.Exec(ctx, upsertGrantSQL, subjectID, g.ItemID, expires, utc(at))
 	return storeError("выдача права", err)
 }
 
