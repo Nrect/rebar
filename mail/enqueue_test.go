@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -92,4 +93,76 @@ func TestEnqueue_InvalidMessageDoesNotReachStore(t *testing.T) {
 		})
 	}
 	assert.Empty(t, h.store.Rows())
+}
+
+// Транзакционный путь: Prepare, чужая вставка, CheckDuplicate сразу за ней.
+// Тот же отпечаток — законный повтор, и результат стора проходит как есть.
+func TestCheckDuplicate_SameFingerprintPasses(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, false, nil)
+
+	env, err := h.svc.Prepare(validMessage())
+	require.NoError(t, err)
+
+	stored := env
+	stored.ID = uuid.New() // строка уже лежала: id у неё свой
+	res, err := mail.CheckDuplicate(env, mail.EnqueueResult{
+		Outcome: mail.OutcomeDuplicate, Envelope: stored,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, mail.OutcomeDuplicate, res.Outcome)
+	assert.Equal(t, stored.ID, res.Envelope.ID, "возвращена существующая строка")
+}
+
+// Тот же ключ на другое письмо — громко и на транзакционном пути тоже.
+func TestCheckDuplicate_DifferentFingerprintIsKeyReused(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, false, nil)
+
+	env, err := h.svc.Prepare(validMessage())
+	require.NoError(t, err)
+
+	other := validMessage()
+	other.Text = "Ссылка: https://example.ru/verify?token=OTHER"
+	stored, err := h.svc.Prepare(other)
+	require.NoError(t, err)
+
+	_, err = mail.CheckDuplicate(env, mail.EnqueueResult{
+		Outcome: mail.OutcomeDuplicate, Envelope: stored,
+	})
+	require.ErrorIs(t, err, mail.ErrKeyReused)
+	assert.NotContains(t, err.Error(), "token", "в ошибке нет содержимого письма")
+	assert.NotContains(t, err.Error(), "verify:abc", "в ошибке нет ключа")
+}
+
+// Пустой сохранённый отпечаток повтором не считается: адаптер, потерявший
+// колонку, иначе превращал бы любое письмо под тем же ключом в «уже в очереди».
+func TestCheckDuplicate_EmptyStoredFingerprintIsRefused(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, false, nil)
+
+	env, err := h.svc.Prepare(validMessage())
+	require.NoError(t, err)
+
+	stored := env
+	stored.Fingerprint = nil
+	_, err = mail.CheckDuplicate(env, mail.EnqueueResult{
+		Outcome: mail.OutcomeDuplicate, Envelope: stored,
+	})
+	require.ErrorIs(t, err, mail.ErrKeyReused)
+}
+
+// Вставка — не повтор: отпечаток чужой строки не сверяется вовсе.
+func TestCheckDuplicate_InsertedPassesWithoutComparison(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, false, nil)
+
+	env, err := h.svc.Prepare(validMessage())
+	require.NoError(t, err)
+
+	res, err := mail.CheckDuplicate(env, mail.EnqueueResult{
+		Outcome: mail.OutcomeInserted, Envelope: env,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, mail.OutcomeInserted, res.Outcome)
 }
