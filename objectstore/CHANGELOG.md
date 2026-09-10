@@ -5,6 +5,8 @@
 
 ## Unreleased
 
+## [0.1.0] — 2026-09-10
+
 ### Added
 - Каркас пакета по [ADR-0006](../docs/adr/0006-objectstore.md): порт `Store`
   (`Put`/`Delete`/`List`/`Presign`/`PublicURL`), порт `Owned`, закрытые наборы

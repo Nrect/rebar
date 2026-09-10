@@ -5,6 +5,8 @@
 
 ## Unreleased
 
+## [0.1.0] — 2026-09-10
+
 ### Added
 - Ядро на stdlib: `Subject` (реалм и идентификатор; нулевое значение — аноним
   и отказ), `Role`, `Permission`, `Operation`, `Resource`, закрытый набор

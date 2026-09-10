@@ -5,6 +5,8 @@
 
 ## Unreleased
 
+## [0.1.0] — 2026-09-10
+
 ### Security
 - Пин indirect-зависимостей `golang.org/x/crypto` v0.56.0 и
   `github.com/moby/go-archive` v0.3.0: на версиях, которые тянули pgx и

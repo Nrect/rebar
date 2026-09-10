@@ -5,6 +5,8 @@
 
 ## Unreleased
 
+## [0.1.0] — 2026-09-10
+
 ### Added
 - Ядро на stdlib и `uuid`: `Grant` (`ItemID` и `ExpiresAt *time.Time`, где
   `nil` — бессрочно), `Decision` с закрытым набором `Reason`

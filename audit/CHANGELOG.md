@@ -5,6 +5,8 @@
 
 ## Unreleased
 
+## [0.1.0] — 2026-09-10
+
 ### Added
 - Каркас ядра: типы (`Action`, `Outcome`, `ActorKind`, `Actor`, `Target`,
   `Entry`, `Event`) с закрытыми наборами `AllOutcomes` и `AllActorKinds` и
