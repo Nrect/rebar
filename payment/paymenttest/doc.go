@@ -17,6 +17,8 @@
 //     ProviderEventID (вебхук и сверка дедуплицируются друг с другом), холды
 //     через Capture/Cancel либо ErrUnsupported при NoHolds, RejectFor и FailFor
 //     по Reference.
+//   - Observer — payment.Observer: запоминает исходы по порядку, Outcomes
+//     отдаёт копию.
 //   - Clock — управляемые часы для payment.Service.SetClock.
 //
 // Двойника, который постит НАСТОЯЩИЙ вебхук по HTTP, здесь нет: он живёт рядом

@@ -63,6 +63,13 @@ type StartResult struct {
 // ErrIdempotencyKeyReused. Reason возвращается всегда, в том числе вместе с
 // ошибкой: вызывающий метит им метрику, не разбирая ошибку по типам.
 func (s *Service) Start(ctx context.Context, req StartRequest) (StartResult, Reason, error) {
+	res, reason, err := s.start(ctx, req)
+	s.obs.Outcome(ctx, OpStart, reason)
+	return res, reason, err
+}
+
+// start — тело Start; исход отдаёт наблюдателю обёртка, одна на все пути.
+func (s *Service) start(ctx context.Context, req StartRequest) (StartResult, Reason, error) {
 	key, err := NormalizeKey(req.IdempotencyKey)
 	if err != nil {
 		return StartResult{}, ReasonKeyInvalid, err

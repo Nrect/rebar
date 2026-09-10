@@ -182,8 +182,9 @@ func TestWrap_NameIsPassedThroughAndNotCounted(t *testing.T) {
 	assert.Empty(t, callPoints(t, collect(t, reader)), "Name счётчик не трогает")
 }
 
-// Декоратор подставляется вместо порта: сервис собирается на нём, имя проходит
-// проверку формы, а классы ошибок доезжают до Reason ядра.
+// Декоратор и наблюдатель подставляются вместо портов: сервис собирается на
+// них, имя проходит проверку формы, классы ошибок доезжают до Reason ядра, а
+// исходы — до payments_total.
 func TestWrap_DropsInForThePort(t *testing.T) {
 	t.Parallel()
 	reader, meter := newMeter(t)
@@ -191,7 +192,9 @@ func TestWrap_DropsInForThePort(t *testing.T) {
 	prov.RejectFor["order-rejected"] = true
 	p, err := paymentotel.Wrap(prov, meter)
 	require.NoError(t, err)
-	svc := payment.NewService(paymenttest.NewMemStore(), p, serviceConfig())
+	obs, err := paymentotel.NewObserver(meter)
+	require.NoError(t, err)
+	svc := payment.NewService(paymenttest.NewMemStore(), p, obs, serviceConfig())
 	svc.SetClock(paymenttest.NewClock(time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)).Now)
 	ctx := context.Background()
 
@@ -220,6 +223,10 @@ func TestWrap_DropsInForThePort(t *testing.T) {
 	assert.Equal(t, int64(1), callCount(t, ms, paymentotel.CallCreatePayment, paymentotel.ResultRejected))
 	assert.Equal(t, int64(1), callCount(t, ms, paymentotel.CallParseWebhook, paymentotel.ResultRejected))
 	assert.Equal(t, int64(1), callCount(t, ms, paymentotel.CallParseWebhook, paymentotel.ResultError))
+	assert.Equal(t, int64(1), outcomeCount(t, ms, payment.OpStart, payment.ReasonCreated))
+	assert.Equal(t, int64(1), outcomeCount(t, ms, payment.OpStart, payment.ReasonProviderRejected))
+	assert.Equal(t, int64(1), outcomeCount(t, ms, payment.OpWebhook, payment.ReasonSignatureInvalid))
+	assert.Equal(t, int64(1), outcomeCount(t, ms, payment.OpWebhook, payment.ReasonProviderError))
 }
 
 // Таймаут — главный источник error, и ctx к моменту записи уже отменён: вызов

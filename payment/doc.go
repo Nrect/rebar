@@ -90,15 +90,18 @@
 //
 // # Наблюдаемость
 //
-// Метка исхода у всех операций одна — Reason из закрытого набора (AllReasons):
-// кардинальность не растёт ни от каталога, ни от текстов провайдера.
+// Исход каждой операции уходит порту Observer — обязательной зависимости
+// NewService: op из AllOps, reason из AllReasons, и кардинальность не растёт ни
+// от каталога, ни от текстов провайдера. Кому метрики не нужны — LogObserver, а
+// не nil: забытый наблюдатель молчал бы ровно на денежных алертах.
 //
-//	payments_total{op,reason}      счётчик исходов Start/HandleWebhook/Capture/Refund
-//	payment_intents_stuck          gauge, CountStuckPending: вебхуки перестали доходить
-//	payment_drift{kind}            gauge, Drift: деньги и учёт разошлись, порог алерта 1
+//	payments_total{op,reason}            исходы Start/HandleWebhook/Capture/Cancel/Refund/Reconcile (paymentotel.NewObserver)
+//	payment_provider_calls{type,result}  вызовы провайдера (paymentotel.Wrap)
+//	payment_intents_stuck                gauge, CountStuckPending: вебхуки перестали доходить
+//	payment_drift{kind}                  gauge, Drift: деньги и учёт разошлись, порог алерта 1
 //
 // Алерты с порогом 1: reason=status_conflict (деньги на закрытом намерении),
 // reason=amount_mismatch (провайдер назвал не ту сумму), любой payment_drift.
-// Парный к ним — «оплат нет вовсе»: gauge зависших ночью тоже ноль, и без
-// парного алерта тишина неотличима от поломки.
+// Парный к ним — «оплат нет вовсе» по payments_total{reason="settled"}: gauge
+// зависших ночью тоже ноль, и без парного алерта тишина неотличима от поломки.
 package payment

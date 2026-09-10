@@ -54,7 +54,7 @@ func TestNewService_PanicsOnBadConfig(t *testing.T) {
 			cfg := validConfig()
 			tc.tweak(&cfg)
 
-			assert.PanicsWithValue(t, tc.want, func() { payment.NewService(store, prov, cfg) })
+			assert.PanicsWithValue(t, tc.want, func() { payment.NewService(store, prov, paymenttest.NewObserver(), cfg) })
 		})
 	}
 }
@@ -68,7 +68,7 @@ func TestNewService_MaxAmountAtMoneyCapIsAllowed(t *testing.T) {
 	cfg.MaxAmountMinor = payment.MaxMoneyMinor
 
 	assert.NotPanics(t, func() {
-		payment.NewService(paymenttest.NewMemStore(), paymenttest.NewMemProvider("memprov"), cfg)
+		payment.NewService(paymenttest.NewMemStore(), paymenttest.NewMemProvider("memprov"), paymenttest.NewObserver(), cfg)
 	})
 }
 
@@ -77,17 +77,24 @@ func TestNewService_PanicsOnBadPorts(t *testing.T) {
 
 	store := paymenttest.NewMemStore()
 	prov := paymenttest.NewMemProvider("memprov")
+	obs := paymenttest.NewObserver()
 
 	assert.PanicsWithValue(t, "payment.NewService: store must not be nil", func() {
-		payment.NewService(nil, prov, validConfig())
+		payment.NewService(nil, prov, obs, validConfig())
 	})
 	assert.PanicsWithValue(t, "payment.NewService: provider must not be nil", func() {
-		payment.NewService(store, nil, validConfig())
+		payment.NewService(store, nil, obs, validConfig())
+	})
+	// Наблюдатель — не опция: забытый дал бы молчание ровно на денежных алертах.
+	assert.PanicsWithValue(t, "payment.NewService: observer must not be nil", func() {
+		payment.NewService(store, prov, nil, validConfig())
 	})
 	assert.PanicsWithValue(t, "payment.NewService: provider.Name() must match [a-z0-9_]{1,32}", func() {
-		payment.NewService(store, paymenttest.NewMemProvider("YooKassa"), validConfig())
+		payment.NewService(store, paymenttest.NewMemProvider("YooKassa"), obs, validConfig())
 	})
-	assert.NotPanics(t, func() { payment.NewService(store, prov, validConfig()) })
+	assert.NotPanics(t, func() { payment.NewService(store, prov, obs, validConfig()) })
+	assert.NotPanics(t, func() { payment.NewService(store, prov, payment.LogObserver(nil), validConfig()) },
+		"без метрик — явный LogObserver")
 }
 
 // Пустой набор способов законен и означает «способ выбирает плательщик у

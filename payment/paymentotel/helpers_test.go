@@ -19,12 +19,14 @@ import (
 // Имена и единицы инструментов — контракт для алертов потребителя, поэтому
 // тест держит их литералами, а не константами пакета.
 const (
-	callsName = "payment_provider_calls"
-	stuckName = "payment_intents_stuck"
-	driftName = "payment_drift"
+	callsName    = "payment_provider_calls"
+	outcomesName = "payments"
+	stuckName    = "payment_intents_stuck"
+	driftName    = "payment_drift"
 
-	unitCall   = "{call}"
-	unitIntent = "{intent}"
+	unitCall      = "{call}"
+	unitOperation = "{operation}"
+	unitIntent    = "{intent}"
 )
 
 // noKind — ключ ряда расхождений без метки: род вне закрытого набора.
@@ -207,6 +209,35 @@ func callCount(t *testing.T, ms []metricdata.Metrics, typ paymentotel.CallType, 
 		attribute.String("result", string(result)),
 	)
 	for _, dp := range callPoints(t, ms) {
+		if dp.Attributes.Equals(&want) {
+			return dp.Value
+		}
+	}
+	return 0
+}
+
+// outcomePoints — точки счётчика исходов; пусто, если наблюдателя не собирали.
+func outcomePoints(t *testing.T, ms []metricdata.Metrics) []metricdata.DataPoint[int64] {
+	t.Helper()
+	m, ok := findMetric(ms, outcomesName)
+	if !ok {
+		return nil
+	}
+	require.Equal(t, unitOperation, m.Unit)
+	sum, ok := m.Data.(metricdata.Sum[int64])
+	require.True(t, ok, "%s обязан быть Int64Counter", outcomesName)
+	require.True(t, sum.IsMonotonic, "%s обязан быть счётчиком, а не UpDown", outcomesName)
+	return sum.DataPoints
+}
+
+// outcomeCount — значение счётчика исходов по паре меток; ноль, если пары нет.
+func outcomeCount(t *testing.T, ms []metricdata.Metrics, op payment.Op, reason payment.Reason) int64 {
+	t.Helper()
+	want := attribute.NewSet(
+		attribute.String("op", string(op)),
+		attribute.String("reason", string(reason)),
+	)
+	for _, dp := range outcomePoints(t, ms) {
 		if dp.Attributes.Equals(&want) {
 			return dp.Value
 		}

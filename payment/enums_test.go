@@ -28,6 +28,7 @@ var closedSets = map[string][]string{
 	"ConfirmationType": strs(payment.AllConfirmationTypes),
 	"ApplyOutcome":     strs(payment.AllOutcomes),
 	"DriftKind":        strs(payment.AllDriftKinds),
+	"Op":               strs(payment.AllOps),
 }
 
 // TestClosedSetsAreComplete — страж закрытых наборов: КАЖДАЯ объявленная в

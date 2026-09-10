@@ -71,6 +71,13 @@ func (s *Service) Drift(ctx context.Context, limit int) ([]DriftRecord, error) {
 // ценность — восстановление потерянного вебхука: человек заплатил, событие до
 // нас не доехало, и без сверки он ждал бы вечно.
 func (s *Service) Reconcile(ctx context.Context, intentID uuid.UUID) (Reason, error) {
+	reason, err := s.reconcile(ctx, intentID)
+	s.obs.Outcome(ctx, OpReconcile, reason)
+	return reason, err
+}
+
+// reconcile — тело Reconcile; исход отдаёт наблюдателю обёртка.
+func (s *Service) reconcile(ctx context.Context, intentID uuid.UUID) (Reason, error) {
 	intent, found, err := s.store.IntentByID(ctx, intentID)
 	if err != nil {
 		return ReasonStoreError, fmt.Errorf("%w: load intent: %w", ErrUnavailable, err)

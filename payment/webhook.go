@@ -36,6 +36,13 @@ type WebhookResult struct {
 // провайдера ретраить вечно то, что уже учтено, — и после серии неуспехов
 // провайдеры отключают приёмник, то есть перестают доходить и нужные события.
 func (s *Service) HandleWebhook(ctx context.Context, req WebhookRequest) (WebhookResult, Reason, error) {
+	res, reason, err := s.handleWebhook(ctx, req)
+	s.obs.Outcome(ctx, OpWebhook, reason)
+	return res, reason, err
+}
+
+// handleWebhook — тело HandleWebhook; исход отдаёт наблюдателю обёртка.
+func (s *Service) handleWebhook(ctx context.Context, req WebhookRequest) (WebhookResult, Reason, error) {
 	// Подлинность проверяется первой и БЕЗ похода в БД: неподтверждённый запрос
 	// не должен стоить нам ни одного соединения из пула.
 	ev, err := s.provider.ParseWebhook(ctx, req)

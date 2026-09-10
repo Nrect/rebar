@@ -1,12 +1,14 @@
 // Package paymentotel — наблюдаемость платежей на OpenTelemetry metric API:
-// декоратор payment.Provider со счётчиком payment_provider_calls{type,result}
-// и Gauges — два observable gauge, читающих снимок сверки.
+// декоратор payment.Provider со счётчиком payment_provider_calls{type,result},
+// payment.Observer со счётчиком payments{op,reason} и Gauges — два observable
+// gauge, читающих снимок сверки.
 //
 // Ядро метрик не пишет и otel не импортирует (CONVENTIONS §6); зависимость
 // живёт здесь. Meter — rebar.payment. Собирается так:
 //
 //	p, err := paymentotel.Wrap(provider, meter)
-//	svc := payment.NewService(store, p, cfg)
+//	obs, err := paymentotel.NewObserver(meter)
+//	svc := payment.NewService(store, p, obs, cfg)
 //	g, err := paymentotel.NewGauges(meter)
 //	// после каждого прогона сверки:
 //	stuck, err := svc.CountStuckPending(ctx)
@@ -18,13 +20,18 @@
 //
 //	| Метрика                             | Тип          | Что |
 //	|-------------------------------------|--------------|-----|
+//	| payments{op,reason}                 | counter      | исход каждой операции сервиса; все пары AllOps × AllReasons заводятся нулём |
 //	| payment_provider_calls{type,result} | counter      | вызовы провайдера: ok / rejected (ответил определённо) / error (ответа нет) |
 //	| payment_intents_stuck               | gauge        | незакрытые намерения старше Config.StalePendingAfter — деньги в подвешенном состоянии |
 //	| payment_drift{kind}                 | gauge        | расхождения книг по роду из payment.AllDriftKinds |
 //	| cron_*{job="payments_reconcile"}    | из scheduler | прогоны сверки, длительность, последний успех |
 //
-// Prometheus-экспортёр припишет счётчику _total. Алерты:
+// Prometheus-экспортёр припишет счётчикам _total. Алерты:
 //
+//   - «деньги на закрытом намерении» — рост payments_total{reason="status_conflict"},
+//     порог 1;
+//   - «провайдер назвал не ту сумму» — рост payments_total{reason="amount_mismatch"},
+//     порог 1;
 //   - «расхождение книг» — payment_drift > 0, порог 1, разбор обязателен;
 //   - «намерения зависли» — payment_intents_stuck > 0 пятнадцать минут;
 //   - «провайдер недоступен» — доля result="error" выше нескольких процентов
@@ -34,10 +41,11 @@
 //
 // Безопасность:
 //
-//  1. МЕТКИ — ЗАКРЫТЫЕ НАБОРЫ: type из AllCallTypes, result из AllResults,
-//     kind из payment.AllDriftKinds. Сумма, валюта, id намерения, ссылка
-//     заказа и текст ошибки меткой не становятся: это кардинальность и данные
-//     в мониторинге, откуда их не удалить по требованию субъекта.
+//  1. МЕТКИ — ЗАКРЫТЫЕ НАБОРЫ: op из payment.AllOps, reason из
+//     payment.AllReasons, type из AllCallTypes, result из AllResults, kind из
+//     payment.AllDriftKinds. Сумма, валюта, id намерения, ссылка заказа и текст
+//     ошибки меткой не становятся: это кардинальность и данные в мониторинге,
+//     откуда их не удалить по требованию субъекта.
 //  2. ДЕКОРАТОР НЕ ЧИТАЕТ ЗАПРОС И НИЧЕГО НЕ ЛОГИРУЕТ: из вызова берутся метод
 //     и класс ошибки; тело вебхука, чек и ключи уходят в next и никуда больше.
 //  3. ОТВЕТ И ОШИБКА NEXT — БЕЗ ИЗМЕНЕНИЙ: сервис ветвится по errors.Is, и
@@ -58,12 +66,14 @@
 //  8. FAIL CLOSED НА СБОРКЕ: nil-порт и nil-метр — паника на старте; ошибка
 //     создания инструмента возвращается — метрик у потребителя может не быть,
 //     а платежи нужны.
+//  9. РЯДЫ ИСХОДОВ РОЖДАЮТСЯ НУЛЁМ: ряд, появившийся сразу единицей,
+//     increase() не видит, а у двух денежных алертов порог 1 — первое событие
+//     и есть тревога.
 //
 // Чего нет (решения, не пробелы): метки provider — у Service провайдер один,
 // и метка была бы константой; гистограммы длительности — долгий вызов режет
 // таймаут адаптера, и он приходит в счётчик как error; трейсов — вызов идёт
-// под span'ом ручки вебхука или задания сверки потребителя; счётчика исходов
-// по Reason — Reason вычисляет Service после вызова порта, декоратору его не
-// видно; автообновления снимка — Gauges в базу не ходит; выбора имён
-// инструментов — на них стоят чужие алерты.
+// под span'ом ручки вебхука или задания сверки потребителя; автообновления
+// снимка — Gauges в базу не ходит; выбора имён инструментов — на них стоят
+// чужие алерты.
 package paymentotel

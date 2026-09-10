@@ -51,6 +51,13 @@ type RefundResult struct {
 // поход денег второй раз не двигает, а вставка записи защищена уникальным
 // ключом строки книги.
 func (s *Service) Refund(ctx context.Context, req RefundRequest) (RefundResult, Reason, error) {
+	res, reason, err := s.refund(ctx, req)
+	s.obs.Outcome(ctx, OpRefund, reason)
+	return res, reason, err
+}
+
+// refund — тело Refund; исход отдаёт наблюдателю обёртка.
+func (s *Service) refund(ctx context.Context, req RefundRequest) (RefundResult, Reason, error) {
 	key, err := NormalizeKey(req.IdempotencyKey)
 	if err != nil {
 		return RefundResult{}, ReasonKeyInvalid, err

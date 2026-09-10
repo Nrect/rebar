@@ -20,6 +20,22 @@
   вне `AllDriftKinds` идёт рядом без метки. otel стал прямой зависимостью
   модуля; ядро его по-прежнему не импортирует, а белый список стража для
   `paymentotel` сужен до `otel/metric` и `otel/attribute`.
+- Порт `Observer` (`Outcome(ctx, op, reason)`) и закрытый набор `Op` с
+  `AllOps` (`start`, `webhook`, `capture`, `cancel`, `refund`, `reconcile`):
+  сервис отдаёт наблюдателю исход КАЖДОЙ публичной операции, на успехе и на
+  ошибке, с тем же `Reason`, что вернул вызывающему. `LogObserver(l)` — явный
+  выбор того, кому метрики не нужны: тревоги с порогом 1 (`status_conflict`,
+  `amount_mismatch`) в Error, остальное в Debug. Двойник
+  `paymenttest.Observer`. `paymentotel.NewObserver(meter)` — счётчик
+  `payments_total{op,reason}`; все пары `AllOps × AllReasons` заводятся нулём
+  при сборке, иначе первый инкремент ряда не виден `increase()`, а у двух
+  денежных алертов порог 1. Обещание `payment/doc.go` про `payments_total`
+  стало правдой.
+
+### Changed
+- **Ломающее:** `NewService(store, provider, obs, cfg)` — наблюдатель стал
+  обязательной зависимостью, nil — паника. Не поле `Config` и не
+  `SetObserver`: забытый вызов дал бы молчание ровно на денежных алертах.
 
 ### Fixed
 - Вебхук: неклассифицированная ошибка `ParseWebhook` уходила в
