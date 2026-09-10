@@ -29,7 +29,8 @@ var ErrAccessDenied = errors.New("monolith: access denied by authz")
 // Отличается от ErrAccessDenied только тем, что решение сузила вторая ось, а
 // не роль. ПОЧЕМУ именно сузила — «купил и кончилось» или «не покупал» — сюда
 // не доезжает: authz.Policy возвращает bool, и Reason самого entitlement
-// теряется на границе (doc.go, «Что не сошлось»).
+// теряется на границе. ОБХОД ПОСТОЯННЫЙ, не снимать при сходе портов
+// (doc.go, «Что не сошлось», п. 4).
 var ErrItemNotOpen = errors.New("monolith: item is not open to subject")
 
 // denialOf — какой отказ отдать по решению authz.

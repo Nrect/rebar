@@ -9,6 +9,29 @@ import (
 	"github.com/nrect/rebar/mail/smtp"
 )
 
+// TransportMode — какой транспорт почты собирать. ЗАКРЫТЫЙ НАБОР: значение
+// ветвит сборку и доходит до метки метрики транспорта.
+//
+// НУЛЕВОЕ ЗНАЧЕНИЕ — ОТКАЗ, а не «без транспорта»: иначе забытая переменная
+// молча означала бы «писем не шлём», то есть мы вернули бы проглатывание
+// ошибки конфигурации через другую дверь (CONVENTIONS §2).
+type TransportMode string
+
+const (
+	// TransportSMTP — настоящий SMTP. Умолчание: стенд без почтовика — это
+	// выбор, а не то, что достаётся забывшему про переменную.
+	TransportSMTP TransportMode = "smtp"
+	// TransportUnconfigured — транспорта СОЗНАТЕЛЬНО нет: стенд без почтовика.
+	// Письма копятся в очереди и честно падают с ErrTransportUnconfigured,
+	// попытки при этом не тратятся (mail/unconfigured.go).
+	//
+	// Это НЕ запасной вариант на негодный конфиг SMTP: тот роняет старт.
+	TransportUnconfigured TransportMode = "unconfigured"
+)
+
+// AllTransportModes — полный список; держит guard-тест.
+var AllTransportModes = []TransportMode{TransportSMTP, TransportUnconfigured}
+
 // Config — всё, что приложение читает из окружения. Нулевое значение
 // непригодно: New паникует, а Load собирает ошибки и отдаёт их разом — пять
 // перезапусков подряд ради пяти забытых переменных это пять инцидентов.
@@ -27,8 +50,10 @@ type Config struct {
 	Version string
 	Commit  string
 
-	SMTP     smtp.Config
-	MailFrom string
+	// Transport — какой транспорт собирать; см. TransportMode.
+	Transport TransportMode
+	SMTP      smtp.Config
+	MailFrom  string
 	// MailDomain — правая часть Message-ID.
 	MailDomain string
 
@@ -61,7 +86,9 @@ func Load(l *config.Loader) (Config, error) {
 		FilesDir:       l.Optional("FILES_DIR", "./var/files"),
 		EntitlementTTL: l.Duration("ENTITLEMENT_TTL", time.Minute),
 		Tick:           l.Duration("TICK", time.Second),
-		SMTP:           loadSMTP(l),
+		Transport: TransportMode(l.Enum("SMTP_TRANSPORT", string(TransportSMTP),
+			modes(AllTransportModes)...)),
+		SMTP: loadSMTP(l),
 	}
 	if err := l.Err(); err != nil {
 		return Config{}, err

@@ -54,8 +54,12 @@ func authzConfig() authz.Config {
 // DefaultCookieConfig ЗДЕСЬ НЕ ГОДИТСЯ БЕЗ TLS: она даёт имена с префиксом
 // __Host-, а он требует Secure, и на стенде по http конструктор паникует.
 // Именованной «рекомендации для стенда» у пакета нет, поэтому конфигурация
-// собирается руками (doc.go, «Что не сошлось»). Ослабляется ровно одно — Secure, и
-// только там, где TLS нет вовсе.
+// собирается руками. Ослабляется ровно одно — Secure, и только там, где TLS
+// нет вовсе.
+//
+// ОБХОД ПОСТОЯННЫЙ, не снимать при сходе портов: именованной «конфигурации
+// куки для стенда» в пакете не будет — её однажды скопируют в прод
+// (doc.go, «Что не сошлось», п. 6).
 func cookieConfig(cfg Config) authhttp.CookieConfig {
 	if cfg.CookieSecure {
 		return authhttp.DefaultCookieConfig(cfg.CookieName)
@@ -155,11 +159,30 @@ func auditOutcome(kind session.EventKind) audit.Outcome {
 // метрик теряет наблюдаемость ровно тогда, когда что-то не так, и молчит об
 // этом.
 func (a *App) transport() (mail.Transport, error) {
-	sender, err := smtp.New(a.cfg.SMTP)
+	next, err := a.sender()
 	if err != nil {
 		return nil, err
 	}
-	return mailotel.Wrap(sender, a.obs.Meter.Meter("rebar.mail"))
+	return mailotel.Wrap(next, a.obs.Meter.Meter("rebar.mail"))
+}
+
+// sender — транспорт по НАЗВАННОМУ режиму.
+//
+// Режим — выбор в конфиге, а не исход ошибки: видно в окружении, видно в
+// diff'е, и «решили не настраивать» не путается с «настроили с ошибкой».
+//
+// Паника на неизвестном значении — ошибка ПРОГРАММИСТА, а не отказ: из
+// окружения сюда доходит только значение из AllTransportModes (Loader.Enum),
+// поэтому попасть в неё можно лишь собрав Config руками. Тихий выбор одного
+// из режимов на её месте означал бы, что режим назначает опечатка.
+func (a *App) sender() (mail.Transport, error) {
+	switch a.cfg.Transport {
+	case TransportSMTP:
+		return smtp.New(a.cfg.SMTP)
+	case TransportUnconfigured:
+		return mail.Unconfigured{}, nil
+	}
+	panic("monolith: неизвестный режим транспорта " + string(a.cfg.Transport))
 }
 
 // newWorker — воркер outbox с хендлерами под метриками и трейсом.

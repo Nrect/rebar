@@ -67,6 +67,25 @@ func newStandWith(t *testing.T, overrides map[string]string) *stand {
 	return &stand{app: app, srv: srv, client: &http.Client{Jar: jar}, dsn: dsn}
 }
 
+// loaderOf — Loader поверх окружения прогона с правками теста.
+func loaderOf(env, overrides map[string]string) *config.Loader {
+	for k, v := range overrides {
+		env[k] = v
+	}
+	return config.New(func(key string) (string, bool) {
+		v, ok := env[key]
+		return v, ok
+	})
+}
+
+// loadConfig — конфиг прогона; ошибку не терпит.
+func loadConfig(t *testing.T, dsn string, overrides map[string]string) monolith.Config {
+	t.Helper()
+	cfg, err := monolith.Load(loaderOf(standEnv(t, dsn), overrides))
+	require.NoError(t, err, "конфиг прогона")
+	return cfg
+}
+
 // buildApp собирает приложение и падает на ошибке сборки.
 func buildApp(t *testing.T, overrides map[string]string) (app *monolith.App, dsn string) {
 	t.Helper()
@@ -82,21 +101,8 @@ func tryBuildApp(t *testing.T, overrides map[string]string) (app *monolith.App, 
 	pgtest.Short(t)
 
 	dsn = schemaDSN(t)
-	env := map[string]string{
-		"DATABASE_URL": dsn,
-		"AUTH_SECRET":  testSecret,
-		"SMTP_HOST":    box.host,
-		"SMTP_PORT":    strconv.Itoa(box.smtp),
-		"FILES_DIR":    t.TempDir(),
-		"TICK":         "1h", // задачи гоняем руками: RunNow, а не по расписанию
-	}
-	for k, v := range overrides {
-		env[k] = v
-	}
-	cfg, err := monolith.Load(config.New(func(key string) (string, bool) {
-		v, ok := env[key]
-		return v, ok
-	}))
+	env := standEnv(t, dsn)
+	cfg, err := monolith.Load(loaderOf(env, overrides))
 	if err != nil {
 		return nil, dsn, err
 	}
@@ -105,6 +111,21 @@ func tryBuildApp(t *testing.T, overrides map[string]string) (app *monolith.App, 
 	}
 	t.Cleanup(func() { _ = app.Close(context.WithoutCancel(t.Context())) })
 	return app, dsn, nil
+}
+
+// standEnv — окружение прогона: общая база, общий Mailpit, свой каталог
+// файлов. Планировщик не тикает — задачи гоняются руками (RunNow), иначе
+// результат зависел бы от времени прогона.
+func standEnv(t *testing.T, dsn string) map[string]string {
+	t.Helper()
+	return map[string]string{
+		"DATABASE_URL": dsn,
+		"AUTH_SECRET":  testSecret,
+		"SMTP_HOST":    box.host,
+		"SMTP_PORT":    strconv.Itoa(box.smtp),
+		"FILES_DIR":    t.TempDir(),
+		"TICK":         "1h",
+	}
 }
 
 // schemaDSN — своя схема на тест и DSN с search_path в неё.
@@ -124,6 +145,23 @@ func schemaDSN(t *testing.T) string {
 	dsn, err := postgres.WithRuntimeParam(db.DSN(), "search_path", name)
 	require.NoError(t, err)
 	return dsn
+}
+
+// buildAppFromConfig собирает приложение с режимом транспорта, выставленным
+// РУКАМИ, минуя Loader.
+//
+// Нужен ровно затем, чтобы проверить второй рубеж: из окружения негодное
+// значение не проходит (Loader.Enum), и без этой калитки паника сборки была
+// бы недостижима, то есть страж молчал бы всегда.
+func buildAppFromConfig(t *testing.T, mode monolith.TransportMode) {
+	t.Helper()
+	pgtest.Short(t)
+
+	cfg := loadConfig(t, schemaDSN(t), nil)
+	cfg.Transport = mode
+	app, err := monolith.New(t.Context(), cfg, monolith.Migrations())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = app.Close(context.WithoutCancel(t.Context())) })
 }
 
 // postJSON шлёт JSON и отдаёт статус с разобранным телом.
