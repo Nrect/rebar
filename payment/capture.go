@@ -58,7 +58,8 @@ func (s *Service) Capture(ctx context.Context, intentID uuid.UUID, amountMinor i
 		Receipt:           receipt,
 	})
 	if err != nil {
-		return intent, providerReason(err), fmt.Errorf("%w: capture: %w", ErrUnavailable, err)
+		reason, provErr := providerError("capture", err)
+		return intent, reason, provErr
 	}
 	return s.applyAnswer(ctx, ev, intent)
 }
@@ -109,7 +110,8 @@ func (s *Service) Cancel(ctx context.Context, intentID uuid.UUID, key string) (I
 	ev, err := s.provider.Cancel(ctx, intent.ProviderPaymentID,
 		providerCancelKey(s.cfg.ProviderKeyPrefix, intent.ID))
 	if err != nil {
-		return intent, providerReason(err), fmt.Errorf("%w: cancel: %w", ErrUnavailable, err)
+		reason, provErr := providerError("cancel", err)
+		return intent, reason, provErr
 	}
 	return s.applyAnswer(ctx, ev, intent)
 }

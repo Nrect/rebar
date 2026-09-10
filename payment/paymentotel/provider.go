@@ -160,7 +160,7 @@ func (p *provider) count(ctx context.Context, call CallType, result Result) {
 // неделю его отключат. Поэтому неизвестная ошибка — error: отказ обязан
 // назвать адаптер классом ядра, а молчание по умолчанию тревожит.
 //
-// Класс отказа ищется раньше молчания, как в providerReason ядра:
+// Класс отказа ищется раньше молчания, как в providerError ядра:
 // ErrUnavailable поверх ErrUnsupported — всё ещё отказ по конструкции.
 func classify(err error) Result {
 	if err == nil {

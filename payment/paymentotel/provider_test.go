@@ -98,7 +98,7 @@ func TestWrap_FailedPaymentStateIsAnAnswer(t *testing.T) {
 }
 
 // Класс отказа ищется раньше молчания: ErrUnavailable поверх ErrUnsupported —
-// всё ещё отказ по конструкции, как в providerReason ядра.
+// всё ещё отказ по конструкции, как в providerError ядра.
 func TestWrap_RejectedClassWinsOverUnavailable(t *testing.T) {
 	t.Parallel()
 	p, reader := wrap(t, newStub(fmt.Errorf("%w: capture: %w", payment.ErrUnavailable, payment.ErrUnsupported)))

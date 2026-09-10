@@ -195,13 +195,18 @@ func (s *Service) complete(ctx context.Context, in Intent, req StartRequest, rep
 		// его в момент расчёта, и второго момента не будет.
 		Receipt: req.Receipt,
 	})
+	// ErrProviderRejected — определённый ответ «не создал», тот же, что
+	// Status == EventFailed: прийти по такой попытке нечему, и она закрывается.
+	if errors.Is(err, ErrProviderRejected) {
+		return s.closeRejected(ctx, in, replay)
+	}
 	if err != nil {
-		// Сбой связи неотличим от «платёж создан, ответ потерялся». Намерение
-		// ОСТАЁТСЯ в created: пометить его failed значило бы закрыть попытку, на
-		// которую у провайдера уже могут прийти деньги. Доводит до конца либо
-		// ретрай клиента, либо сверка.
-		return StartResult{Intent: in}, providerReason(err),
-			fmt.Errorf("%w: create payment: %w", ErrUnavailable, err)
+		// Любая другая ошибка оставляет намерение в created: сбой связи
+		// неотличим от «платёж создан, ответ потерялся», и пометить его failed
+		// значило бы закрыть попытку, на которую у провайдера уже могут прийти
+		// деньги. Доводит до конца либо ретрай клиента, либо сверка.
+		reason, provErr := providerError("create payment", err)
+		return StartResult{Intent: in}, reason, provErr
 	}
 
 	if res.Status == EventFailed {
@@ -358,11 +363,18 @@ func (s *Service) validateStart(req StartRequest) error {
 	return nil
 }
 
-// providerReason — метка для сбоя провайдера: «не умеет» отделено от «не
-// ответил», потому что первое не чинится ретраем и разбирают их разные люди.
-func providerReason(err error) Reason {
+// providerError — причина и ошибка для сбоя вызова провайдера; ОДНА точка на
+// все пять мест вызова, иначе они разойдутся следующей же правкой.
+//
+// ErrUnavailable — ТОЛЬКО «ответа нет». Окончательный отказ под ним потребитель
+// отдал бы как 503, и клиент повторял бы вечно то, что ретраем не чинится
+// никогда; поэтому ErrUnsupported и ErrProviderRejected идут своим классом.
+func providerError(op string, err error) (Reason, error) {
 	if errors.Is(err, ErrUnsupported) {
-		return ReasonUnsupported
+		return ReasonUnsupported, fmt.Errorf("%s: %w", op, err)
 	}
-	return ReasonProviderError
+	if errors.Is(err, ErrProviderRejected) {
+		return ReasonProviderRejected, fmt.Errorf("%s: %w", op, err)
+	}
+	return ReasonProviderError, fmt.Errorf("%w: %s: %w", ErrUnavailable, op, err)
 }

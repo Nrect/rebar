@@ -30,6 +30,17 @@
   `ErrMalformedEvent` или `ErrInvalidSignature`, всё неклассифицированное —
   `ReasonProviderError` под `ErrUnavailable`, то есть 503. Контракт
   `ParseWebhook` в `ports.go` говорит это прямо.
+- Окончательный отказ провайдера отдавался как «попробуйте позже». Все пять
+  мест вызова (`Start`, `Capture`, `Cancel`, `Refund`, `Reconcile`)
+  заворачивали в `ErrUnavailable` и `ErrUnsupported`, и `ErrProviderRejected`:
+  потребитель с таблицей «ошибка → HTTP» отвечал на них 503, и клиент
+  повторял вечно, а `ErrProviderRejected` вдобавок получал причину
+  `provider_error`. Теперь одна точка `providerError`: `ErrUnavailable` —
+  только «ответа нет», окончательные классы идут своим `%w` с причинами
+  `unsupported` и `provider_rejected`. `ErrProviderRejected` ошибкой из
+  `CreatePayment` закрывает попытку так же, как `Status == EventFailed`:
+  прийти по ней нечему. Контракт `Provider` в `ports.go` называет законные
+  классы по методам.
 
 ## [0.1.0] — 2026-09-10
 

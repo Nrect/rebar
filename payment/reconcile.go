@@ -127,7 +127,7 @@ func (s *Service) reconcileUnstarted(ctx context.Context, intent Intent) (Reason
 func (s *Service) reconcileStarted(ctx context.Context, intent Intent) (Reason, error) {
 	ev, err := s.provider.GetPayment(ctx, intent.ProviderPaymentID)
 	if err != nil {
-		return providerReason(err), fmt.Errorf("%w: get payment: %w", ErrUnavailable, err)
+		return providerError("get payment", err)
 	}
 	// Провайдер считает платёж живым. Протухать его нельзя даже за пределами
 	// TTL: человек оплатит списанную нами ссылку и не получит ничего. Видимость
