@@ -8,6 +8,8 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -135,4 +137,48 @@ func pngBody() []byte {
 		panic("тест: png не собрался: " + err.Error())
 	}
 	return buf.Bytes()
+}
+
+// metricValue — значение ряда name, чьи метки содержат want, из тела /metrics.
+// ok == false — такого ряда нет. Метки сверяются подмножеством: otel_scope_*
+// и прочие служебные тесту не интересны.
+func metricValue(t *testing.T, body, name string, want map[string]string) (float64, bool) {
+	t.Helper()
+	for line := range strings.SplitSeq(body, "\n") {
+		if !strings.HasPrefix(line, name+"{") {
+			continue
+		}
+		end := strings.LastIndex(line, "}")
+		if end < 0 || !hasLabels(line[len(name)+1:end], want) {
+			continue
+		}
+		fields := strings.Fields(line[end+1:])
+		if len(fields) == 0 {
+			continue
+		}
+		v, err := strconv.ParseFloat(fields[0], 64)
+		require.NoError(t, err, "значение ряда %s", name)
+		return v, true
+	}
+	return 0, false
+}
+
+// hasLabels — есть ли каждая пара want среди меток. Сверка с запятой спереди:
+// иначе type="x" нашёлся бы и внутри subtype="x".
+func hasLabels(labels string, want map[string]string) bool {
+	padded := "," + labels
+	for k, v := range want {
+		if !strings.Contains(padded, ","+k+"=\""+v+"\"") {
+			return false
+		}
+	}
+	return true
+}
+
+// requireMetric — ряд есть и значение ровно такое.
+func requireMetric(t *testing.T, body, name string, want map[string]string, wantValue float64) {
+	t.Helper()
+	got, ok := metricValue(t, body, name, want)
+	require.True(t, ok, "в /metrics нет ряда %s%v", name, want)
+	require.InDelta(t, wantValue, got, 0.001, "%s%v", name, want)
 }

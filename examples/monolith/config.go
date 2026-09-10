@@ -67,6 +67,11 @@ type Config struct {
 	// Tick — период фоновых задач. Один на все пять: пример проверяет
 	// проводку, а не расписание.
 	Tick time.Duration
+
+	// GaugesTick — такт задачи gauges_snapshot. Отдельный от Tick: снимок
+	// гейджей — это запросы к базе, и их частоту задаём мы, а не Prometheus
+	// (CONVENTIONS §6). Умолчание скромное — минута.
+	GaugesTick time.Duration
 }
 
 // Load читает конфиг из окружения.
@@ -86,6 +91,7 @@ func Load(l *config.Loader) (Config, error) {
 		FilesDir:       l.Optional("FILES_DIR", "./var/files"),
 		EntitlementTTL: l.Duration("ENTITLEMENT_TTL", time.Minute),
 		Tick:           l.Duration("TICK", time.Second),
+		GaugesTick:     l.Duration("GAUGES_TICK", time.Minute),
 		Transport: TransportMode(l.Enum("SMTP_TRANSPORT", string(TransportSMTP),
 			modes(AllTransportModes)...)),
 		SMTP: loadSMTP(l),

@@ -37,6 +37,7 @@ func TestErrorClasses_ReachHTTP(t *testing.T) {
 	require.Equal(t, "item-not-open", body["slug"])
 
 	providerRefusals(t, s)
+	stuckGaugeIsFed(t, s)
 
 	// 503 по СБОЮ: хранилище выдач пропало. Тот же маршрут, другой класс.
 	_, err := s.pool(t).Exec(t.Context(), "DROP TABLE entitlement_grants")
@@ -133,6 +134,42 @@ func providerRefusals(t *testing.T, s *stand) {
 	// createErr проверяется раньше повтора по ключу: не сбросить — и
 	// следующий checkout в этом тесте упал бы по чужой причине.
 	p.SetCreateErr(nil)
+
+	// ДЕКОРАТОР ОБЯЗАН СОГЛАСОВАТЬСЯ С ОТВЕТОМ СЕРВИСА: где клиент получил
+	// окончательное «нет» (409, 501), там result="rejected", где «ответа нет»
+	// (503) — "error". Здесь paymentotel однажды уже расходился с сервисом, и
+	// алерт «провайдер недоступен» горел бы тогда от штатных отказов.
+	body := s.scrape(t)
+	const calls = "payment_provider_calls_total"
+	requireMetric(t, body, calls, map[string]string{"type": "create_payment", "result": "rejected"}, 3)
+	requireMetric(t, body, calls, map[string]string{"type": "create_payment", "result": "error"}, 1)
+}
+
+// stuckGaugeIsFed — гейдж зависших КОРМИТСЯ сервисом, а не просто
+// зарегистрирован.
+//
+// Одного присутствия ряда мало: гейджи отдают нули до первого Set, и ряд
+// payment_intents_stuck есть в /metrics и тогда, когда Set не зовёт никто.
+// Поэтому намерение, оставшееся created после временного сбоя провайдера,
+// состаривается в базе — и гейдж обязан его увидеть.
+//
+// Кормит его ЗАДАЧА gauges_snapshot, а не scrape, и это утверждается здесь же:
+// после старения scrape без прогона задачи обязан показать ПРЕЖНИЙ снимок.
+// Иначе возврат к обновлению на scrape прошёл бы молча, а частоту запросов к
+// базе снова задавал бы Prometheus (CONVENTIONS §6).
+func stuckGaugeIsFed(t *testing.T, s *stand) {
+	t.Helper()
+	s.runJob(t, "gauges_snapshot")
+	requireMetric(t, s.scrape(t), "payment_intents_stuck", nil, 0)
+
+	_, err := s.pool(t).Exec(t.Context(),
+		`UPDATE payment_intents SET created_at = created_at - interval '1 hour'
+		 WHERE status = 'created'`)
+	require.NoError(t, err)
+	requireMetric(t, s.scrape(t), "payment_intents_stuck", nil, 0)
+
+	s.runJob(t, "gauges_snapshot")
+	requireMetric(t, s.scrape(t), "payment_intents_stuck", nil, 1)
 }
 
 // requireRefusal — checkout под новым ключом и его ответ.
