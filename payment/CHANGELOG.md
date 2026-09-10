@@ -19,8 +19,9 @@
   `CreatePayment`; у `ParseWebhook` — `ErrInvalidSignature` и явный
   `ErrMalformedEvent`), всё прочее, включая неизвестную ошибку, — `error`.
   `NewGauges(meter)` — `payment_intents_stuck`
-  и `payment_drift{kind}` по снимку, который потребитель кладёт в `Set` после
-  сверки (`CountStuckPending`, `Drift`); записи расхождений не хранятся, род
+  и `payment_drift{kind}` по снимку, который потребитель кладёт в `Set` из
+  отдельной задачи планировщика (`CountStuckPending` и `Drift` одним заходом;
+  не на scrape и не в задаче сверки); записи расхождений не хранятся, род
   вне `AllDriftKinds` идёт рядом без метки. otel стал прямой зависимостью
   модуля; ядро его по-прежнему не импортирует, а белый список стража для
   `paymentotel` сужен до `otel/metric` и `otel/attribute`.
