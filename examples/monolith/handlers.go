@@ -15,7 +15,9 @@ const maxJSONBytes = 32 << 10
 // красоту маршрутов.
 func (a *App) mount(mux *http.ServeMux) {
 	mux.HandleFunc("GET /healthz", a.healthz)
-	mux.HandleFunc("GET /metrics", a.metrics)
+	// /metrics — голый обработчик otelboot: scrape в базу не ходит, снимки
+	// гейджей обновляет задача gauges_snapshot (metrics.go).
+	mux.Handle("GET /metrics", a.obs.Metrics)
 
 	mux.HandleFunc("POST /register", a.register)
 	mux.HandleFunc("GET /confirm", a.confirm)

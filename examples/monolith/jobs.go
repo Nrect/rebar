@@ -23,6 +23,7 @@ const (
 	jobPaymentsReconcile  = "payments_reconcile"
 	jobAuthSweep          = "auth_sweep"
 	jobObjectstoreCollect = "objectstore_collect"
+	jobGaugesSnapshot     = "gauges_snapshot"
 )
 
 // startJobs — планировщик со всей фоновой работой.
@@ -36,6 +37,12 @@ const (
 //	payments_reconcile   payment.Reconciler.Run
 //	auth_sweep           session.Service.Sweep
 //	objectstore_collect  objectstore.Collector.Run
+//	gauges_snapshot      App.refreshGauges — своя задача примера, не тулкита
+//
+// gauges_snapshot — ОТДЕЛЬНАЯ задача со своим тактом (GAUGES_TICK): снимки
+// гейджей — запросы к базе, и их частоту задаём мы, а не Prometheus
+// (CONVENTIONS §6). Не scrape и не чужая задача: у неё свои ряды cron_*, и её
+// смерть — отдельная видимая поломка (алерт — в doc.go).
 func (a *App) startJobs() error {
 	observer, err := schedulerotel.NewObserver(a.obs.Meter.Meter("rebar.scheduler"))
 	if err != nil {
@@ -47,6 +54,7 @@ func (a *App) startJobs() error {
 		scheduler.Job{Name: jobPaymentsReconcile, Interval: a.cfg.Tick, Run: a.reconcile.Run},
 		scheduler.Job{Name: jobAuthSweep, Interval: a.cfg.Tick, Run: a.sessions.Sweep},
 		scheduler.Job{Name: jobObjectstoreCollect, Interval: a.cfg.Tick, Run: a.collector.Run},
+		scheduler.Job{Name: jobGaugesSnapshot, Interval: a.cfg.GaugesTick, Run: a.refreshGauges},
 	)
 	if err != nil {
 		return err

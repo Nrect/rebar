@@ -6,6 +6,7 @@ import (
 
 	"github.com/nrect/rebar/outbox/outboxpg"
 	"github.com/nrect/rebar/payment"
+	"github.com/nrect/rebar/payment/paymentotel"
 	"github.com/nrect/rebar/payment/paymentpg"
 	"github.com/nrect/rebar/payment/paymenttest"
 
@@ -37,7 +38,25 @@ func (a *App) startMoney(ctx context.Context) error {
 	}
 
 	a.provider = paymenttest.NewMemProvider(providerName)
-	a.pay = payment.NewService(store, a.provider, payment.Config{
+	meter := a.obs.Meter.Meter("rebar.payment")
+	// ДЕКОРАТОР ПРОВАЙДЕРА — ДО СЕРВИСА: payment_provider_calls{provider,type,
+	// result} держит алерты «провайдер недоступен» и «интеграция сломана».
+	// Name() он пробрасывает, поэтому дедуп ядра по (provider, event_id) не
+	// ослепнет. Ручки двойника тест дёргает у a.provider — у того, что ПОД
+	// обёрткой: сервис видит только обёрнутого.
+	provider, err := paymentotel.Wrap(a.provider, meter)
+	if err != nil {
+		return err
+	}
+	// НАБЛЮДАТЕЛЬ ОБЯЗАТЕЛЕН: два главных денежных алерта (status_conflict,
+	// amount_mismatch) держатся только на нём, а необязательный дал бы то же
+	// молчание через забытый вызов. Все пары op × reason рождаются нулём —
+	// иначе первый же конфликт increase() не увидел бы.
+	obs, err := paymentotel.NewObserver(meter)
+	if err != nil {
+		return err
+	}
+	a.pay = payment.NewService(store, provider, obs, payment.Config{
 		Currency:          currency,
 		MaxAmountMinor:    100_000_00,
 		MaxItems:          20,

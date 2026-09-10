@@ -52,7 +52,7 @@ func openLesson(t *testing.T, s *stand) {
 	require.Equal(t, "item-not-open", body["slug"])
 }
 
-// runEveryJob — все пять фоновых задач отрабатывают на живой базе.
+// runEveryJob — все шесть фоновых задач отрабатывают на живой базе.
 //
 // Не «покрытие»: payments_reconcile и objectstore_collect иначе не звались бы
 // в тесте ни разу, и их проводка (курсор сверки, порт Owned уборщика)
@@ -61,7 +61,7 @@ func runEveryJob(t *testing.T, s *stand) {
 	t.Helper()
 	for _, name := range []string{
 		"mail_deliver", "outbox_drain", "payments_reconcile",
-		"auth_sweep", "objectstore_collect",
+		"auth_sweep", "objectstore_collect", "gauges_snapshot",
 	} {
 		_, err := s.app.Jobs().RunNow(t.Context(), name)
 		require.NoError(t, err, "задача %s", name)
@@ -239,9 +239,19 @@ func uploadFile(t *testing.T, s *stand) {
 func checkMetrics(t *testing.T, s *stand) {
 	t.Helper()
 	body := s.scrape(t)
-	for _, want := range []string{"build_info", "cron_runs", "outbox_pending", "emails_sent"} {
+	// payments_total — наблюдатель проведён: все пары op × reason
+	// рождаются нулём при сборке, поэтому ряд есть и до первой оплаты.
+	for _, want := range []string{
+		"build_info", "cron_runs", "outbox_pending", "emails_sent", "payments_total",
+		"payment_provider_calls_total", "payment_intents_stuck", "payment_drift",
+	} {
 		require.Contains(t, body, want, "в /metrics нет %s", want)
 	}
+
+	// Одна оплата — один вызов создания платежа, и он успешный: повтор
+	// checkout с тем же ключом до провайдера не доходит.
+	requireMetric(t, body, "payment_provider_calls_total",
+		map[string]string{"type": "create_payment", "result": "ok"}, 1)
 }
 
 // providerBody — успешная оплата в той форме, в какой её пришлёт провайдер.
