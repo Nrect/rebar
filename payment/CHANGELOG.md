@@ -20,6 +20,10 @@
   вне `AllDriftKinds` идёт рядом без метки. otel стал прямой зависимостью
   модуля; ядро его по-прежнему не импортирует, а белый список стража для
   `paymentotel` сужен до `otel/metric` и `otel/attribute`.
+
+## [0.1.0] — 2026-09-10
+
+### Added
 - Каркас пакета: `Intent` со снапшотом состава (`OrderItem`), `LedgerEntry`,
   `Event`, `Confirmation`, закрытые наборы `Status` (с `authorized` — холд —
   с первого дня), `Reason`, `EventType`, `LedgerKind`, `ConfirmationType`,
