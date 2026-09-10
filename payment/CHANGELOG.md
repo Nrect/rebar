@@ -6,6 +6,20 @@
 ## Unreleased
 
 ### Added
+- Подпакет `paymentotel` — наблюдаемость на OpenTelemetry, meter
+  `rebar.payment`. `Wrap(provider, meter)` — декоратор порта `Provider` со
+  счётчиком `payment_provider_calls{type,result}`: `type` — закрытый набор
+  `AllCallTypes` (шесть методов порта; `Name` пробрасывается как есть и не
+  считается), `result` — `ok` / `rejected` / `error`. Отказ и молчание
+  провайдера не сводятся: `rejected` — классы `ErrProviderRejected`,
+  `ErrUnsupported`, `ErrInvalidSignature`, `ErrMalformedEvent` и
+  `CreatePaymentResult.Status == EventFailed`; всё прочее, включая
+  неизвестную ошибку, — `error`. `NewGauges(meter)` — `payment_intents_stuck`
+  и `payment_drift{kind}` по снимку, который потребитель кладёт в `Set` после
+  сверки (`CountStuckPending`, `Drift`); записи расхождений не хранятся, род
+  вне `AllDriftKinds` идёт рядом без метки. otel стал прямой зависимостью
+  модуля; ядро его по-прежнему не импортирует, а белый список стража для
+  `paymentotel` сужен до `otel/metric` и `otel/attribute`.
 - Каркас пакета: `Intent` со снапшотом состава (`OrderItem`), `LedgerEntry`,
   `Event`, `Confirmation`, закрытые наборы `Status` (с `authorized` — холд —
   с первого дня), `Reason`, `EventType`, `LedgerKind`, `ConfirmationType`,
