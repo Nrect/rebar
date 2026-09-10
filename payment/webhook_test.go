@@ -71,7 +71,7 @@ func TestWebhook_BadSignature_NothingWritten(t *testing.T) {
 	t.Parallel()
 
 	h := newHarness(t)
-	h.prov.BadSignature = true
+	h.prov.SetBadSignature(true)
 
 	_, reason, err := h.svc.HandleWebhook(context.Background(), webhook())
 
@@ -115,7 +115,7 @@ func TestWebhook_ParseUnavailable_IsNotMalformed(t *testing.T) {
 	t.Parallel()
 
 	h := newHarness(t)
-	h.prov.ParseErr = payment.ErrUnavailable
+	h.prov.SetParseErr(payment.ErrUnavailable)
 
 	_, reason, err := h.svc.HandleWebhook(context.Background(), webhook())
 
@@ -139,7 +139,7 @@ func TestWebhook_UnclassifiedParseError_IsUnavailable(t *testing.T) {
 			t.Parallel()
 
 			h := newHarness(t)
-			h.prov.ParseErr = parseErr
+			h.prov.SetParseErr(parseErr)
 
 			_, reason, err := h.svc.HandleWebhook(context.Background(), webhook())
 
@@ -158,7 +158,7 @@ func TestWebhook_ExplicitMalformed_IsNotUnavailable(t *testing.T) {
 	t.Parallel()
 
 	h := newHarness(t)
-	h.prov.ParseErr = fmt.Errorf("%w: body is not JSON", payment.ErrMalformedEvent)
+	h.prov.SetParseErr(fmt.Errorf("%w: body is not JSON", payment.ErrMalformedEvent))
 
 	_, reason, err := h.svc.HandleWebhook(context.Background(), webhook())
 
@@ -173,7 +173,7 @@ func TestWebhook_UnavailableWinsOverMalformed(t *testing.T) {
 	t.Parallel()
 
 	h := newHarness(t)
-	h.prov.ParseErr = fmt.Errorf("%w: %w", payment.ErrMalformedEvent, payment.ErrUnavailable)
+	h.prov.SetParseErr(fmt.Errorf("%w: %w", payment.ErrMalformedEvent, payment.ErrUnavailable))
 
 	_, reason, err := h.svc.HandleWebhook(context.Background(), webhook())
 

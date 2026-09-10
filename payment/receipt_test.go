@@ -110,8 +110,8 @@ func TestReceipt_MarkCodeAndMeasureReachTheProvider(t *testing.T) {
 	_, _, err := h.svc.Start(context.Background(), req)
 
 	require.NoError(t, err)
-	require.Len(t, h.prov.Created, 1)
-	sent := h.prov.Created[0].Receipt
+	require.Len(t, h.prov.Created(), 1)
+	sent := h.prov.Created()[0].Receipt
 	require.NotNil(t, sent)
 	assert.Equal(t, "0104603721141719215Qbag!", sent.Items[0].MarkCode)
 	assert.Equal(t, "piece", sent.Items[0].Measure)

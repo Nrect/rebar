@@ -188,11 +188,11 @@ func (h *harness) hold(t *testing.T) payment.Intent {
 func (h *harness) unstarted(t *testing.T) payment.Intent {
 	t.Helper()
 
-	h.prov.CreateErr = paymenttest.ErrProviderDown
+	h.prov.SetCreateErr(paymenttest.ErrProviderDown)
 	res, _, err := h.svc.Start(context.Background(), startReq())
 	require.Error(t, err)
 	require.Equal(t, payment.StatusCreated, res.Intent.Status)
-	h.prov.CreateErr = nil
+	h.prov.SetCreateErr(nil)
 	return res.Intent
 }
 

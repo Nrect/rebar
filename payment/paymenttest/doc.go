@@ -15,8 +15,10 @@
 //     контракт, что у адаптера, но без tx) и Err для fail-closed тестов.
 //   - MemProvider — payment.Provider: идемпотентен по ключу, детерминированный
 //     ProviderEventID (вебхук и сверка дедуплицируются друг с другом), холды
-//     через Capture/Cancel либо ErrUnsupported при NoHolds, RejectFor и FailFor
-//     по Reference.
+//     через Capture/Cancel либо ErrUnsupported при SetNoHolds. Публичных полей
+//     нет: ручки — методами под замком (Set*Err, RejectNext, RejectReference…),
+//     потому что тест потребителя меняет их, пока его HTTP-сервер зовёт
+//     провайдер из другой горутины; CreateHook зовётся вне замка.
 //   - Observer — payment.Observer: запоминает исходы по порядку, Outcomes
 //     отдаёт копию.
 //   - Clock — управляемые часы для payment.Service.SetClock.

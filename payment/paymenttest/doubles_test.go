@@ -218,7 +218,7 @@ func TestMemProvider_NoHolds(t *testing.T) {
 	t.Parallel()
 
 	prov := paymenttest.NewMemProvider("memprov")
-	prov.NoHolds = true
+	prov.SetNoHolds(true)
 
 	_, err := prov.Capture(t.Context(), payment.CaptureRequest{ProviderPaymentID: "pay-1"})
 	require.ErrorIs(t, err, payment.ErrUnsupported)

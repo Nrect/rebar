@@ -242,7 +242,7 @@ func TestWrap_DropsInForThePort(t *testing.T) {
 	t.Parallel()
 	reader, meter := newMeter(t)
 	prov := paymenttest.NewMemProvider("memprov")
-	prov.RejectFor["order-rejected"] = true
+	prov.RejectReference("order-rejected")
 	p, err := paymentotel.Wrap(prov, meter)
 	require.NoError(t, err)
 	obs, err := paymentotel.NewObserver(meter)
@@ -257,15 +257,15 @@ func TestWrap_DropsInForThePort(t *testing.T) {
 	require.ErrorIs(t, err, payment.ErrProviderRejected)
 	assert.Equal(t, payment.ReasonProviderRejected, reason)
 
-	prov.BadSignature = true
+	prov.SetBadSignature(true)
 	_, reason, err = svc.HandleWebhook(ctx, payment.WebhookRequest{Raw: []byte(`{}`)})
 	require.ErrorIs(t, err, payment.ErrInvalidSignature)
 	assert.Equal(t, payment.ReasonSignatureInvalid, reason)
 
 	// Проверочное чтение не удалось: ErrUnavailable обязан доехать до сервиса,
 	// иначе тот ответит провайдеру 400 вместо 503.
-	prov.BadSignature = false
-	prov.ParseErr = fmt.Errorf("%w: verification read", payment.ErrUnavailable)
+	prov.SetBadSignature(false)
+	prov.SetParseErr(fmt.Errorf("%w: verification read", payment.ErrUnavailable))
 	_, reason, err = svc.HandleWebhook(ctx, payment.WebhookRequest{Raw: []byte(`{}`)})
 	require.ErrorIs(t, err, payment.ErrUnavailable)
 	assert.Equal(t, payment.ReasonProviderError, reason, "503, а не malformed_event")

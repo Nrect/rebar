@@ -23,28 +23,28 @@ func providerPaths() []providerPath {
 	return []providerPath{
 		{"start", func(t *testing.T, h *harness, fail error) (payment.Reason, error) {
 			t.Helper()
-			h.prov.CreateErr = fail
+			h.prov.SetCreateErr(fail)
 			_, reason, err := h.svc.Start(t.Context(), startReq())
 			return reason, err
 		}},
 		{"capture", func(t *testing.T, h *harness, fail error) (payment.Reason, error) {
 			t.Helper()
 			in := h.hold(t)
-			h.prov.CaptureErr = fail
+			h.prov.SetCaptureErr(fail)
 			_, reason, err := h.svc.Capture(t.Context(), in.ID, in.AmountMinor, receiptFor(testAmount), "cap-1")
 			return reason, err
 		}},
 		{"cancel", func(t *testing.T, h *harness, fail error) (payment.Reason, error) {
 			t.Helper()
 			in := h.hold(t)
-			h.prov.CancelErr = fail
+			h.prov.SetCancelErr(fail)
 			_, reason, err := h.svc.Cancel(t.Context(), in.ID, "cancel-1")
 			return reason, err
 		}},
 		{"refund", func(t *testing.T, h *harness, fail error) (payment.Reason, error) {
 			t.Helper()
 			in := h.sold(t)
-			h.prov.RefundErr = fail
+			h.prov.SetRefundErr(fail)
 			_, reason, err := h.svc.Refund(t.Context(), payment.RefundRequest{
 				IntentID: in.ID, AmountMinor: 100, IdempotencyKey: "refund-1",
 				ActorID: uuid.New(), Receipt: receiptFor(100),
@@ -54,7 +54,7 @@ func providerPaths() []providerPath {
 		{"reconcile", func(t *testing.T, h *harness, fail error) (payment.Reason, error) {
 			t.Helper()
 			in := h.start(t, startReq())
-			h.prov.GetErr = fail
+			h.prov.SetGetErr(fail)
 			return h.svc.Reconcile(t.Context(), in.ID)
 		}},
 	}
@@ -108,7 +108,7 @@ func TestStart_ProviderRejectedError_ClosesTheAttempt(t *testing.T) {
 	t.Parallel()
 
 	h := newHarness(t)
-	h.prov.CreateErr = fmt.Errorf("adapter: 422: %w", payment.ErrProviderRejected)
+	h.prov.SetCreateErr(fmt.Errorf("adapter: 422: %w", payment.ErrProviderRejected))
 	req := startReq()
 
 	res, reason, err := h.svc.Start(t.Context(), req)
@@ -118,7 +118,7 @@ func TestStart_ProviderRejectedError_ClosesTheAttempt(t *testing.T) {
 	assert.Equal(t, payment.ReasonProviderRejected, reason)
 	assert.Equal(t, payment.StatusFailed, res.Intent.Status)
 
-	h.prov.CreateErr = nil
+	h.prov.SetCreateErr(nil)
 	_, reason, err = h.svc.Start(t.Context(), req)
 	require.ErrorIs(t, err, payment.ErrProviderRejected, "повтор ключа — тот же отказ")
 	assert.Equal(t, payment.ReasonProviderRejected, reason)
@@ -140,7 +140,7 @@ func TestReconcile_UnstartedProviderRejected_ClosesTheAttempt(t *testing.T) {
 
 	h := newHarness(t, func(c *payment.Config) { c.RequireReceipt = false })
 	in := h.unstarted(t)
-	h.prov.CreateErr = fmt.Errorf("adapter: 422: %w", payment.ErrProviderRejected)
+	h.prov.SetCreateErr(fmt.Errorf("adapter: 422: %w", payment.ErrProviderRejected))
 
 	reason, err := h.svc.Reconcile(t.Context(), in.ID)
 

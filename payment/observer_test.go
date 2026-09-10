@@ -61,7 +61,7 @@ func TestObserver_EveryOperationReportsItsReason(t *testing.T) {
 		}},
 		{"webhook: подпись не сошлась", payment.OpWebhook, func(t *testing.T, h *harness) func() payment.Reason {
 			t.Helper()
-			h.prov.BadSignature = true
+			h.prov.SetBadSignature(true)
 			return func() payment.Reason {
 				_, reason, _ := h.svc.HandleWebhook(t.Context(), webhook())
 				return reason

@@ -180,7 +180,7 @@ func TestRefund_ProviderEchoesOtherAmount_Refused(t *testing.T) {
 
 	h := newHarness(t)
 	in := h.sold(t)
-	h.prov.RefundEcho = 999
+	h.prov.SetRefundEcho(999)
 
 	res, reason, err := h.svc.Refund(context.Background(), refundReq(in, 50000, "ref-1"))
 

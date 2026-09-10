@@ -66,41 +66,41 @@ func servicePaths() []servicePath {
 	return []servicePath{
 		{paymentotel.CallCreatePayment, func(t *testing.T, e serviceEnv, fail error) error {
 			t.Helper()
-			e.prov.CreateErr = fail
+			e.prov.SetCreateErr(fail)
 			_, _, err := e.svc.Start(t.Context(), startRequest("order-1"))
 			return err
 		}},
 		{paymentotel.CallParseWebhook, func(t *testing.T, e serviceEnv, fail error) error {
 			t.Helper()
-			e.prov.ParseErr = fail
+			e.prov.SetParseErr(fail)
 			_, _, err := e.svc.HandleWebhook(t.Context(), payment.WebhookRequest{Raw: []byte(`{}`)})
 			return err
 		}},
 		{paymentotel.CallGetPayment, func(t *testing.T, e serviceEnv, fail error) error {
 			t.Helper()
 			in := e.pending(t)
-			e.prov.GetErr = fail
+			e.prov.SetGetErr(fail)
 			_, err := e.svc.Reconcile(t.Context(), in.ID)
 			return err
 		}},
 		{paymentotel.CallCapture, func(t *testing.T, e serviceEnv, fail error) error {
 			t.Helper()
 			in := e.deliver(t, e.pending(t), payment.EventAuthorized)
-			e.prov.CaptureErr = fail
+			e.prov.SetCaptureErr(fail)
 			_, _, err := e.svc.Capture(t.Context(), in.ID, in.AmountMinor, nil, "cap-1")
 			return err
 		}},
 		{paymentotel.CallCancel, func(t *testing.T, e serviceEnv, fail error) error {
 			t.Helper()
 			in := e.deliver(t, e.pending(t), payment.EventAuthorized)
-			e.prov.CancelErr = fail
+			e.prov.SetCancelErr(fail)
 			_, _, err := e.svc.Cancel(t.Context(), in.ID, "cancel-1")
 			return err
 		}},
 		{paymentotel.CallRefund, func(t *testing.T, e serviceEnv, fail error) error {
 			t.Helper()
 			in := e.deliver(t, e.pending(t), payment.EventSucceeded)
-			e.prov.RefundErr = fail
+			e.prov.SetRefundErr(fail)
 			_, _, err := e.svc.Refund(t.Context(), payment.RefundRequest{
 				IntentID: in.ID, AmountMinor: 100, IdempotencyKey: "refund-1", ActorID: uuid.New(),
 			})

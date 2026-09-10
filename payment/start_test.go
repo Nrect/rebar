@@ -43,8 +43,8 @@ func TestStart_ProviderKeyIsDerived(t *testing.T) {
 
 	in := h.start(t, req)
 
-	require.Len(t, h.prov.Created, 1)
-	sent := h.prov.Created[0]
+	require.Len(t, h.prov.Created(), 1)
+	sent := h.prov.Created()[0]
 	assert.Equal(t, "shop:intent:"+in.ID.String(), sent.IdempotencyKey)
 	assert.NotContains(t, sent.IdempotencyKey, req.IdempotencyKey)
 	assert.Equal(t, req.Reference, sent.Reference)
@@ -314,7 +314,7 @@ func TestStart_ProviderUnreachable_ReplayCompletes(t *testing.T) {
 	t.Parallel()
 
 	h := newHarness(t)
-	h.prov.CreateErr = paymenttest.ErrProviderDown
+	h.prov.SetCreateErr(paymenttest.ErrProviderDown)
 	req := startReq()
 
 	res, reason, err := h.svc.Start(context.Background(), req)
@@ -322,7 +322,7 @@ func TestStart_ProviderUnreachable_ReplayCompletes(t *testing.T) {
 	assert.Equal(t, payment.ReasonProviderError, reason)
 	assert.Equal(t, payment.StatusCreated, res.Intent.Status)
 
-	h.prov.CreateErr = nil
+	h.prov.SetCreateErr(nil)
 	res, reason, err = h.svc.Start(context.Background(), req)
 
 	require.NoError(t, err)
@@ -335,11 +335,11 @@ func TestStart_ProviderAnswerUnusable_StaysCreated(t *testing.T) {
 	t.Parallel()
 
 	cases := map[string]func(*paymenttest.MemProvider){
-		"платёж не назван": func(p *paymenttest.MemProvider) { p.NoPaymentID = true },
+		"платёж не назван": func(p *paymenttest.MemProvider) { p.SetNoPaymentID(true) },
 		"подтверждения нет": func(p *paymenttest.MemProvider) {
-			p.Result = payment.CreatePaymentResult{
+			p.SetResult(payment.CreatePaymentResult{
 				ProviderPaymentID: "pay-1", Status: payment.EventPending,
-			}
+			})
 		},
 	}
 
@@ -365,7 +365,7 @@ func TestStart_ProviderRejects_ReplayReturnsSameFailure(t *testing.T) {
 
 	h := newHarness(t)
 	req := startReq()
-	h.prov.RejectFor[req.Reference] = true
+	h.prov.RejectReference(req.Reference)
 
 	for range 2 {
 		res, reason, err := h.svc.Start(context.Background(), req)
@@ -383,12 +383,12 @@ func TestStart_ReplayAfterTTL_ExpiresInsteadOfCompleting(t *testing.T) {
 	t.Parallel()
 
 	h := newHarness(t)
-	h.prov.CreateErr = paymenttest.ErrProviderDown
+	h.prov.SetCreateErr(paymenttest.ErrProviderDown)
 	req := startReq()
 	_, _, err := h.svc.Start(context.Background(), req)
 	require.Error(t, err)
 
-	h.prov.CreateErr = nil
+	h.prov.SetCreateErr(nil)
 	h.clock.Advance(h.cfg.IntentTTL)
 
 	res, reason, err := h.svc.Start(context.Background(), req)
@@ -403,12 +403,12 @@ func TestStart_ReplayBeforeTTL_StillCompletes(t *testing.T) {
 	t.Parallel()
 
 	h := newHarness(t)
-	h.prov.CreateErr = paymenttest.ErrProviderDown
+	h.prov.SetCreateErr(paymenttest.ErrProviderDown)
 	req := startReq()
 	_, _, err := h.svc.Start(context.Background(), req)
 	require.Error(t, err)
 
-	h.prov.CreateErr = nil
+	h.prov.SetCreateErr(nil)
 	h.clock.Advance(h.cfg.IntentTTL - 1)
 
 	res, reason, err := h.svc.Start(context.Background(), req)
@@ -587,12 +587,12 @@ func TestStart_RowMovedWhileWeAskedProvider_ReportsActualState(t *testing.T) {
 
 	h := newHarness(t)
 	req := startReq()
-	h.prov.RejectFor[req.Reference] = true
-	h.prov.CreateHook = func(sent payment.CreatePaymentRequest) {
+	h.prov.RejectReference(req.Reference)
+	h.prov.SetCreateHook(func(sent payment.CreatePaymentRequest) {
 		in := h.mustIntent(t, sent.IntentID)
 		in.Status = payment.StatusSucceeded
 		h.store.Seed(in)
-	}
+	})
 
 	res, reason, err := h.svc.Start(context.Background(), req)
 
@@ -637,11 +637,11 @@ func TestStart_ConfirmationTypes(t *testing.T) {
 			t.Parallel()
 
 			h := newHarness(t)
-			h.prov.Result = payment.CreatePaymentResult{
+			h.prov.SetResult(payment.CreatePaymentResult{
 				ProviderPaymentID: "pay-1",
 				Confirmation:      confirmation,
 				Status:            payment.EventPending,
-			}
+			})
 
 			res, _, err := h.svc.Start(context.Background(), startReq())
 
@@ -654,11 +654,11 @@ func TestStart_ConfirmationTypes(t *testing.T) {
 		t.Parallel()
 
 		h := newHarness(t)
-		h.prov.Result = payment.CreatePaymentResult{
+		h.prov.SetResult(payment.CreatePaymentResult{
 			ProviderPaymentID: "pay-1",
 			Confirmation:      payment.Confirmation{Type: "sms", URL: "https://pay.example/p1"},
 			Status:            payment.EventPending,
-		}
+		})
 
 		res, reason, err := h.svc.Start(context.Background(), startReq())
 

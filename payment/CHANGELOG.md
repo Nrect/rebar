@@ -40,6 +40,20 @@
 - **Ломающее:** `NewService(store, provider, obs, cfg)` — наблюдатель стал
   обязательной зависимостью, nil — паника. Не поле `Config` и не
   `SetObserver`: забытый вызов дал бы молчание ровно на денежных алертах.
+- **Ломающее для тестов:** у `paymenttest.MemProvider` не осталось
+  публичных полей. Ручки (`CreateErr`, `GetErr`, `CaptureErr`, `CancelErr`,
+  `RefundErr`, `ParseErr`, `NoHolds`, `BadSignature`, `NoPaymentID`,
+  `Result`, `RefundEcho`, `RejectFor`, `FailFor`, `CreateHook`) методы
+  двойника читали под своим мьютексом, а тест писал мимо него: у
+  потребителя, который гоняет двойник через живой HTTP-сервер, это гонка под
+  `-race`, и краснела бы она у него. Теперь ручки — методами под тем же
+  замком (`SetCreateErr` … `SetParseErr`, `SetNoHolds`, `SetBadSignature`,
+  `SetNoPaymentID`, `SetResult`, `SetRefundEcho`, `RejectReference`,
+  `FailReference`, `SetCreateHook`), записанные запросы — копиями
+  (`Created()`, `Captures()`, `Cancels()`, `Refunds()`). Для HTTP-теста,
+  который ссылку заказа заранее не знает, — `RejectNext()`: отказ следующему
+  новому платежу. `CreateHook` зовётся вне замка: хук вправе трогать сам
+  провайдер, под замком это была взаимная блокировка.
 
 ### Fixed
 - Вебхук: неклассифицированная ошибка `ParseWebhook` уходила в

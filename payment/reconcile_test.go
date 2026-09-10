@@ -204,7 +204,7 @@ func TestReconcile_ProviderFails(t *testing.T) {
 
 	h := newHarness(t)
 	in := h.start(t, startReq())
-	h.prov.GetErr = paymenttest.ErrProviderDown
+	h.prov.SetGetErr(paymenttest.ErrProviderDown)
 
 	reason, err := h.svc.Reconcile(context.Background(), in.ID)
 
@@ -460,7 +460,7 @@ func TestReconcile_HoldIsNeverExpiredByTTL(t *testing.T) {
 
 		h := newHarness(t)
 		in := h.hold(t)
-		h.prov.GetErr = paymenttest.ErrProviderDown
+		h.prov.SetGetErr(paymenttest.ErrProviderDown)
 		h.clock.Advance(h.cfg.IntentTTL * 3)
 
 		reason, err := h.svc.Reconcile(context.Background(), in.ID)
