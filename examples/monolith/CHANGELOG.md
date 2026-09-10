@@ -8,6 +8,10 @@
 
 ### Changed
 
+- Первый снимок гейджей — сразу при старте: `App.Start` зовёт `RunNow` задачи
+  `gauges_snapshot` до запуска планировщика. Без него первую минуту после
+  деплоя `payment_drift` — денежный алерт с порогом 1 — был бы слеп. Держит
+  `TestStart_SnapshotsGaugesBeforeFirstTick`.
 - Снимки гейджей обновляет отдельная задача `gauges_snapshot` на своём такте
   `GAUGES_TICK` (по умолчанию минута); `/metrics` снова голый обработчик
   `otelboot`, и scrape в базу не ходит (CONVENTIONS §6).
