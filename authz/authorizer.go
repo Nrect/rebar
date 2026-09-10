@@ -135,6 +135,28 @@ func (a *Authorizer) narrow(ctx context.Context, s Subject, p Permission, r Reso
 	return allow(), nil
 }
 
+// Require — то же решение ошибкой, для хендлера: nil, ErrDenied (403),
+// ErrUnavailable (503) либо ErrUnknownPermission (500). По форме
+// entitlement.Require — обе оси механизма сообщают отказ одинаково, и таблица
+// «ошибка → HTTP» у потребителя одна.
+//
+// РАЗНЫЕ ОТВЕТЫ ОЗНАЧАЮТ РАЗНЫЕ ИНЦИДЕНТЫ: 403 при упавшей базе учит поддержку
+// чинить права вместо базы, и инцидент тонет.
+//
+// Ресурс называется явно, как в CanOn; тому, кому он не нужен, — Resource{},
+// ровно как это делает Can.
+func (a *Authorizer) Require(ctx context.Context, s Subject, p Permission, r Resource) error {
+	d, err := a.CanOn(ctx, s, p, r)
+	if err != nil {
+		return err
+	}
+	if !d.Allowed {
+		// Причина — из закрытого набора; идентификаторов в ней нет.
+		return fmt.Errorf("%w: %s", ErrDenied, d.Reason)
+	}
+	return nil
+}
+
 // CanOp — вправе ли субъект выполнить операцию API. Операции без правила
 // отказано (deny_unclassified) и это НЕ ошибка: default deny — штатный исход,
 // а не сбой, и алерт на сбои от него гореть не должен.
