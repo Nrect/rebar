@@ -282,7 +282,7 @@ func TestCountStuckPending_StoreFailureIsUnavailable(t *testing.T) {
 	t.Parallel()
 
 	h := newHarness(t)
-	h.store.Err = paymenttest.ErrStore
+	h.store.SetErr(paymenttest.ErrStore)
 
 	_, err := h.svc.CountStuckPending(context.Background())
 
@@ -293,10 +293,10 @@ func TestDrift(t *testing.T) {
 	t.Parallel()
 
 	h := newHarness(t)
-	h.store.DriftRecords = []payment.DriftRecord{
+	h.store.SetDriftRecords([]payment.DriftRecord{
 		{IntentID: uuid.New(), Reference: "order:1", Kind: payment.DriftSucceededNoCapture},
 		{IntentID: uuid.New(), Reference: "order:2", Kind: payment.DriftRefundOverCapture},
-	}
+	})
 
 	records, err := h.svc.Drift(context.Background(), 1)
 
@@ -381,7 +381,7 @@ func TestReconciler_Run_StoreFailure(t *testing.T) {
 	t.Parallel()
 
 	h := newHarness(t)
-	h.store.Err = paymenttest.ErrStore
+	h.store.SetErr(paymenttest.ErrStore)
 	job := payment.NewReconciler(h.svc, 10)
 
 	_, err := job.Run(context.Background())

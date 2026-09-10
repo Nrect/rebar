@@ -159,12 +159,12 @@ func TestRefund_RetryAfterStoreFailure_OneRefundAtProvider(t *testing.T) {
 	h := newHarness(t)
 	in := h.sold(t)
 	req := refundReq(in, 50000, "ref-1")
-	h.store.Err = paymenttest.ErrStore
+	h.store.SetErr(paymenttest.ErrStore)
 	_, reason, err := h.svc.Refund(context.Background(), req)
 	require.ErrorIs(t, err, payment.ErrUnavailable)
 	assert.Equal(t, payment.ReasonStoreError, reason)
 
-	h.store.Err = nil
+	h.store.SetErr(nil)
 	_, reason, err = h.svc.Refund(context.Background(), req)
 
 	require.NoError(t, err)
@@ -240,7 +240,7 @@ func TestRefund_SucceededWithoutCapture_Refused(t *testing.T) {
 
 	h := newHarness(t)
 	in := h.sold(t)
-	h.store.Entries = nil
+	h.store.ClearEntries()
 
 	_, reason, err := h.svc.Refund(context.Background(), refundReq(in, 50000, "ref-1"))
 
@@ -298,7 +298,7 @@ func TestRefund_LedgerRefusesAfterProvider_IsLoud(t *testing.T) {
 
 	h := newHarness(t)
 	in := h.sold(t)
-	h.store.RefundTooLargeOnce = true
+	h.store.SetRefundTooLargeOnce(true)
 
 	_, reason, err := h.svc.Refund(context.Background(), refundReq(in, 50000, "ref-1"))
 

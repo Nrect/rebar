@@ -347,7 +347,7 @@ func TestWebhook_StoreFails_IsUnavailable(t *testing.T) {
 	h := newHarness(t)
 	in := h.start(t, startReq())
 	h.prov.Push(h.event(in, payment.EventSucceeded, in.AmountMinor))
-	h.store.Err = paymenttest.ErrStore
+	h.store.SetErr(paymenttest.ErrStore)
 
 	_, reason, err := h.svc.HandleWebhook(context.Background(), webhook())
 
@@ -364,7 +364,7 @@ func TestWebhook_HookFails_RollsBackEverything(t *testing.T) {
 	h := newHarness(t)
 	in := h.start(t, startReq())
 	ev := h.event(in, payment.EventSucceeded, in.AmountMinor)
-	h.store.OnSettled = func(payment.Intent, payment.LedgerEntry) error { return errHook }
+	h.store.SetOnSettled(func(payment.Intent, payment.LedgerEntry) error { return errHook })
 	h.prov.Push(ev)
 	h.prov.Push(ev)
 
@@ -375,7 +375,7 @@ func TestWebhook_HookFails_RollsBackEverything(t *testing.T) {
 	assert.Empty(t, h.store.EntriesOf(in.ID, payment.LedgerCapture))
 	assert.Zero(t, h.store.Deliveries(ev), "строка дедупа откатилась вместе со всем остальным")
 
-	h.store.OnSettled = nil
+	h.store.SetOnSettled(nil)
 	_, reason, err = h.svc.HandleWebhook(context.Background(), webhook())
 
 	require.NoError(t, err)
@@ -392,10 +392,10 @@ func TestWebhook_HookSeesIntentAndEntry(t *testing.T) {
 	in := h.start(t, startReq())
 	var gotItems []payment.OrderItem
 	var gotAmount int64
-	h.store.OnSettled = func(hooked payment.Intent, entry payment.LedgerEntry) error {
+	h.store.SetOnSettled(func(hooked payment.Intent, entry payment.LedgerEntry) error {
 		gotItems, gotAmount = hooked.Items, entry.AmountMinor
 		return nil
-	}
+	})
 
 	h.settle(t, in)
 

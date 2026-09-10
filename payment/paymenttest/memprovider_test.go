@@ -23,6 +23,7 @@ func TestDoubles_HaveNoExportedFields(t *testing.T) {
 
 	for _, typ := range []reflect.Type{
 		reflect.TypeFor[paymenttest.MemProvider](),
+		reflect.TypeFor[paymenttest.MemStore](),
 		reflect.TypeFor[paymenttest.Observer](),
 	} {
 		for i := range typ.NumField() {

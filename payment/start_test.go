@@ -295,7 +295,7 @@ func TestStart_LostRace_ReturnsWinnersResult(t *testing.T) {
 	t.Parallel()
 
 	h := newHarness(t)
-	h.store.RaceOnce = true
+	h.store.SetRaceOnce(true)
 	req := startReq()
 
 	res, reason, err := h.svc.Start(context.Background(), req)
@@ -499,7 +499,7 @@ func TestStart_StoreFails_IsUnavailable(t *testing.T) {
 	t.Parallel()
 
 	h := newHarness(t)
-	h.store.Err = paymenttest.ErrStore
+	h.store.SetErr(paymenttest.ErrStore)
 
 	_, reason, err := h.svc.Start(context.Background(), startReq())
 
@@ -610,7 +610,7 @@ func TestStart_KeyTakenButRowUnreadable_IsUnavailable(t *testing.T) {
 
 	h := newHarness(t)
 	req := startReq()
-	h.store.ByKey[req.PayerID.String()+"|"+req.IdempotencyKey] = uuid.New()
+	h.store.SeedKey(req.PayerID, req.IdempotencyKey, uuid.New())
 
 	res, reason, err := h.svc.Start(context.Background(), req)
 

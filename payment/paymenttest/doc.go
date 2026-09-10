@@ -11,8 +11,10 @@
 //
 //   - MemStore — payment.Store в памяти: уникальность (payer_id, ключ) с
 //     отпечатком, «одно живое намерение на Reference», дедуп событий,
-//     книга с потолком Σrefund ≤ capture, хуки OnSettled/OnRefunded (тот же
-//     контракт, что у адаптера, но без tx) и Err для fail-closed тестов.
+//     книга с потолком Σrefund ≤ capture, хуки SetOnSettled/SetOnRefunded
+//     (тот же контракт, что у адаптера, но без tx; зовутся под замком, и
+//     двойник из хука не трогают) и SetErr для fail-closed тестов. Публичных
+//     полей нет — по той же причине, что у MemProvider.
 //   - MemProvider — payment.Provider: идемпотентен по ключу, детерминированный
 //     ProviderEventID (вебхук и сверка дедуплицируются друг с другом), холды
 //     через Capture/Cancel либо ErrUnsupported при SetNoHolds. Публичных полей
