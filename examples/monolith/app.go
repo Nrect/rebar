@@ -81,7 +81,9 @@ func New(ctx context.Context, cfg Config, migrations fs.FS) (*App, error) {
 	if err := a.startInfra(ctx, migrations); err != nil {
 		return nil, err
 	}
-	a.startQueues()
+	if err := a.startQueues(); err != nil {
+		return nil, err
+	}
 	a.startIdentity()
 	if err := a.startMoney(ctx); err != nil {
 		return nil, err
@@ -155,10 +157,12 @@ func (a *App) Provider() *paymenttest.MemProvider { return a.provider }
 
 // startQueues — mail и outbox. Собираются РАНЬШЕ auth и payment: их
 // адаптеры уезжают внутрь чужих транзакций.
-func (a *App) startQueues() {
-	letters := mailpg.New(a.db.Pool)
-	transport := a.transport()
-	a.letters = mail.NewService(letters, transport, nil, mail.Config{
+func (a *App) startQueues() error {
+	transport, err := a.transport()
+	if err != nil {
+		return err
+	}
+	a.letters = mail.NewService(mailpg.New(a.db.Pool), transport, nil, mail.Config{
 		From:            mail.Address{Email: a.cfg.MailFrom, Name: "Магазин"},
 		Kinds:           mailKinds(),
 		MessageIDDomain: a.cfg.MailDomain,
@@ -185,7 +189,13 @@ func (a *App) startQueues() {
 		MaxPayloadBytes: 16 * 1024,
 	}
 	a.producer = outbox.NewProducer(queue, cfg)
-	a.worker = a.newWorker(queue, cfg)
+
+	worker, err := a.newWorker(queue, cfg)
+	if err != nil {
+		return err
+	}
+	a.worker = worker
+	return nil
 }
 
 // startIdentity — auth, authz, entitlement и журнал.
