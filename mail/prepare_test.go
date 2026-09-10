@@ -2,6 +2,7 @@ package mail_test
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -144,6 +145,25 @@ func TestPrepare_RejectsHeaderInjection(t *testing.T) {
 			require.ErrorIs(t, err, mail.ErrInvalidMessage)
 		})
 	}
+}
+
+// СООБЩЕНИЕ НАЗЫВАЕТ НАСТОЯЩИЙ РАЗМЕР ТЕЛА: Text и HTML складываются, а не
+// вычитаются. Потолок держит условие строкой выше, а это число читает человек,
+// который решает, что чинить, — и без утверждения арифметику в тексте ошибки
+// не сторожит ничто (см. mutants_internal_test.go).
+func TestPrepare_TooLargeBodyNamesRealSize(t *testing.T) {
+	t.Parallel()
+	svc := newService(t)
+
+	msg := validMessage()
+	msg.Text = strings.Repeat("x", 200<<10)
+	msg.HTML = strings.Repeat("y", 100<<10)
+
+	_, err := svc.Prepare(msg)
+
+	require.ErrorIs(t, err, mail.ErrInvalidMessage)
+	assert.Contains(t, err.Error(), strconv.Itoa(len(msg.Text)+len(msg.HTML)), "размер тела")
+	assert.Contains(t, err.Error(), strconv.Itoa(validConfig().MaxBodyBytes), "потолок")
 }
 
 func TestPrepare_RejectsUnknownKindAndBadKey(t *testing.T) {
