@@ -17,13 +17,18 @@ const (
 	// Граница СТРОГАЯ (expires_at > $2): момент истечения уже закрыт — та же
 	// граница, что у entitlement.Grant.Open. Читается префиксом первичного
 	// ключа, поэтому отдельного индекса не нужно.
-	selectGrantsSQL = `SELECT item_id, expires_at FROM entitlement_grants
+	//
+	// granted_at читается обратно: без этого требование эталонной схемы
+	// «время параметром, не DEFAULT now()» не проверялось бы ничем — адаптер
+	// с DEFAULT now() прошёл бы весь контракт (entitlement/ports.go).
+	selectGrantsSQL = `SELECT item_id, expires_at, granted_at FROM entitlement_grants
 WHERE subject_id = $1 AND (expires_at IS NULL OR expires_at > $2)
 ORDER BY item_id`
 
 	// ПОВТОРНАЯ ВЫДАЧА ПРОДЛЕВАЕТ СРОК, а не удваивает строку: повтор покупки
-	// — штатное событие. ON CONFLICT именно по имени ключа: «любое 23505 —
-	// продление» тихо съело бы чужой конфликт.
+	// — штатное событие. Вместе со сроком обновляется и granted_at.
+	// ON CONFLICT именно по имени ключа: «любое 23505 — продление» тихо съело
+	// бы чужой конфликт.
 	upsertGrantSQL = `INSERT INTO entitlement_grants
 (subject_id, item_id, expires_at, granted_at, source)
 VALUES ($1, $2, $3, $4, $5)
@@ -33,37 +38,29 @@ SET expires_at = EXCLUDED.expires_at, granted_at = EXCLUDED.granted_at, source =
 	deleteGrantSQL = `DELETE FROM entitlement_grants WHERE subject_id = $1 AND item_id = $2`
 )
 
-// SourcePurchase — основание выдачи по оплате. Колонка source нужна, чтобы
-// «кто это открыл» имело ответ: журнал выдач пакет не ведёт (entitlement/doc.go).
-const SourcePurchase = "purchase"
+// sourcePurchase — значение колонки source эталонной схемы.
+//
+// КОНСТАНТА, А НЕ ПАРАМЕТР, и это вынужденно: колонка объявлена NOT NULL с
+// комментарием «заказ, промо, ручная выдача», но у порта Store.Grant места
+// под неё нет. Все выдачи этого примера приходят от оплаты, поэтому здесь
+// значение честное; потребителю с промо и ручными выдачами колонка врала бы.
+const sourcePurchase = "purchase"
 
 // Entitlements — entitlement.Store поверх эталонной схемы.
 //
 // Адаптера у пакета нет и не будет в v0.1 (entitlement/doc.go, «Чего в пакете
 // нет»): выдачи живут у потребителя, и у каждого они устроены по-своему.
+//
+// ЧАСОВ ЗДЕСЬ НЕТ. Момент приходит параметром Store.Grant, как и у Open, —
+// адаптер, у которого есть собственное время, пишет его молча.
 type Entitlements struct {
-	db  postgres.Querier
-	now func() time.Time
+	db postgres.Querier
 }
 
 var _ entitlement.Store = (*Entitlements)(nil)
 
 // NewEntitlements — адаптер на пуле.
-func NewEntitlements(db *DB) *Entitlements {
-	return &Entitlements{db: db.Pool, now: time.Now}
-}
-
-// SetClock подменяет часы; зовётся до начала обслуживания.
-//
-// Часы адаптеру нужны только из-за Grant: у порта нет параметра времени, а
-// колонка granted_at без DEFAULT now() его требует — doc.go,
-// «Что не сошлось: ждёт правки портов», п. 4.
-func (s *Entitlements) SetClock(now func() time.Time) {
-	if now == nil {
-		panic("shoppg.Entitlements.SetClock: now must not be nil")
-	}
-	s.now = now
-}
+func NewEntitlements(db *DB) *Entitlements { return &Entitlements{db: db.Pool} }
 
 // WithTx — тот же адаптер в транзакции вызывающего. ЕДИНСТВЕННЫЙ путь, которым
 // выдача ложится вместе с зачислением: без него человек оказывается
@@ -72,7 +69,7 @@ func (s *Entitlements) WithTx(tx pgx.Tx) *Entitlements {
 	if tx == nil {
 		panic("shoppg.Entitlements.WithTx: nil tx")
 	}
-	return &Entitlements{db: tx, now: s.now}
+	return &Entitlements{db: tx}
 }
 
 // Open отдаёт выдачи, ОТКРЫТЫЕ В МОМЕНТ now. Выдач нет — пустой список и nil, а
@@ -88,14 +85,9 @@ func (s *Entitlements) Open(ctx context.Context, subjectID uuid.UUID,
 
 	var out []entitlement.Grant
 	for rows.Next() {
-		var g entitlement.Grant
-		var expires *time.Time
-		if err := rows.Scan(&g.ItemID, &expires); err != nil {
-			return nil, storeError("чтение выдач", err)
-		}
-		if expires != nil {
-			moment := expires.UTC()
-			g.ExpiresAt = &moment
+		g, scanErr := scanGrant(rows)
+		if scanErr != nil {
+			return nil, scanErr
 		}
 		out = append(out, g)
 	}
@@ -105,28 +97,35 @@ func (s *Entitlements) Open(ctx context.Context, subjectID uuid.UUID,
 	return out, nil
 }
 
-// Grant выдаёт право; повтор продлевает срок.
-//
-// ВРЕМЯ БЕРЁТСЯ ИЗ ЧАСОВ АДАПТЕРА, потому что у порта его нет: единственное
-// место в примере, где момент не приходит параметром. Транзакционный путь
-// (хук зачисления) зовёт GrantAt и передаёт момент явно.
-func (s *Entitlements) Grant(ctx context.Context, subjectID uuid.UUID, g entitlement.Grant) error {
-	return s.GrantAt(ctx, subjectID, g, s.now(), SourcePurchase)
+func scanGrant(row rowScanner) (entitlement.Grant, error) {
+	var (
+		g       entitlement.Grant
+		expires *time.Time
+	)
+	if err := row.Scan(&g.ItemID, &expires, &g.GrantedAt); err != nil {
+		return entitlement.Grant{}, storeError("чтение выдач", err)
+	}
+	g.GrantedAt = g.GrantedAt.UTC()
+	if expires != nil {
+		moment := expires.UTC()
+		g.ExpiresAt = &moment
+	}
+	return g, nil
 }
 
-// GrantAt — та же выдача, но время и основание приходят параметром. Порт
-// entitlement.Store времени не передаёт, а колонка granted_at без DEFAULT
-// now() его требует: тест на управляемых часах иначе проверяет одно, а база
-// пишет другое.
-func (s *Entitlements) GrantAt(ctx context.Context, subjectID uuid.UUID, g entitlement.Grant,
-	at time.Time, source string,
+// Grant выдаёт право; повтор продлевает срок.
+//
+// МОМЕНТ ПРИХОДИТ ПАРАМЕТРОМ at; поле g.GrantedAt на записи игнорируется —
+// так велит порт, и так его читает Open.
+func (s *Entitlements) Grant(ctx context.Context, subjectID uuid.UUID,
+	g entitlement.Grant, at time.Time,
 ) error {
 	var expires *time.Time
 	if g.ExpiresAt != nil {
 		moment := g.ExpiresAt.UTC()
 		expires = &moment
 	}
-	_, err := s.db.Exec(ctx, upsertGrantSQL, subjectID, g.ItemID, expires, utc(at), source)
+	_, err := s.db.Exec(ctx, upsertGrantSQL, subjectID, g.ItemID, expires, utc(at), sourcePurchase)
 	return storeError("выдача права", err)
 }
 

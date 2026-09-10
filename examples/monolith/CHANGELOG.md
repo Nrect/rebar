@@ -6,6 +6,18 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Пересадка на исправленные порты: шесть обходов сняты, потому что порты
+  сошлись. `shoppg.Entitlements` переписан под `Store.Grant(…, at)` —
+  `GrantAt`, часы адаптера и `SetClock` ушли целиком; `Open` читает
+  `granted_at` обратно. Копия `sameLetter` заменена на `mail.CheckDuplicate`,
+  чтение мимо домена — на `payment.Service.IntentByKey`, свой
+  `ErrAccessDenied` — на `authz.ErrDenied`, ручная сборка схемы прогона — на
+  `pgtest.SchemaDSN`, пароль SMTP — на `config.Loader.OptionalSecret`.
+- Сквозной тест проверяет, что `granted_at` равен моменту записи книги, а не
+  времени адаптера: без этого адаптер с `DEFAULT now()` прошёл бы сценарий.
+
 ### Added
 
 - `examples/monolith` — потребитель на всех двенадцати модулях тулкита: ручки

@@ -111,16 +111,21 @@ func loadSMTP(l *config.Loader) smtp.Config {
 		Host:     l.Optional("SMTP_HOST", "localhost"),
 		Port:     l.Port("SMTP_PORT", 1025),
 		Username: l.Optional("SMTP_USER", ""),
-		// Optional, а не Secret: у Loader нет «необязательного секрета», а
-		// SMTP_AUTH=none пароля не требует вовсе — doc.go, «ждёт правки
-		// портов», п. 6.
-		Password:       l.Optional("SMTP_PASSWORD", ""),
+		// OptionalSecret: пароль необязателен (SMTP_AUTH=none его не требует),
+		// но заданный обязан быть секретом — типом, который не печатается ни в
+		// логе, ни в %v, ни в JSON. Reveal — на самой границе, где значение
+		// уезжает в конфиг транспорта.
+		Password:       l.OptionalSecret("SMTP_PASSWORD", minSecretLen).Reveal(),
 		TLS:            smtp.TLSMode(l.Enum("SMTP_TLS", string(smtp.TLSNone), modes(smtp.AllTLSModes)...)),
 		Auth:           smtp.AuthMode(l.Enum("SMTP_AUTH", string(smtp.AuthNone), modes(smtp.AllAuthModes)...)),
 		AllowPlaintext: l.Bool("SMTP_ALLOW_PLAINTEXT", true),
 		Timeout:        l.Duration("SMTP_TIMEOUT", 10*time.Second),
 	}
 }
+
+// minSecretLen — потолок снизу для заданного секрета. Ноль здесь означал бы
+// «любой длины», то есть пароль из одного символа прошёл бы проверку.
+const minSecretLen = 8
 
 // modes — закрытый набор пакета как список строк для Loader.Enum. Значение из
 // окружения проверяется по НЕМУ, а не по своей копии списка: копия разъедется.

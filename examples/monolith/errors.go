@@ -2,6 +2,7 @@ package monolith
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/nrect/rebar/auth"
 	"github.com/nrect/rebar/auth/loginid"
@@ -16,22 +17,18 @@ import (
 	"github.com/nrect/rebar/payment"
 )
 
-// ErrAccessDenied — отказ authz как ОШИБКА.
-//
-// Заведён здесь, потому что у пакета его нет: authz сообщает отказ полем
-// Decision.Allowed и коллбэком Deny, а не sentinel-ошибкой, — в отличие от
-// соседнего entitlement.ErrDenied. Единая таблица «ошибка → HTTP», которой
-// живёт kit/errs/httperr, требует именно ошибки
-// (doc.go, «Что не сошлось: ждёт правки портов», п. 3).
-var ErrAccessDenied = errors.New("monolith: access denied by authz")
-
 // ErrItemNotOpen — отказ, пришедший ОТ ХУКА ПОЛИТИКИ, то есть от entitlement.
 //
-// Отличается от ErrAccessDenied только тем, что решение сузила вторая ось, а
+// Отличается от authz.ErrDenied только тем, что решение сузила ВТОРАЯ ОСЬ, а
 // не роль. ПОЧЕМУ именно сузила — «купил и кончилось» или «не покупал» — сюда
 // не доезжает: authz.Policy возвращает bool, и Reason самого entitlement
 // теряется на границе. ОБХОД ПОСТОЯННЫЙ, не снимать при сходе портов
 // (doc.go, «Что не сошлось: обходы постоянные», п. 1).
+//
+// Своей ошибки на ОБЫЧНЫЙ отказ здесь больше нет: её роль играет
+// authz.ErrDenied. Эта осталась ровно потому, что различает ОСЬ, а не факт
+// отказа, — а ось у authz.ErrDenied лежит в тексте, и разбирать текст ошибки
+// хуже, чем сравнить типизированный Decision.Reason.
 var ErrItemNotOpen = errors.New("monolith: item is not open to subject")
 
 // denialOf — какой отказ отдать по решению authz.
@@ -42,7 +39,7 @@ func denialOf(d authz.Decision) error {
 	if d.Reason == authz.ReasonPolicy {
 		return ErrItemNotOpen
 	}
-	return ErrAccessDenied
+	return fmt.Errorf("%w: %s", authz.ErrDenied, d.Reason)
 }
 
 // rule — «эта доменная ошибка отвечает этим слагом и этим классом».
@@ -111,10 +108,9 @@ func authRules() []rule {
 		// 403, а не 404: отказ по правилу — это отказ, и он обязан быть
 		// отличим от «нет такой страницы» и от 503 выше.
 		//
-		// ErrAccessDenied — НАШ sentinel, а не пакетный: у authz его нет, он
-		// сообщает отказ через Decision.Allowed
-		// (doc.go, «Что не сошлось: ждёт правки портов», п. 3).
-		{ErrAccessDenied, errs.Forbidden("access-denied")},
+		// ErrItemNotOpen — наш: он различает ОСЬ отказа, а не факт
+		// (doc.go, «Что не сошлось: обходы постоянные», п. 1).
+		{authz.ErrDenied, errs.Forbidden("access-denied")},
 		{ErrItemNotOpen, errs.Forbidden("item-not-open")},
 		{entitlement.ErrDenied, errs.Forbidden("item-not-open")},
 		{auth.ErrLoginTaken, errs.Conflict("login-taken")},
