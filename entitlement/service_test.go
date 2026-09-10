@@ -205,6 +205,25 @@ func TestService_GrantInvalidatesSnapshot(t *testing.T) {
 	assert.Equal(t, 2, store.Opens())
 }
 
+// МОМЕНТ ВЫДАЧИ БЕРЁТСЯ С УПРАВЛЯЕМЫХ ЧАСОВ СЕРВИСА, а не у хранилища:
+// иначе тест на SetClock проверяет одно, а granted_at в базе пишет другое
+// (CONVENTIONS §9, «время всегда параметром»).
+func TestService_GrantStoresTheServiceClockMoment(t *testing.T) {
+	t.Parallel()
+
+	svc, store, clock := newService(t)
+	clock.advance(90 * time.Minute)
+	subject := uuid.New()
+
+	grant(t, svc, subject, entitlement.Grant{ItemID: itemAlgebra})
+
+	open, err := store.Open(t.Context(), subject, clock.Now())
+	require.NoError(t, err)
+	require.Len(t, open, 1)
+	assert.True(t, open[0].GrantedAt.Equal(base.Add(90*time.Minute)),
+		"сохранён момент %s, а часы сервиса показывают %s", open[0].GrantedAt, clock.Now())
+}
+
 // Негодная выдача — ошибка программиста, и до хранилища она не доезжает:
 // пустой предмет в базе вёл бы себя как шаблон «открыто всё».
 func TestService_InvalidGrantNeverReachesStore(t *testing.T) {

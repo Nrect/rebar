@@ -24,12 +24,17 @@ import (
 //     ErrUnavailable, и потребитель ответит 503, а не 403;
 //   - Grant повторной выдачей того же предмета ПРОДЛЕВАЕТ срок, а не
 //     удваивает строку: повтор покупки — штатное событие;
+//   - момент выдачи приходит ПАРАМЕТРОМ at и ложится в granted_at; часов у
+//     хранилища нет по той же причине, что и у Open. Поле g.GrantedAt на
+//     записи ИГНОРИРУЕТСЯ, а Open обязан заполнять его сохранённым моментом:
+//     иначе требование эталонной схемы «время параметром, не DEFAULT now()»
+//     не проверяется ничем. Повторная выдача обновляет и его;
 //   - Revoke несуществующей выдачи — не ошибка: отзыв идемпотентен, иначе
 //     повтор отмены платежа падал бы у потребителя;
 //   - срез, отданный из Open, принадлежит вызывающему: реализация не имеет
 //     права держать на него ссылку.
 type Store interface {
 	Open(ctx context.Context, subjectID uuid.UUID, now time.Time) ([]Grant, error)
-	Grant(ctx context.Context, subjectID uuid.UUID, g Grant) error
+	Grant(ctx context.Context, subjectID uuid.UUID, g Grant, at time.Time) error
 	Revoke(ctx context.Context, subjectID uuid.UUID, itemID string) error
 }

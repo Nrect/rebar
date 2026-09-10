@@ -113,6 +113,8 @@ func (s *staleStore) Open(_ context.Context, _ uuid.UUID, _ time.Time) ([]entitl
 	return s.grants, nil
 }
 
-func (s *staleStore) Grant(context.Context, uuid.UUID, entitlement.Grant) error { return nil }
+func (s *staleStore) Grant(context.Context, uuid.UUID, entitlement.Grant, time.Time) error {
+	return nil
+}
 
 func (s *staleStore) Revoke(context.Context, uuid.UUID, string) error { return nil }

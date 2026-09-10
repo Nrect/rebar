@@ -58,6 +58,8 @@ var storeScenarios = []storeScenario{
 	{name: "отзыв убирает выдачу и идемпотентен", run: suiteRevoke},
 	{name: "субъекты не видят выдач друг друга", run: suiteSubjectsIsolated},
 	{name: "снимок отдаётся копией", run: suiteOpenReturnsCopy},
+	{name: "сохранён переданный момент, а не «примерно сейчас»", run: suiteGrantedAtIsTheGivenMoment},
+	{name: "повторная выдача обновляет момент", run: suiteRegrantUpdatesGrantedAt},
 	{name: "отменённый контекст — ошибка", run: suiteCanceledContext},
 }
 
@@ -175,6 +177,48 @@ func suiteOpenReturnsCopy(t *testing.T, store entitlement.Store) {
 	}
 }
 
+// МОМЕНТ ВЫДАЧИ — ТОТ, ЧТО ПЕРЕДАЛИ, а не «примерно сейчас». Реализация с
+// DEFAULT now() или со своими часами проходит все остальные сценарии и
+// расходится с доменом ровно там, где домен идёт на управляемых часах:
+// granted_at — колонка, по которой потом режут отчёты и разбирают жалобы.
+//
+// Заодно проверяется, что поле g.GrantedAt на записи ИГНОРИРУЕТСЯ: два
+// источника момента — это два разных granted_at у двух реализаций.
+func suiteGrantedAtIsTheGivenMoment(t *testing.T, store entitlement.Store) {
+	t.Helper()
+	subject := uuid.New()
+	at := SuiteNow().Add(-72 * time.Hour)
+	mustGrantAt(t, store, subject,
+		entitlement.Grant{ItemID: SuiteItem, GrantedAt: SuiteNow().Add(100 * time.Hour)}, at)
+
+	got := openAt(t, store, subject, SuiteNow())
+	if len(got) != 1 {
+		t.Fatalf("выдача не отдана: %v", items(got))
+	}
+	if !got[0].GrantedAt.Equal(at) {
+		t.Fatalf("сохранён момент %s, а передан %s", got[0].GrantedAt, at)
+	}
+}
+
+// Повторная выдача — новое основание доступа, и момент у неё свой: иначе
+// продлённое право выглядит выданным год назад.
+func suiteRegrantUpdatesGrantedAt(t *testing.T, store entitlement.Store) {
+	t.Helper()
+	subject := uuid.New()
+	first := SuiteNow().Add(-72 * time.Hour)
+	second := SuiteNow().Add(-time.Hour)
+	mustGrantAt(t, store, subject, entitlement.Grant{ItemID: SuiteItem}, first)
+	mustGrantAt(t, store, subject, entitlement.Grant{ItemID: SuiteItem}, second)
+
+	got := openAt(t, store, subject, SuiteNow())
+	if len(got) != 1 {
+		t.Fatalf("после повторной выдачи ожидалась одна строка, получено %v", items(got))
+	}
+	if !got[0].GrantedAt.Equal(second) {
+		t.Fatalf("повторная выдача оставила момент %s, ожидался %s", got[0].GrantedAt, second)
+	}
+}
+
 // Отменённый контекст — ошибка, а не пустой список: пустой означал бы «ничего
 // не куплено», то есть отказ в правах вместо недоступности.
 func suiteCanceledContext(t *testing.T, store entitlement.Store) {
@@ -189,9 +233,18 @@ func suiteCanceledContext(t *testing.T, store entitlement.Store) {
 	}
 }
 
+// mustGrant — выдача в момент SuiteNow. Момент называется явно даже там, где
+// сценарий им не интересуется: параметр порта нельзя не заполнить.
 func mustGrant(t *testing.T, store entitlement.Store, subjectID uuid.UUID, g entitlement.Grant) {
 	t.Helper()
-	if err := store.Grant(t.Context(), subjectID, g); err != nil {
+	mustGrantAt(t, store, subjectID, g, SuiteNow())
+}
+
+func mustGrantAt(t *testing.T, store entitlement.Store, subjectID uuid.UUID,
+	g entitlement.Grant, at time.Time,
+) {
+	t.Helper()
+	if err := store.Grant(t.Context(), subjectID, g, at); err != nil {
 		t.Fatalf("Grant(%s): %v", g.ItemID, err)
 	}
 }

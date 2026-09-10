@@ -130,7 +130,7 @@ func (s *Service) Grant(ctx context.Context, subjectID uuid.UUID, g Grant) error
 	if subjectID == uuid.Nil || !validItemID(g.ItemID) {
 		return fmt.Errorf("%w: subject must not be nil and item must be 1..%d bytes", ErrInvalidGrant, MaxItemIDLen)
 	}
-	if err := s.store.Grant(ctx, subjectID, g); err != nil {
+	if err := s.store.Grant(ctx, subjectID, g, s.now()); err != nil {
 		return fmt.Errorf("%w: store: %w", ErrUnavailable, err)
 	}
 	s.cache.drop(subjectID)
