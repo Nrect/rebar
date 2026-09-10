@@ -8,13 +8,17 @@
 ### Added
 - Подпакет `paymentotel` — наблюдаемость на OpenTelemetry, meter
   `rebar.payment`. `Wrap(provider, meter)` — декоратор порта `Provider` со
-  счётчиком `payment_provider_calls{type,result}`: `type` — закрытый набор
-  `AllCallTypes` (шесть методов порта; `Name` пробрасывается как есть и не
-  считается), `result` — `ok` / `rejected` / `error`. Отказ и молчание
-  провайдера не сводятся: `rejected` — классы `ErrProviderRejected`,
-  `ErrUnsupported`, `ErrInvalidSignature`, `ErrMalformedEvent` и
-  `CreatePaymentResult.Status == EventFailed`; всё прочее, включая
-  неизвестную ошибку, — `error`. `NewGauges(meter)` — `payment_intents_stuck`
+  счётчиком `payment_provider_calls{provider,type,result}`: `provider` —
+  `Name()` провайдера (форма `[a-z0-9_]{1,32}`, её проверяет `NewService`;
+  два провайдера на одном метре не сливаются в один ряд), `type` — закрытый
+  набор `AllCallTypes` (шесть методов порта; `Name` пробрасывается как есть и
+  не считается), `result` — `ok` / `rejected` / `error`. Отказ и молчание
+  провайдера не сводятся, и граница между ними та же, что у сервиса:
+  `rejected` — ровно те ответы, на которые сервис не отдаёт `ErrUnavailable`
+  (`ErrProviderRejected`, `ErrUnsupported`, `Status == EventFailed` у
+  `CreatePayment`; у `ParseWebhook` — `ErrInvalidSignature` и явный
+  `ErrMalformedEvent`), всё прочее, включая неизвестную ошибку, — `error`.
+  `NewGauges(meter)` — `payment_intents_stuck`
   и `payment_drift{kind}` по снимку, который потребитель кладёт в `Set` после
   сверки (`CountStuckPending`, `Drift`); записи расхождений не хранятся, род
   вне `AllDriftKinds` идёт рядом без метки. otel стал прямой зависимостью

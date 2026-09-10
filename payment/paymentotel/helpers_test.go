@@ -201,10 +201,27 @@ func callPoints(t *testing.T, ms []metricdata.Metrics) []metricdata.DataPoint[in
 	return sum.DataPoints
 }
 
-// callCount — значение счётчика по паре меток; ноль, если такой пары нет.
+// callCount — вызовы по type и result, по всем провайдерам; ноль, если таких нет.
 func callCount(t *testing.T, ms []metricdata.Metrics, typ paymentotel.CallType, result paymentotel.Result) int64 {
 	t.Helper()
+	var total int64
+	for _, dp := range callPoints(t, ms) {
+		gotType, _ := dp.Attributes.Value("type")
+		gotResult, _ := dp.Attributes.Value("result")
+		if gotType.AsString() == string(typ) && gotResult.AsString() == string(result) {
+			total += dp.Value
+		}
+	}
+	return total
+}
+
+// callCountOf — вызовы одного провайдера по type и result.
+func callCountOf(t *testing.T, ms []metricdata.Metrics, provider string,
+	typ paymentotel.CallType, result paymentotel.Result,
+) int64 {
+	t.Helper()
 	want := attribute.NewSet(
+		attribute.String("provider", provider),
 		attribute.String("type", string(typ)),
 		attribute.String("result", string(result)),
 	)

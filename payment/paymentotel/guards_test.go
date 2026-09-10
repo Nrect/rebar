@@ -45,13 +45,14 @@ func TestAllCallTypes_CoverThePort(t *testing.T) {
 }
 
 // Все пары закрытых наборов достижимы, и ни одна точка счётчика не несёт метки
-// вне них: страж ловит исход, добавленный в код и забытый в All*.
+// вне них: страж ловит исход, добавленный в код и забытый в All*. Подпись в
+// наборе ошибок — ради parse_webhook/rejected: у вебхука это его отказ.
 func TestWrap_EveryPointIsFromClosedSets(t *testing.T) {
 	t.Parallel()
 	stub := newStub(nil)
 	p, reader := wrap(t, stub)
 
-	for _, err := range []error{nil, payment.ErrProviderRejected, payment.ErrUnavailable} {
+	for _, err := range []error{nil, payment.ErrProviderRejected, payment.ErrInvalidSignature, payment.ErrUnavailable} {
 		stub.err = err
 		for _, pc := range everyCall() {
 			_ = pc.do(context.Background(), p)
@@ -61,7 +62,10 @@ func TestWrap_EveryPointIsFromClosedSets(t *testing.T) {
 	points := callPoints(t, collect(t, reader))
 	assert.Len(t, points, len(paymentotel.AllCallTypes)*len(paymentotel.AllResults), "все пары достижимы")
 	for _, dp := range points {
-		require.Equal(t, 2, dp.Attributes.Len(), "меток ровно две")
+		require.Equal(t, 3, dp.Attributes.Len(), "меток ровно три")
+		name, ok := dp.Attributes.Value("provider")
+		require.True(t, ok, "у точки нет метки provider")
+		assert.Equal(t, "stub", name.AsString())
 		typ, ok := dp.Attributes.Value("type")
 		require.True(t, ok, "у точки нет метки type")
 		result, ok := dp.Attributes.Value("result")

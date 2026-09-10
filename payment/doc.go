@@ -95,10 +95,10 @@
 // от каталога, ни от текстов провайдера. Кому метрики не нужны — LogObserver, а
 // не nil: забытый наблюдатель молчал бы ровно на денежных алертах.
 //
-//	payments_total{op,reason}            исходы Start/HandleWebhook/Capture/Cancel/Refund/Reconcile (paymentotel.NewObserver)
-//	payment_provider_calls{type,result}  вызовы провайдера (paymentotel.Wrap)
-//	payment_intents_stuck                gauge, CountStuckPending: вебхуки перестали доходить
-//	payment_drift{kind}                  gauge, Drift: деньги и учёт разошлись, порог алерта 1
+//	payments_total{op,reason}                     исходы Start/HandleWebhook/Capture/Cancel/Refund/Reconcile (paymentotel.NewObserver)
+//	payment_provider_calls{provider,type,result}  вызовы провайдера (paymentotel.Wrap)
+//	payment_intents_stuck                         gauge, CountStuckPending: вебхуки перестали доходить
+//	payment_drift{kind}                           gauge, Drift: деньги и учёт разошлись, порог алерта 1
 //
 // Алерты с порогом 1: reason=status_conflict (деньги на закрытом намерении),
 // reason=amount_mismatch (провайдер назвал не ту сумму), любой payment_drift.

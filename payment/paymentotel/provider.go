@@ -52,26 +52,21 @@ const (
 	unitCall  = "{call}"
 )
 
-// Метки счётчика: оба набора закрыты, см. doc.go, п. 1.
+// Метки счётчика: все три набора закрыты, см. doc.go, п. 1.
 const (
-	attrType   = "type"
-	attrResult = "result"
+	attrProvider = "provider"
+	attrType     = "type"
+	attrResult   = "result"
 )
 
-// rejectedClasses — классы ядра, которыми адаптер говорит «ответ есть, и он
-// отрицательный». Всё, чего здесь нет, считается молчанием.
-var rejectedClasses = []error{
-	payment.ErrProviderRejected, // отказ по существу
-	payment.ErrUnsupported,      // операции у адаптера нет по конструкции
-	payment.ErrInvalidSignature, // вебхук не подтверждён: 400, повтора не будет
-	payment.ErrMalformedEvent,   // тело не разбирается: 400, повтора не будет
-}
-
 // provider — декоратор payment.Provider: каждый вызов считается в
-// payment_provider_calls{type,result}. Потокобезопасен, если потокобезопасен next.
+// payment_provider_calls{provider,type,result}. Потокобезопасен, если
+// потокобезопасен next.
 type provider struct {
 	next  payment.Provider
 	calls metric.Int64Counter
+	// name — метка provider: имя одно на декоратор и читается при сборке.
+	name attribute.KeyValue
 }
 
 var _ payment.Provider = (*provider)(nil)
@@ -79,6 +74,10 @@ var _ payment.Provider = (*provider)(nil)
 // Wrap паникует на nil-порте и nil-метре, как payment.NewService: ошибка сборки
 // обязана падать на старте. Ошибка создания инструмента возвращается — метрик
 // у потребителя может не быть, а платежи нужны.
+//
+// Форму имени ([a-z0-9_]{1,32}) проверяет payment.NewService: декоратор с
+// негодным именем сервис не соберёт, и в метку собранного сервиса оно не
+// попадёт.
 func Wrap(next payment.Provider, meter metric.Meter) (payment.Provider, error) {
 	if next == nil {
 		panic("paymentotel.Wrap: nil provider")
@@ -88,12 +87,15 @@ func Wrap(next payment.Provider, meter metric.Meter) (payment.Provider, error) {
 	}
 	calls, err := meter.Int64Counter(callsName,
 		metric.WithUnit(unitCall),
-		metric.WithDescription("Вызовы платёжного провайдера по методу и исходу."),
+		metric.WithDescription("Вызовы платёжного провайдера по провайдеру, методу и исходу."),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("paymentotel: инструмент %s: %w", callsName, err)
 	}
-	return &provider{next: next, calls: calls}, nil
+	return &provider{
+		next: next, calls: calls,
+		name: attribute.String(attrProvider, string(next.Name())),
+	}, nil
 }
 
 // Name отдаёт имя next как есть и не считается: см. doc.go, п. 4.
@@ -114,7 +116,7 @@ func (p *provider) CreatePayment(ctx context.Context, req payment.CreatePaymentR
 
 func (p *provider) ParseWebhook(ctx context.Context, req payment.WebhookRequest) (payment.Event, error) {
 	ev, err := p.next.ParseWebhook(ctx, req)
-	p.count(ctx, CallParseWebhook, classify(err))
+	p.count(ctx, CallParseWebhook, classifyWebhook(err))
 	return ev, err
 }
 
@@ -143,33 +145,51 @@ func (p *provider) Refund(ctx context.Context, req payment.RefundProviderRequest
 }
 
 // count — одна точка записи на все методы; ответ и ошибку next не трогает
-// (doc.go, п. 3), в метки берёт только метод и исход (п. 1).
+// (doc.go, п. 3), в метки берёт только провайдера, метод и исход (п. 1).
 func (p *provider) count(ctx context.Context, call CallType, result Result) {
 	p.calls.Add(ctx, 1, metric.WithAttributes(
+		p.name,
 		attribute.String(attrType, string(call)),
 		attribute.String(attrResult, string(result)),
 	))
 }
 
-// classify — исход по КЛАССУ ошибки через errors.Is: декоратор не знает, чей
-// адаптер под ним, и текста ошибки не читает.
+// classify — исход вызова, кроме ParseWebhook, по КЛАССУ ошибки через
+// errors.Is: декоратор не знает, чей адаптер под ним, и текста ошибки не читает.
 //
 // ОТКАЗ И МОЛЧАНИЕ НЕ СВОДЯТСЯ. «Провайдер отказал» — обычная работа, таких
 // сотни в день; «провайдер не ответил» — инцидент. Сведи их в один исход — и
 // алерт «провайдер недоступен» будет гореть от фонового шума отказов, а через
-// неделю его отключат. Поэтому неизвестная ошибка — error: отказ обязан
-// назвать адаптер классом ядра, а молчание по умолчанию тревожит.
+// неделю его отключат.
 //
-// Класс отказа ищется раньше молчания, как в providerError ядра:
-// ErrUnavailable поверх ErrUnsupported — всё ещё отказ по конструкции.
+// Граница — та же, что у сервиса (providerError): rejected ровно там, где он не
+// отдаёт ErrUnavailable, иначе алерт врал бы на тех самых ответах, на которых
+// потребитель отвечает 503. Класс отказа ищется раньше молчания: ErrUnavailable
+// поверх ErrUnsupported — всё ещё отказ.
 func classify(err error) Result {
 	if err == nil {
 		return ResultOK
 	}
-	for _, class := range rejectedClasses {
-		if errors.Is(err, class) {
-			return ResultRejected
-		}
+	if errors.Is(err, payment.ErrProviderRejected) || errors.Is(err, payment.ErrUnsupported) {
+		return ResultRejected
+	}
+	return ResultError
+}
+
+// classifyWebhook — исход ParseWebhook в порядке parseError ядра: подпись, затем
+// недоступность, затем явный мусор; неклассифицированное — молчание.
+func classifyWebhook(err error) Result {
+	if err == nil {
+		return ResultOK
+	}
+	if errors.Is(err, payment.ErrInvalidSignature) {
+		return ResultRejected
+	}
+	if errors.Is(err, payment.ErrUnavailable) {
+		return ResultError
+	}
+	if errors.Is(err, payment.ErrMalformedEvent) {
+		return ResultRejected
 	}
 	return ResultError
 }
