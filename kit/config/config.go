@@ -85,19 +85,51 @@ func (l *Loader) Optional(key, def string) string {
 // Secret — секрет: умолчания нет, длина не меньше minLen. Значение берётся
 // байт в байт, без обрезки пробелов: они могут быть значащими.
 func (l *Loader) Secret(key string, minLen int) Secret {
-	if minLen <= 0 {
-		panic(fmt.Sprintf("config.Secret: minLen for %s must be positive, got %d", key, minLen))
-	}
+	requireMinLen("Secret", key, minLen)
 	value, ok := l.lookup(key)
 	if !ok || value == "" {
 		l.Fail(key, "must be set")
 		return ""
 	}
+	return l.checkedSecret(key, value, minLen)
+}
+
+// OptionalSecret — секрет, которого при этом режиме может не быть:
+// отсутствующий (и пустой) ключ даёт нулевой Secret без ошибки, присутствующий
+// проверяется тем же minLen.
+//
+// НУЖЕН, ЧТОБЫ НЕОБЯЗАТЕЛЬНЫЙ СЕКРЕТ НЕ ЧИТАЛИ ЧЕРЕЗ Optional. Пароль SMTP при
+// SMTP_AUTH=none не нужен вовсе, а Secret на таком ключе даёт «must be set»; и
+// тогда его читают строкой — то есть без типа-редактора, и он утекает первым
+// же %v в отладочной печати. Отсутствие секрета — это режим, а не умолчание,
+// поэтому умолчания у OptionalSecret нет: нулевой Secret редактируется так же,
+// как заполненный.
+//
+// Паника на minLen <= 0 остаётся: секрет без минимальной длины — не секрет, и
+// «необязательный» относится к наличию ключа, а не к проверке значения.
+func (l *Loader) OptionalSecret(key string, minLen int) Secret {
+	requireMinLen("OptionalSecret", key, minLen)
+	value, ok := l.lookup(key)
+	if !ok || value == "" {
+		return ""
+	}
+	return l.checkedSecret(key, value, minLen)
+}
+
+// checkedSecret — общая проверка длины: одна точка на оба читателя, иначе
+// «не меньше minLen» однажды разъедется между ними.
+func (l *Loader) checkedSecret(key, value string, minLen int) Secret {
 	if utf8.RuneCountInString(value) < minLen {
 		l.Fail(key, "must be at least "+strconv.Itoa(minLen)+" characters long")
 		return ""
 	}
 	return Secret(value)
+}
+
+func requireMinLen(reader, key string, minLen int) {
+	if minLen <= 0 {
+		panic(fmt.Sprintf("config.%s: minLen for %s must be positive, got %d", reader, key, minLen))
+	}
 }
 
 // Duration — длительность в форме time.ParseDuration, строго больше нуля.

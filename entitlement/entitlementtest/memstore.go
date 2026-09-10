@@ -117,7 +117,13 @@ func (m *MemStore) Open(ctx context.Context, subjectID uuid.UUID, now time.Time)
 
 // Grant — выдать предмет. Повторная выдача ПРОДЛЕВАЕТ срок, а не удваивает
 // строку: ключ — предмет, как первичный ключ у адаптера.
-func (m *MemStore) Grant(ctx context.Context, subjectID uuid.UUID, g entitlement.Grant) error {
+//
+// Момент приходит параметром и ЗАТИРАЕТ g.GrantedAt: у адаптера в granted_at
+// уезжает $at, а не поле структуры, и двойник, сохранивший поле, расходился бы
+// с ним на первом же вызове, где они различаются.
+func (m *MemStore) Grant(ctx context.Context, subjectID uuid.UUID, g entitlement.Grant,
+	at time.Time,
+) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err := m.fail(ctx); err != nil {
@@ -126,7 +132,9 @@ func (m *MemStore) Grant(ctx context.Context, subjectID uuid.UUID, g entitlement
 	if m.grants[subjectID] == nil {
 		m.grants[subjectID] = map[string]entitlement.Grant{}
 	}
-	m.grants[subjectID][g.ItemID] = clone(g)
+	stored := clone(g)
+	stored.GrantedAt = at
+	m.grants[subjectID][g.ItemID] = stored
 	return nil
 }
 

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -54,6 +55,51 @@ func TestSchema_Isolates(t *testing.T) {
 			assert.Equal(t, 1, rows, "строки соседнего теста видны — search_path не изолировал")
 		})
 	}
+}
+
+// SchemaDSN — та же изоляция, но приложению: оно поднимает пул само по этой
+// строке, и таблиц соседа не видит.
+func TestSchemaDSN_Isolates(t *testing.T) {
+	t.Parallel()
+	pgtest.Short(t)
+
+	mine, neighbour := pgtest.SchemaDSN(t, db), pgtest.SchemaDSN(t, db)
+	require.NotEqual(t, searchPathOf(t, mine), searchPathOf(t, neighbour),
+		"два вызова обязаны дать разные схемы")
+
+	minePool := appPool(t, mine)
+	pgtest.Apply(t, minePool, pgtest.GooseUp(t, writeSchema(t)))
+	_, err := minePool.Exec(t.Context(), `INSERT INTO note (id, body) VALUES (1, 'мой')`)
+	require.NoError(t, err)
+
+	var body string
+	require.NoError(t, minePool.QueryRow(t.Context(), `SELECT body FROM note`).Scan(&body))
+	assert.Equal(t, "мой", body)
+
+	// Сосед по той же базе таблицы не видит вовсе: search_path у него свой.
+	_, err = appPool(t, neighbour).Exec(t.Context(), `SELECT 1 FROM note`)
+	var pgErr *pgconn.PgError
+	require.ErrorAs(t, err, &pgErr)
+	assert.Equal(t, "42P01", pgErr.Code, "сосед видит таблицу — search_path не изолировал")
+}
+
+// appPool — пул, поднятый ПРИЛОЖЕНИЕМ по строке соединения: ровно так, как это
+// делает потребитель, которому pgtest отдал DSN.
+func appPool(t *testing.T, dsn string) *pgxpool.Pool {
+	t.Helper()
+	pool, err := pgxpool.New(t.Context(), dsn)
+	require.NoError(t, err)
+	t.Cleanup(pool.Close)
+	return pool
+}
+
+func searchPathOf(t *testing.T, dsn string) string {
+	t.Helper()
+	cfg, err := pgx.ParseConfig(dsn)
+	require.NoError(t, err)
+	path := cfg.RuntimeParams["search_path"]
+	require.NotEmpty(t, path, "в DSN нет search_path")
+	return path
 }
 
 // GooseUp берёт только секцию наката: DROP из Down в тест не приезжает.

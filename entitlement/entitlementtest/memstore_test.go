@@ -36,7 +36,8 @@ func TestMemStore_ErrIsDistinguishable(t *testing.T) {
 
 	_, err := store.Open(t.Context(), subject, time.Now())
 	require.ErrorIs(t, err, stand)
-	require.ErrorIs(t, store.Grant(t.Context(), subject, entitlement.Grant{ItemID: entitlementtest.SuiteItem}), stand)
+	require.ErrorIs(t, store.Grant(t.Context(), subject,
+		entitlement.Grant{ItemID: entitlementtest.SuiteItem}, entitlementtest.SuiteNow()), stand)
 	require.ErrorIs(t, store.Revoke(t.Context(), subject, entitlementtest.SuiteItem), stand)
 	require.NotErrorIs(t, err, entitlement.ErrUnavailable, "ошибка стенда — не доменная ошибка пакета")
 
@@ -53,7 +54,7 @@ func TestMemStore_SurvivesEdgeArguments(t *testing.T) {
 	store := entitlementtest.NewMemStore()
 	assert.NotPanics(t, func() {
 		require.NoError(t, store.Revoke(t.Context(), uuid.Nil, ""))
-		require.NoError(t, store.Grant(t.Context(), uuid.Nil, entitlement.Grant{}))
+		require.NoError(t, store.Grant(t.Context(), uuid.Nil, entitlement.Grant{}, time.Time{}))
 		_, err := store.Open(t.Context(), uuid.Nil, time.Time{})
 		require.NoError(t, err)
 	})
@@ -71,7 +72,8 @@ func TestMemStore_Race(t *testing.T) {
 	for range workers {
 		go func() {
 			defer wg.Done()
-			_ = store.Grant(t.Context(), subject, entitlement.Grant{ItemID: entitlementtest.SuiteItem})
+			_ = store.Grant(t.Context(), subject,
+				entitlement.Grant{ItemID: entitlementtest.SuiteItem}, entitlementtest.SuiteNow())
 		}()
 		go func() {
 			defer wg.Done()

@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/nrect/rebar/postgres"
 )
 
 // GooseUpMarker — маркер секции наката в файле схемы.
@@ -21,6 +23,38 @@ const GooseDownMarker = "-- +goose Down"
 // Схема не удаляется — базу прогона снимает Close.
 func Schema(t *testing.T, db *DB) *pgxpool.Pool {
 	t.Helper()
+	name := createSchema(t, db)
+	pool, err := newPool(t.Context(), db.DSN(), db.maxConns, name)
+	if err != nil {
+		t.Fatalf("pgtest: пул схемы %s: %v", name, err)
+	}
+	t.Cleanup(pool.Close)
+	return pool
+}
+
+// SchemaDSN — та же схема на тест, но СТРОКОЙ СОЕДИНЕНИЯ: приложение поднимает
+// пул само, это его нормальная форма, и собирать search_path руками ему не за
+// чем. Изоляция та же, что у Schema, уборка та же: своего пула здесь нет, а
+// схему снимает Close вместе с базой прогона.
+func SchemaDSN(t *testing.T, db *DB) string {
+	t.Helper()
+	name := createSchema(t, db)
+	// Через WithRuntimeParam, а не склейкой: он ещё и проверяет, что параметр
+	// доехал именно до RuntimeParams — у DSN две формы, и в keyword/value
+	// склейка «?search_path=» молча не сработала бы. Текст DSN в ошибку не
+	// попадает: в нём пароль.
+	dsn, err := postgres.WithRuntimeParam(db.DSN(), "search_path", name)
+	if err != nil {
+		t.Fatalf("pgtest: search_path=%s в DSN: %v", name, err)
+	}
+	return dsn
+}
+
+// createSchema — схема прогона со случайным именем; общий шаг Schema и
+// SchemaDSN. Имя генерируется здесь и состоит из [a-z0-9]: имя схемы в DDL
+// параметром не передать.
+func createSchema(t *testing.T, db *DB) string {
+	t.Helper()
 	suffix, err := randomHex(8)
 	if err != nil {
 		t.Fatal(err)
@@ -29,12 +63,7 @@ func Schema(t *testing.T, db *DB) *pgxpool.Pool {
 	if _, err = db.Pool().Exec(t.Context(), "CREATE SCHEMA "+name); err != nil {
 		t.Fatalf("pgtest: CREATE SCHEMA %s: %v", name, err)
 	}
-	pool, err := newPool(t.Context(), db.DSN(), db.maxConns, name)
-	if err != nil {
-		t.Fatalf("pgtest: пул схемы %s: %v", name, err)
-	}
-	t.Cleanup(pool.Close)
-	return pool
+	return name
 }
 
 // Apply выполняет SQL в пуле теста — например тело Up из schema.sql.
