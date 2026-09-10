@@ -35,6 +35,11 @@
   громкий отказ, если книга не приняла уже выполненный провайдером возврат.
 - Сверка: `Service.StalePending` с курсором, `CountStuckPending`, `Drift`,
   плюс `Reconciler` с `Run(ctx) (int, error)` — сигнатурой `scheduler.Job.Run`.
+- Чтение через домен: `Service.IntentByID`, `Service.IntentByKey` и
+  `Service.Ledger`. `IntentByKey` нормализует ключ сам, как `Start`: две точки
+  нормализации — это два ключа, и вызывающий, забывший нормализовать, получил
+  бы «намерения нет» на существующем. Без этих методов потребителю приходилось
+  держать `Store` и читать мимо сервиса.
 - Чек 54-ФЗ: `Receipt` с `Customer{Email, Phone}` (достаточно одного),
   необязательными `MarkCode` и `Measure`; `CheckReceipt` — одна функция на все
   точки вызова.
