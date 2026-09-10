@@ -21,7 +21,8 @@ import (
 // Заведён здесь, потому что у пакета его нет: authz сообщает отказ полем
 // Decision.Allowed и коллбэком Deny, а не sentinel-ошибкой, — в отличие от
 // соседнего entitlement.ErrDenied. Единая таблица «ошибка → HTTP», которой
-// живёт kit/errs/httperr, требует именно ошибки (doc.go, «Что не сошлось»).
+// живёт kit/errs/httperr, требует именно ошибки
+// (doc.go, «Что не сошлось: ждёт правки портов», п. 3).
 var ErrAccessDenied = errors.New("monolith: access denied by authz")
 
 // ErrItemNotOpen — отказ, пришедший ОТ ХУКА ПОЛИТИКИ, то есть от entitlement.
@@ -30,7 +31,7 @@ var ErrAccessDenied = errors.New("monolith: access denied by authz")
 // не роль. ПОЧЕМУ именно сузила — «купил и кончилось» или «не покупал» — сюда
 // не доезжает: authz.Policy возвращает bool, и Reason самого entitlement
 // теряется на границе. ОБХОД ПОСТОЯННЫЙ, не снимать при сходе портов
-// (doc.go, «Что не сошлось», п. 4).
+// (doc.go, «Что не сошлось: обходы постоянные», п. 1).
 var ErrItemNotOpen = errors.New("monolith: item is not open to subject")
 
 // denialOf — какой отказ отдать по решению authz.
@@ -111,7 +112,8 @@ func authRules() []rule {
 		// отличим от «нет такой страницы» и от 503 выше.
 		//
 		// ErrAccessDenied — НАШ sentinel, а не пакетный: у authz его нет, он
-		// сообщает отказ через Decision.Allowed (doc.go, «Что не сошлось»).
+		// сообщает отказ через Decision.Allowed
+		// (doc.go, «Что не сошлось: ждёт правки портов», п. 3).
 		{ErrAccessDenied, errs.Forbidden("access-denied")},
 		{ErrItemNotOpen, errs.Forbidden("item-not-open")},
 		{entitlement.ErrDenied, errs.Forbidden("item-not-open")},

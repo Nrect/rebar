@@ -112,7 +112,8 @@ func loadSMTP(l *config.Loader) smtp.Config {
 		Port:     l.Port("SMTP_PORT", 1025),
 		Username: l.Optional("SMTP_USER", ""),
 		// Optional, а не Secret: у Loader нет «необязательного секрета», а
-		// SMTP_AUTH=none пароля не требует вовсе — doc.go, «Что не сошлось».
+		// SMTP_AUTH=none пароля не требует вовсе — doc.go, «ждёт правки
+		// портов», п. 6.
 		Password:       l.Optional("SMTP_PASSWORD", ""),
 		TLS:            smtp.TLSMode(l.Enum("SMTP_TLS", string(smtp.TLSNone), modes(smtp.AllTLSModes)...)),
 		Auth:           smtp.AuthMode(l.Enum("SMTP_AUTH", string(smtp.AuthNone), modes(smtp.AllAuthModes)...)),

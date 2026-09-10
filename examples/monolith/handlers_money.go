@@ -62,7 +62,8 @@ func (a *App) startPayment(r *http.Request, subject uuid.UUID, product Product,
 	ctx := r.Context()
 	// ПОВТОР ПОД ТЕМ ЖЕ КЛЮЧОМ НЕ ЗАВОДИТ ВТОРОЙ ЗАКАЗ. Проверка идёт мимо
 	// payment.Service: читающих методов у него нет вовсе, и намерение по
-	// ключу приходится спрашивать у стора напрямую (doc.go, «Что не сошлось»).
+	// ключу приходится спрашивать у стора напрямую
+	// (doc.go, «Что не сошлось: ждёт правки портов», п. 2).
 	if in, found, err := a.payStore.IntentByKey(ctx, subject, key); err == nil && found {
 		return payment.StartResult{Intent: in}, "", nil
 	}

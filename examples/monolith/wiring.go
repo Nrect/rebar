@@ -59,7 +59,7 @@ func authzConfig() authz.Config {
 //
 // ОБХОД ПОСТОЯННЫЙ, не снимать при сходе портов: именованной «конфигурации
 // куки для стенда» в пакете не будет — её однажды скопируют в прод
-// (doc.go, «Что не сошлось», п. 6).
+// (doc.go, «Что не сошлось: обходы постоянные», п. 2).
 func cookieConfig(cfg Config) authhttp.CookieConfig {
 	if cfg.CookieSecure {
 		return authhttp.DefaultCookieConfig(cfg.CookieName)

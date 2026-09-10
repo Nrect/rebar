@@ -56,7 +56,8 @@ func NewEntitlements(db *DB) *Entitlements {
 // SetClock подменяет часы; зовётся до начала обслуживания.
 //
 // Часы адаптеру нужны только из-за Grant: у порта нет параметра времени, а
-// колонка granted_at без DEFAULT now() его требует — doc.go, «Что не сошлось».
+// колонка granted_at без DEFAULT now() его требует — doc.go,
+// «Что не сошлось: ждёт правки портов», п. 4.
 func (s *Entitlements) SetClock(now func() time.Time) {
 	if now == nil {
 		panic("shoppg.Entitlements.SetClock: now must not be nil")

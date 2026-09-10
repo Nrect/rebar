@@ -131,7 +131,8 @@ func standEnv(t *testing.T, dsn string) map[string]string {
 // schemaDSN — своя схема на тест и DSN с search_path в неё.
 //
 // Написан здесь, а не взят из pgtest: Schema отдаёт ПУЛ, а приложению нужна
-// строка соединения — оно поднимает пул само (doc.go, «Что не сошлось»).
+// строка соединения — оно поднимает пул само
+// (doc.go, «Что не сошлось: ждёт правки портов», п. 5).
 func schemaDSN(t *testing.T) string {
 	t.Helper()
 	buf := make([]byte, 8)

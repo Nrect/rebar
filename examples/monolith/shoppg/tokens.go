@@ -73,7 +73,8 @@ func (t *Tokens) Issue(ctx context.Context, row session.OneTimeToken, n session.
 //
 // ПОВТОР ПОД ТЕМ ЖЕ КЛЮЧОМ ПРОВЕРЯЕТСЯ ЗДЕСЬ РУКАМИ. mail.Service.Enqueue
 // сверяет отпечаток сам, но он ходит в пул, а нам нужна транзакция; функции
-// вроде outbox.CheckDuplicate у mail нет — doc.go, «Что не сошлось».
+// вроде outbox.CheckDuplicate у mail нет
+// (doc.go, «Что не сошлось: ждёт правки портов», п. 1).
 func (t *Tokens) enqueueLetter(ctx context.Context, tx pgx.Tx, n session.Notification) error {
 	env, ok, err := t.letter(n)
 	if err != nil {
