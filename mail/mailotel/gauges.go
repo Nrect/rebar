@@ -82,8 +82,8 @@ func (g *Gauges) Unregister() error {
 	return nil
 }
 
-// Set кладёт новый снимок; зовётся потребителем после прогона Deliver, а не
-// коллбэком на каждый scrape (CONVENTIONS §6).
+// Set кладёт новый снимок; зовётся своей задачей планировщика потребителя —
+// не на scrape и не из задачи доставки (CONVENTIONS §6, PATTERNS §8).
 func (g *Gauges) Set(s mail.Stats) {
 	g.mu.Lock()
 	defer g.mu.Unlock()

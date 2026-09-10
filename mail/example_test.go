@@ -74,7 +74,7 @@ func ExampleService_Deliver() {
 	}
 
 	row, _ := store.Get(res.Envelope.ID)
-	stats, _ := svc.Stats(ctx) // после прогона — в gauges.Set(stats)
+	stats, _ := svc.Stats(ctx) // в gauges.Set — своей задачей (PATTERNS §8)
 	fmt.Println(processed, row.Status, len(tr.Sent()))
 	fmt.Println("тело стёрто:", row.Subject == "" && row.Text == "")
 	fmt.Println("в очереди:", stats.Pending, "отказов:", stats.Failed)

@@ -8,7 +8,7 @@
 //	tr, err := mailotel.Wrap(sesTransport, meter)
 //	g, err := mailotel.NewGauges(meter)
 //	svc := mail.NewService(store, tr, nil, cfg)
-//	// после каждого прогона Deliver:
+//	// своей задачей планировщика — не на scrape и не в Deliver (PATTERNS §8):
 //	g.Set(stats)
 //
 // Имена и единицы инструментов — часть контракта: на них стоят алерты

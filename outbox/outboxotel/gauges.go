@@ -107,9 +107,10 @@ func (g *Gauges) Unregister() error {
 	return nil
 }
 
-// Set кладёт новый снимок; зовётся потребителем после прогона Drain, а НЕ
-// коллбэком, ходящим в базу на каждый scrape: иначе частоту запросов к базе
-// задавали бы настройки Prometheus, а не мы (CONVENTIONS §6).
+// Set кладёт новый снимок; зовётся своей задачей планировщика потребителя —
+// не из задачи Drain и НЕ коллбэком, ходящим в базу на каждый scrape: иначе
+// частоту запросов к базе задавали бы настройки Prometheus, а не мы
+// (CONVENTIONS §6, PATTERNS §8).
 func (g *Gauges) Set(s outbox.Stats) {
 	g.mu.Lock()
 	defer g.mu.Unlock()

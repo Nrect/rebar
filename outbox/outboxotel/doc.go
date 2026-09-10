@@ -10,7 +10,7 @@
 //	h.Register("order.paid", paidHandler)
 //	w, err := outbox.NewWorker(store, h.Registry(), cfg)
 //	g, err := outboxotel.NewGauges(meter)
-//	// после каждого прогона Drain:
+//	// своей задачей планировщика — не на scrape и не в Drain (PATTERNS §8):
 //	stats, err := w.Stats(ctx)
 //	g.Set(stats)
 //
