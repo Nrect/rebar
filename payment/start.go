@@ -202,10 +202,11 @@ func (s *Service) complete(ctx context.Context, in Intent, req StartRequest, rep
 		// его в момент расчёта, и второго момента не будет.
 		Receipt: req.Receipt,
 	})
-	// ErrProviderRejected — определённый ответ «не создал», тот же, что
-	// Status == EventFailed: прийти по такой попытке нечему, и она закрывается.
-	if errors.Is(err, ErrProviderRejected) {
-		return s.closeRejected(ctx, in, replay)
+	// Определённое «нет» закрывает попытку — ErrProviderRejected (тот же ответ,
+	// что Status == EventFailed) и ErrUnsupported: провайдер ничего не создал,
+	// прийти по ней нечему. Открытой её держит только «ответа нет».
+	if errors.Is(err, ErrProviderRejected) || errors.Is(err, ErrUnsupported) {
+		return s.closeRejected(ctx, in, replay, err)
 	}
 	if err != nil {
 		// Любая другая ошибка оставляет намерение в created: сбой связи
@@ -217,7 +218,7 @@ func (s *Service) complete(ctx context.Context, in Intent, req StartRequest, rep
 	}
 
 	if res.Status == EventFailed {
-		return s.closeRejected(ctx, in, replay)
+		return s.closeRejected(ctx, in, replay, ErrProviderRejected)
 	}
 	if err := checkCreated(res); err != nil {
 		// Провайдер сказал «не отказ», но платить нечем. Оставляем created и
@@ -270,8 +271,11 @@ func (s *Service) moveToPending(ctx context.Context, in Intent, res CreatePaymen
 	return finishStart(tr.Intent, replay || tr.Outcome != OutcomeApplied)
 }
 
-// closeRejected закрывает попытку, которую провайдер отверг детерминированно.
-func (s *Service) closeRejected(ctx context.Context, in Intent, replay bool) (StartResult, Reason, error) {
+// closeRejected закрывает попытку, на которую провайдер ответил определённым
+// «нет». Причина — по классу ответа why: «не умеет» чинит тот, кто настраивает
+// интеграцию, отказ по существу смотрит поддержка, и сводить их нельзя.
+func (s *Service) closeRejected(ctx context.Context, in Intent, replay bool, why error,
+) (StartResult, Reason, error) {
 	tr, err := s.store.Transition(ctx, TransitionRequest{
 		IntentID:   in.ID,
 		ExpectFrom: statusesInto(StatusFailed),
@@ -282,7 +286,17 @@ func (s *Service) closeRejected(ctx context.Context, in Intent, replay bool) (St
 		return StartResult{Intent: in}, ReasonStoreError,
 			fmt.Errorf("%w: mark intent failed: %w", ErrUnavailable, err)
 	}
-	return finishStart(tr.Intent, replay || tr.Outcome != OutcomeApplied)
+	// Строку подвинул кто-то другой — вебхук, параллельный ретрай: отдаём
+	// фактическое состояние, а не своё ожидание.
+	if tr.Outcome != OutcomeApplied {
+		return finishStart(tr.Intent, true)
+	}
+	// Причину закрытия намерение не хранит — failed один на оба класса, — и
+	// повтор ключа отдаст общий отказ; «не умеет» видно только в этом ответе.
+	if errors.Is(why, ErrUnsupported) {
+		return StartResult{Intent: tr.Intent}, ReasonUnsupported, fmt.Errorf("intent %s: %w", in.ID, why)
+	}
+	return finishStart(tr.Intent, replay)
 }
 
 // finishStart отображает ФАКТИЧЕСКОЕ состояние намерения в ответ Start.

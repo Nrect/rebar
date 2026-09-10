@@ -101,51 +101,87 @@ func TestProviderError_ClassSurvivesEveryPath(t *testing.T) {
 	}
 }
 
-// ErrProviderRejected ошибкой из CreatePayment — тот же определённый «не
-// создал», что Status == EventFailed: попытка закрывается, повтор ключа отдаёт
-// тот же отказ, а деньги, если провайдер их всё же пришлёт, не зачисляются.
-func TestStart_ProviderRejectedError_ClosesTheAttempt(t *testing.T) {
-	t.Parallel()
-
-	h := newHarness(t)
-	h.prov.SetCreateErr(fmt.Errorf("adapter: 422: %w", payment.ErrProviderRejected))
-	req := startReq()
-
-	res, reason, err := h.svc.Start(t.Context(), req)
-
-	require.ErrorIs(t, err, payment.ErrProviderRejected)
-	require.NotErrorIs(t, err, payment.ErrUnavailable)
-	assert.Equal(t, payment.ReasonProviderRejected, reason)
-	assert.Equal(t, payment.StatusFailed, res.Intent.Status)
-
-	h.prov.SetCreateErr(nil)
-	_, reason, err = h.svc.Start(t.Context(), req)
-	require.ErrorIs(t, err, payment.ErrProviderRejected, "повтор ключа — тот же отказ")
-	assert.Equal(t, payment.ReasonProviderRejected, reason)
-	assert.Equal(t, 1, h.prov.CallCount("CreatePayment"), "к провайдеру повторно не ходим")
-
-	h.prov.Push(h.prov.Event("pay-late", res.Intent.ID, payment.EventSucceeded, testAmount, "RUB"))
-	_, reason, err = h.svc.HandleWebhook(t.Context(), webhook())
-
-	require.NoError(t, err, "провайдеру 200, человеку алерт")
-	assert.Equal(t, payment.ReasonStatusConflict, reason)
-	assert.Empty(t, h.store.EntriesOf(res.Intent.ID, payment.LedgerCapture), "закрытое намерение зачисления не принимает")
-	assert.Equal(t, payment.StatusFailed, h.mustIntent(t, res.Intent.ID).Status)
+// definiteRefusal — определённое «нет» от CreatePayment и то, чем оно обязано
+// выйти наружу.
+type definiteRefusal struct {
+	name   string
+	fail   error
+	class  error
+	reason payment.Reason
 }
 
-// Сверка брошенной попытки получает тот же определённый отказ и закрывает её
-// тем же путём, что Start: второй таблицы соответствий нет.
-func TestReconcile_UnstartedProviderRejected_ClosesTheAttempt(t *testing.T) {
+func definiteRefusals() []definiteRefusal {
+	return []definiteRefusal{
+		{"отказ по существу", fmt.Errorf("adapter: 422: %w", payment.ErrProviderRejected),
+			payment.ErrProviderRejected, payment.ReasonProviderRejected},
+		{"не умеет", fmt.Errorf("adapter: holds: %w", payment.ErrUnsupported),
+			payment.ErrUnsupported, payment.ReasonUnsupported},
+	}
+}
+
+// Определённое «нет» от CreatePayment — отказ по существу или «не умеет» —
+// закрывает попытку: провайдер ничего не создал, прийти по ней нечему. Повтор
+// ключа отдаёт окончательный отказ без второго похода к провайдеру, а деньги,
+// если провайдер их всё же пришлёт, не зачисляются.
+func TestStart_DefiniteRefusal_ClosesTheAttempt(t *testing.T) {
 	t.Parallel()
 
-	h := newHarness(t, func(c *payment.Config) { c.RequireReceipt = false })
-	in := h.unstarted(t)
-	h.prov.SetCreateErr(fmt.Errorf("adapter: 422: %w", payment.ErrProviderRejected))
+	for _, tc := range definiteRefusals() {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-	reason, err := h.svc.Reconcile(t.Context(), in.ID)
+			h := newHarness(t)
+			h.prov.SetCreateErr(tc.fail)
+			req := startReq()
 
-	require.ErrorIs(t, err, payment.ErrProviderRejected)
-	require.NotErrorIs(t, err, payment.ErrUnavailable)
-	assert.Equal(t, payment.ReasonProviderRejected, reason)
-	assert.Equal(t, payment.StatusFailed, h.mustIntent(t, in.ID).Status)
+			res, reason, err := h.svc.Start(t.Context(), req)
+
+			require.ErrorIs(t, err, tc.class)
+			require.NotErrorIs(t, err, payment.ErrUnavailable)
+			assert.Equal(t, tc.reason, reason)
+			assert.Equal(t, payment.StatusFailed, res.Intent.Status)
+
+			// Причину закрытия намерение не хранит — failed один на оба класса, —
+			// поэтому повтор отдаёт общий окончательный отказ: не 503 и без
+			// второго похода к провайдеру.
+			h.prov.SetCreateErr(nil)
+			_, reason, err = h.svc.Start(t.Context(), req)
+			require.ErrorIs(t, err, payment.ErrProviderRejected, "повтор ключа — окончательный отказ")
+			require.NotErrorIs(t, err, payment.ErrUnavailable)
+			assert.Equal(t, payment.ReasonProviderRejected, reason)
+			assert.Equal(t, 1, h.prov.CallCount("CreatePayment"), "к провайдеру повторно не ходим")
+
+			h.prov.Push(h.prov.Event("pay-late", res.Intent.ID, payment.EventSucceeded, testAmount, "RUB"))
+			_, reason, err = h.svc.HandleWebhook(t.Context(), webhook())
+
+			require.NoError(t, err, "провайдеру 200, человеку алерт")
+			assert.Equal(t, payment.ReasonStatusConflict, reason)
+			assert.Empty(t, h.store.EntriesOf(res.Intent.ID, payment.LedgerCapture),
+				"закрытое намерение зачисления не принимает")
+			assert.Equal(t, payment.StatusFailed, h.mustIntent(t, res.Intent.ID).Status)
+		})
+	}
+}
+
+// Сверка брошенной попытки получает то же определённое «нет» и закрывает её тем
+// же путём, что Start: второй таблицы соответствий нет.
+func TestReconcile_UnstartedDefiniteRefusal_ClosesTheAttempt(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range definiteRefusals() {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			h := newHarness(t, func(c *payment.Config) { c.RequireReceipt = false })
+			in := h.unstarted(t)
+			h.prov.SetCreateErr(tc.fail)
+
+			reason, err := h.svc.Reconcile(t.Context(), in.ID)
+
+			require.ErrorIs(t, err, tc.class)
+			require.NotErrorIs(t, err, payment.ErrUnavailable)
+			assert.Equal(t, tc.reason, reason)
+			assert.Equal(t, payment.StatusFailed, h.mustIntent(t, in.ID).Status)
+		})
+	}
 }

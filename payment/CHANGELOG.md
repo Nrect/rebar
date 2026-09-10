@@ -84,9 +84,13 @@
   повторял вечно, а `ErrProviderRejected` вдобавок получал причину
   `provider_error`. Теперь одна точка `providerError`: `ErrUnavailable` —
   только «ответа нет», окончательные классы идут своим `%w` с причинами
-  `unsupported` и `provider_rejected`. `ErrProviderRejected` ошибкой из
-  `CreatePayment` закрывает попытку так же, как `Status == EventFailed`:
-  прийти по ней нечему. Контракт `Provider` в `ports.go` называет законные
+  `unsupported` и `provider_rejected`. Определённое «нет» от `CreatePayment` —
+  `ErrProviderRejected` или `ErrUnsupported` — закрывает попытку так же, как
+  `Status == EventFailed`: прийти по ней нечему, а открытой её держит только
+  «ответа нет». Раньше `ErrUnsupported` оставлял намерение в `created`, и
+  сверка звала `CreatePayment` до самого TTL. Причина закрытия — по классу:
+  `provider_rejected` смотрит поддержка, `unsupported` чинит тот, кто
+  настраивает интеграцию. Контракт `Provider` в `ports.go` называет законные
   классы по методам.
 
 ## [0.1.0] — 2026-09-10
