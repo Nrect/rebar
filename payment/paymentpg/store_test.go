@@ -40,9 +40,8 @@ func TestStore_WithTx_IsAtomic(t *testing.T) {
 	store, pool, _ := hookedStore(t, nil)
 	in := intent()
 
-	tx, err := pool.Begin(t.Context())
-	require.NoError(t, err)
-	_, err = tx.Exec(t.Context(),
+	tx := beginTx(t, pool)
+	_, err := tx.Exec(t.Context(),
 		`INSERT INTO shop_orders (intent_id, entry_id, kind) VALUES ($1, $1, 'created')`, in.ID)
 	require.NoError(t, err)
 	require.NoError(t, store.WithTx(tx).CreateIntent(t.Context(), in))
@@ -57,8 +56,7 @@ func TestStore_WithTx_IsAtomic(t *testing.T) {
 
 	// Коммит — и обе стороны на месте.
 	other := intent()
-	tx, err = pool.Begin(t.Context())
-	require.NoError(t, err)
+	tx = beginTx(t, pool)
 	_, err = tx.Exec(t.Context(),
 		`INSERT INTO shop_orders (intent_id, entry_id, kind) VALUES ($1, $1, 'created')`, other.ID)
 	require.NoError(t, err)
