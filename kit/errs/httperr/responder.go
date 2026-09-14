@@ -20,11 +20,11 @@ type Config struct {
 	// поле request_id в теле опускается.
 	RequestID func(ctx context.Context) string
 	// Translate — перевод чужих ошибок в errs.SlugError. Применяется ПЕРВЫМ
-	// и один раз; nil — тождество.
+	// и один раз, продуктовый слаг перекрывает имя класса; nil — тождество.
 	Translate func(err error) error
 	// Logger — логгер ошибок. nil — slog.Default() на момент ответа.
 	Logger *slog.Logger
-	// InternalSlug — слаг для всего, что не SlugError. "" —
+	// InternalSlug — слаг ошибки без годного слага и без класса. "" —
 	// DefaultInternalSlug; обязан пройти errs.ValidSlug.
 	InternalSlug string
 }
@@ -77,13 +77,7 @@ func (r *Responder) Write(ctx context.Context, w http.ResponseWriter, err error)
 		err = r.translate(err)
 	}
 
-	slug, status := r.internalSlug, http.StatusInternalServerError
-	var slugErr errs.SlugError
-	// Негодный слаг у собранной вручную SlugError — тоже «внутренняя»:
-	// экспортированное поле Slug конструктор не проходило.
-	if errors.As(err, &slugErr) && errs.ValidSlug(slugErr.Slug) {
-		slug, status = slugErr.Slug, StatusOf(slugErr.Kind)
-	}
+	slug, status := r.slugAndStatus(err)
 
 	requestID := ""
 	if r.requestID != nil {
@@ -103,6 +97,24 @@ func (r *Responder) Write(ctx context.Context, w http.ResponseWriter, err error)
 	header.Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(errorBody{Slug: slug, RequestID: requestID})
+}
+
+// slugAndStatus — SlugError решает первой: её слаг выбрал потребитель. Класс
+// без слага отвечает именем класса — таблицы умолчаний нет, значения Kind уже
+// годные слаги (ADR-0007).
+func (r *Responder) slugAndStatus(err error) (slug string, status int) {
+	if s, ok := errs.SlugOf(err); ok {
+		// Негодный слаг у собранной вручную SlugError — тоже «внутренняя»:
+		// экспортированное поле Slug конструктор не проходило.
+		if !errs.ValidSlug(s) {
+			return r.internalSlug, http.StatusInternalServerError
+		}
+		return s, StatusOf(errs.KindOf(err))
+	}
+	if kind := errs.KindOf(err); kind != errs.KindUnknown {
+		return string(kind), StatusOf(kind)
+	}
+	return r.internalSlug, http.StatusInternalServerError
 }
 
 // log — уровень по классу ответа: 5xx в трекер, сигналы безопасности

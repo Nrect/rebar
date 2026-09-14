@@ -65,10 +65,16 @@ func (e SlugError) WithCause(err error) SlugError {
 }
 
 // KindOf — класс ошибки; для чужой ошибки KindUnknown, то есть 500 без текста.
+// SlugError ищется раньше KindError: обернув нашу ошибку в свою через
+// Translate, потребитель решил за пакет, и его выбор старше.
 func KindOf(err error) Kind {
 	var slugErr SlugError
 	if errors.As(err, &slugErr) {
 		return slugErr.Kind
+	}
+	var kindErr KindError
+	if errors.As(err, &kindErr) {
+		return kindErr.Kind()
 	}
 	return KindUnknown
 }
