@@ -5,6 +5,59 @@
 
 ## Unreleased
 
+### Changed
+- **Класс ошибки у sentinel ([ADR-0007](../docs/adr/0007-error-kind.md)).**
+  Потребителю больше не нужна таблица перевода ошибок `payment`: `errs.KindOf`
+  и `httperr` находят класс на самой sentinel, а правило `Translate` нужно
+  только там, где слаг продукта отличается от имени класса. У потребителя без
+  правила на sentinel ответ меняется с 500 на её класс — так у
+  `ErrRefundTooLarge`, `ErrNotSettled` и `ErrStatusConflict` в
+  примере-монолите. Страж `errstest.EveryErrorHasKind` стоит в корне модуля
+  (`sentinels_test.go`) и обходит заодно `prorate`; двойники `paymenttest` из
+  него исключены — их ошибки только причины, класс несёт обёртка ядра. Это
+  держит `TestPortFailuresReachCallerAsUnavailable`: сбой стора, провайдера и
+  хука `OnSettled`/`OnRefunded` доходит до вызывающего классом 503 на каждой
+  операции сервиса.
+
+  | Sentinel | Класс | Почему |
+  |---|---|---|
+  | `ErrIdempotencyKeyInvalid`, `ErrInvalidSignature` | 400 `incorrect-input` | назван в комментарии: ключ и тело вебхука приходят от клиента |
+  | `ErrMalformedEvent` | 400 `incorrect-input` | контракт `HandleWebhook`: тело негодно, повтор не поможет |
+  | `ErrInvalidRequest`, `ErrInvalidMoney` | 400 `incorrect-input` | главный путь — запрос покупки и возврата |
+  | `ErrUnknownIntent` | 404 `not-found` | запрос по id намерения, которого нет; событие-орфан ошибки не получает |
+  | `ErrIdempotencyKeyReused`, `ErrReferenceBusy`, `ErrRefundTooLarge` | 409 `conflict` | назван в комментарии |
+  | `ErrIdempotencyRace`, `ErrIntentClosed`, `ErrStatusConflict`, `ErrNotSettled`, `ErrProviderRejected` | 409 `conflict` | не сошлось состояние ключа, попытки, холда или намерения, а не вход |
+  | `ErrUnsupported` | 501 `not-implemented` | операции у адаптера нет по конструкции: ретраем не чинится, а 501 клиенты не повторяют |
+  | `ErrUnavailable` | 503 `unavailable` | назван в комментарии: решение не принято, повтор осмыслен |
+  | `ErrBadStatus`, `ErrBadTransition`, `ErrReceiptRequired`, `ErrNoActor` | нет, `//errs:nokind` | статус из базы, переход, чек и автора задаёт код, а не клиент: негодные — дефект, то есть 500 |
+  | `ErrAmountMismatch`, `ErrReceiptInvalid` | нет, `//errs:nokind` | класс зависит от пути (ADR-0007, «Спорные назначения») |
+  | `prorate.ErrInvalidPeriod`, `prorate.ErrInvalidAmount`, `prorate.ErrInvalidUnit` | нет, `//errs:nokind` | срок, сумму и единицу считает код потребителя из своих данных: негодные — дефект, то есть 500 |
+
+- **`Refund` по негодной книге отвечает 503, а не классом вложенной
+  sentinel.** Оплаченное намерение без записи зачисления приезжало голой
+  `ErrNotSettled`, книга, которую не сложить (`Net`), — голой
+  `ErrInvalidMoney`. С классом у sentinel первое ответило бы 409 «не
+  оплачено», второе — 400 «вы ошиблись» вместо разбора как инцидента. Теперь
+  обе под `ErrUnavailable`; `errors.Is` на прежнюю sentinel и `Reason`
+  (`not_settled`, `store_error`) не изменились.
+- **Ломающее для кода, который сравнивал тексты sentinel, присваивал их,
+  выводил из них тип переменной или звал `SetClock(nil)`.** Замена:
+
+  | Было | Стало |
+  |---|---|
+  | тип sentinel с классом — `error` | `errs.KindError`; `errors.Is` и `==` работают как прежде |
+  | `x := payment.ErrUnavailable` — переменная типа `error`, ей можно присвоить любую sentinel | выводится `errs.KindError`, и `x = payment.ErrBadStatus` (без класса) не собирается; объявлять `var x error = payment.ErrUnavailable` |
+  | тексты двадцати sentinel `payment` | тот же текст с префиксом `payment: ` |
+  | `payment operation could not be completed` | `payment: operation could not be completed` |
+  | `payment attempt is closed; a new idempotency key is required` | `payment: attempt is closed; a new idempotency key is required` |
+  | тексты `prorate.ErrInvalidPeriod`, `ErrInvalidAmount`, `ErrInvalidUnit` | тот же текст с префиксом `prorate: ` |
+  | `Service.SetClock(nil)` принимался и падал разыменованием при первом обращении к часам | паника `payment.Service.SetClock: now must not be nil` |
+
+  Префикс не косметика: `KindError` равны по классу и тексту, и sentinel
+  другого модуля с тем же классом и дословно тем же текстом совпала бы с
+  нашей через `errors.Is`. Модуль требует `github.com/nrect/rebar/kit v0.2.0`;
+  `kit` — в белом списке стража импортов ядра, `prorate` остался на stdlib.
+
 ## [0.2.0] — 2026-09-10
 
 Минорный номер, хотя изменения ломающие: в v0 семвер ломающих гарантий не даёт.
