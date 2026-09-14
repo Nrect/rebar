@@ -40,12 +40,13 @@
   оплачено», второе — 400 «вы ошиблись» вместо разбора как инцидента. Теперь
   обе под `ErrUnavailable`; `errors.Is` на прежнюю sentinel и `Reason`
   (`not_settled`, `store_error`) не изменились.
-- **Ломающее для кода, который сравнивал тексты sentinel, присваивал их или
-  звал `SetClock(nil)`.** Замена:
+- **Ломающее для кода, который сравнивал тексты sentinel, присваивал их,
+  выводил из них тип переменной или звал `SetClock(nil)`.** Замена:
 
   | Было | Стало |
   |---|---|
   | тип sentinel с классом — `error` | `errs.KindError`; `errors.Is` и `==` работают как прежде |
+  | `x := payment.ErrUnavailable` — переменная типа `error`, ей можно присвоить любую sentinel | выводится `errs.KindError`, и `x = payment.ErrBadStatus` (без класса) не собирается; объявлять `var x error = payment.ErrUnavailable` |
   | тексты двадцати sentinel `payment` | тот же текст с префиксом `payment: ` |
   | `payment operation could not be completed` | `payment: operation could not be completed` |
   | `payment attempt is closed; a new idempotency key is required` | `payment: attempt is closed; a new idempotency key is required` |
