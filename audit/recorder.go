@@ -33,7 +33,14 @@ func NewRecorder(sink Sink, cfg Config) *Recorder {
 }
 
 // SetClock подменяет источник времени; только для тестов, до начала обслуживания.
-func (r *Recorder) SetClock(now func() time.Time) { r.now = now }
+// nil — паника здесь, на настройке, а не разыменование nil в чужом стеке при
+// первом обращении к часам.
+func (r *Recorder) SetClock(now func() time.Time) {
+	if now == nil {
+		panic("audit.Recorder.SetClock: now must not be nil")
+	}
+	r.now = now
+}
 
 // Prepare — чистая половина Record: закрытый набор действий, исход и род
 // актора из закрытых наборов, актор из контекста, усечение враждебного ввода,

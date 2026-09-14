@@ -3,6 +3,7 @@ package auditpg_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -42,6 +43,31 @@ func TestSink_Write_StoresEventAsIs(t *testing.T) {
 	assert.Equal(t, ev.RequestID, row.RequestID)
 	assert.Equal(t, ev.IP, row.IP)
 	assert.Equal(t, ev.Details, row.Details)
+}
+
+// МОМЕНТ ЛОЖИТСЯ В timestamptz УСЕЧЁННЫМ ДО МИКРОСЕКУНД. Чтения у порта нет:
+// строка читается мимо адаптера и приводится к UTC читателем — зону база не
+// хранит. Утверждение то же, что у двойника (audittest,
+// TestSink_KeepsMomentAsTimestamptz); 789 нс сверх микросекунды отличают
+// усечение от округления.
+func TestSink_Write_StoresMomentAsTimestamptz(t *testing.T) {
+	t.Parallel()
+
+	sink, pool := newSink(t)
+	ev := testEvent(func(e *audit.Event) {
+		e.At = testNow().Add(123456789 * time.Nanosecond).In(time.FixedZone("UTC+3", 3*60*60))
+	})
+	require.NoError(t, sink.Write(context.Background(), ev))
+
+	got := readRow(t, pool, ev.ID).OccurredAt.UTC()
+	assert.Truef(t, sameStoredMoment(got, ev.At), "occurred_at %s, ожидалось %s — в UTC и до микросекунд",
+		got.Format(time.RFC3339Nano), ev.At.Truncate(time.Microsecond).UTC().Format(time.RFC3339Nano))
+}
+
+// sameStoredMoment — got равен want так, как want хранит timestamptz:
+// усечённым до микросекунд и в UTC. Голый Equal зоны не видит.
+func sameStoredMoment(got, want time.Time) bool {
+	return got.Location() == time.UTC && got.Equal(want.Truncate(time.Microsecond))
 }
 
 // Событие без подробностей и без цели: nil-карта обязана лечь как '{}', а не
