@@ -57,26 +57,34 @@
 | inbox, распределённая блокировка, сага, SMS, персональные данные | v0.2: inbox — пока паттерн, блокировка — при втором экземпляре сервиса, сага — при втором потребителе | [ADR-0002](adr/0002-outbox.md), [docs/PATTERNS.md](PATTERNS.md) |
 | платёжный провайдер | порт один, адаптер пишется, когда провайдер выбран; провайдер без подписи уведомлений меняет инвариант на «источник правды — API провайдера» | [ADR-0004](adr/0004-payment.md) |
 
-## Карта модулей v0.1
+## Карта модулей
 
-Статус на сегодня; «к старту магазина» — нужен ли модуль к запуску третьего
-потребителя.
+Состояние на 2026-09-14. «К старту магазина» — нужен ли модуль к запуску
+третьего потребителя. «Ждёт тега» означает, что работа слита в `main` и
+проходит гейты, а номер выпуска ставится одним заходом после волны
+[ADR-0007](adr/0007-error-kind.md): иначе потребитель обновляется на ломающее
+трижды подряд вместо одного раза.
 
-| Модуль | Пакеты | Внешние зависимости (только в адаптерах) | Ориентир | К старту магазина | Статус |
-|---|---|---|---|---|---|
-| `mail` | ядро, `smtp`, `sesv2`, `mailpg`, `mailotel`, `mailtest`, `cmd/sesfake` | go-mail, pgx, otel | неделя 0 | да | **v0.1.0 выпущен** |
-| `postgres` | `postgres`, `pgtest` | pgx/v5; testcontainers и goose — только в `pgtest` | неделя 1 | да (блокирует все pg-адаптеры) | **реализован** |
-| `scheduler` | `scheduler`, `schedulerotel`, `schedulertest` | otel/metric — только в `schedulerotel` | неделя 1 | да | **реализован** |
-| `kit` | `errs`, `errs/httperr`, `errs/errstest`, `reqid`, `config`; далее `secrets`, `ratelimit`, `retry` | нет вовсе | неделя 1 | да | **частично**: остаются `secrets`, `ratelimit`, `retry` |
-| `otelboot` | `otelboot`, `errtrack` | otel sdk, prometheus; sentry-совместимый трекер — в `errtrack` | неделя 1 | да | **реализован** |
-| `outbox` | `outbox`, `outboxpg`, `outboxotel`, `outboxtest` | pgx, otel | недели 1–2 | да | **ядро и двойники реализованы**; адаптеры `outboxpg`, `outboxotel` — следующий шаг |
-| `payment` | `payment`, `prorate`, `paymentpg`, `paymentotel`, `paymenttest`, `cmd/psfake`, адаптер провайдера | pgx, otel; адаптер провайдера — stdlib | недели 1–3 | да | пишется |
-| `auth` | `auth`, `password`, `zxcvbn`, `session`, `authpg`, `authhttp`, `authtest` | x/crypto, оценщик паролей, pgx; `authhttp` → `kit/httperr` | недели 2–3 | да | план |
-| `authz` | `authz`, `authzhttp`, `authztest` | нет | неделя 3 | да | план |
-| `entitlement` | `entitlement`, `entitlementtest` | нет (кэш на stdlib) | недели 2–5 | нет | план |
-| `objectstore` | `objectstore`, `s3`, `imgproxy`, `fs`, `objectstoretest` | подпись запросов на stdlib; откат — готовый клиент | недели 3–5 | нет (приходит вместе с каталогом) | план |
-| `audit` | `audit`, `auditpg`, `auditotel`, `audittest` | pgx, otel | недели 3–4 | желательно | план |
-| `examples/monolith` | модуль с `replace` на соседей | все | неделя 4 | да (гейт тегов) | план |
+| Модуль | Пакеты | Внешние зависимости (только в адаптерах) | К старту магазина | Состояние |
+|---|---|---|---|---|
+| `kit` | `errs`, `errs/httperr`, `errs/errstest`, `config`, `secrets`, `ratelimit`, `ratelimithttp`, `retry`, `reqid` | нет вовсе | да | **`kit/v0.2.0`** |
+| `postgres` | `postgres`, `pgtest`, `pglock` | pgx/v5; testcontainers и goose — только в `pgtest` | да | **`postgres/v0.2.0`** |
+| `scheduler` | `scheduler`, `schedulerotel`, `schedulertest` | otel/metric — только в `schedulerotel` | да | `v0.1.0`, ждёт тега |
+| `otelboot` | `otelboot`, `errtrack` | otel sdk, prometheus; sentry-совместимый трекер — в `errtrack` | да | **`otelboot/v0.1.0`** |
+| `mail` | ядро, `smtp`, `sesv2`, `mailpg`, `mailotel`, `mailtest`, `cmd/sesfake` | go-mail, pgx, otel | да | `v0.2.0`, ждёт тега |
+| `outbox` | `outbox`, `outboxpg`, `outboxotel`, `outboxtest` | pgx, otel | да | `v0.1.0`, ждёт тега |
+| `payment` | `payment`, `prorate`, `paymentpg`, `paymentotel`, `paymenttest`, `cmd/psfake` | pgx, otel | да | `v0.2.0`; **адаптера провайдера нет** — деньги не принимаются |
+| `auth` | `auth`, `loginid`, `password`, `pwzxcvbn`, `session`, `token`, `authpg`, `authhttp`, `authtest` | x/crypto, оценщик паролей, pgx | да | `v0.1.0`, ждёт тега |
+| `authz` | `authz`, `authzhttp`, `authzpg`, `authztest` | pgx — только в `authzpg` | да | **`authz/v0.1.0`** |
+| `entitlement` | `entitlement`, `entitlementpg`, `entitlementtest` | pgx — только в `entitlementpg` | нет | `v0.1.0`, ждёт тега |
+| `objectstore` | `objectstore`, `s3`, `imgproxy`, `fs`, `objectstoretest` | подпись запросов на stdlib | нет (приходит вместе с каталогом) | `v0.1.0`, ждёт тега |
+| `audit` | `audit`, `auditpg`, `auditotel`, `audittest` | pgx, otel | желательно | `v0.1.0`, ждёт тега |
+| `examples/monolith` | модуль с `replace` на соседей | все | да (гейт тегов) | **собирается и гоняется**; версий не получает |
+
+Ограничения, которые стоит знать до выбора модуля, — раздел «Признанные
+долги» ниже. Коротко: адаптера платёжного провайдера нет; `entitlement`
+получил `entitlementpg` только 2026-09-14; неидемпотентная периодика требует
+`postgres/pglock`, иначе тулкит рассчитан на один экземпляр сервиса.
 
 Спецификации модулей здесь не дублируются — они в ADR:
 [ADR-0001](adr/0001-mail.md) (`mail`), [ADR-0002](adr/0002-outbox.md)
