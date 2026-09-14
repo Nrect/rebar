@@ -23,6 +23,10 @@ import (
 var allowedByDir = map[string][]string{
 	".":               {"github.com/google/uuid"},
 	"entitlementtest": {"github.com/google/uuid"},
+	// postgres — граница ошибки (postgres.Sanitize), разрешённая адаптерам
+	// хранилища: ADR-0005, «Межмодульные зависимости». Ядру она запрещена —
+	// там нет SQL.
+	"entitlementpg": {"github.com/google/uuid", "github.com/jackc/pgx/v5", "github.com/nrect/rebar/postgres"},
 }
 
 // TestPackageImportsAreWhitelisted — страж переносимости: ни одного импорта
