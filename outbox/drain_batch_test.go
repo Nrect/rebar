@@ -67,10 +67,10 @@ func TestDrain_CancelDuringHandlerLeavesRowForLease(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	h.handler.Hook = func(context.Context, outbox.Delivery) error {
+	h.handler.SetHook(func(context.Context, outbox.Delivery) error {
 		cancel()
 		return nil
-	}
+	})
 
 	processed, err := h.worker.Drain(ctx)
 	require.ErrorIs(t, err, outbox.ErrUnavailable)
@@ -83,7 +83,7 @@ func TestDrain_CancelDuringHandlerLeavesRowForLease(t *testing.T) {
 
 	// Аренда истекла — строка возвращается, и хендлер обязан узнать, что
 	// прошлая попытка могла оставить эффект.
-	h.handler.Hook = nil
+	h.handler.SetHook(nil)
 	h.clock.Advance(h.cfg.Lease + time.Second)
 	assert.Equal(t, 1, h.drain(t))
 
@@ -131,7 +131,7 @@ func TestDrain_LostClaimStopsBatch(t *testing.T) {
 	h.enqueue(t, nil)
 	h.enqueue(t, func(m *outbox.Message) { m.AggregateID = "B-7" })
 
-	h.handler.Hook = func(context.Context, outbox.Delivery) error {
+	h.handler.SetHook(func(context.Context, outbox.Delivery) error {
 		// Пока хендлер работал, аренда истекла и строки забрал другой воркер.
 		h.clock.Advance(h.cfg.Lease + time.Second)
 		_, err := h.store.Claim(context.Background(), outbox.ClaimRequest{
@@ -139,7 +139,7 @@ func TestDrain_LostClaimStopsBatch(t *testing.T) {
 			Kinds: []outbox.Kind{kindPaid}, Token: uuid.New(),
 		})
 		return err
-	}
+	})
 
 	processed, err := h.worker.Drain(context.Background())
 	require.ErrorIs(t, err, outbox.ErrUnavailable)

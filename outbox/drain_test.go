@@ -41,7 +41,7 @@ func TestDrain_HandledRowBecomesDone(t *testing.T) {
 func TestDrain_SkipClosesRow(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t, nil)
-	h.handler.SkipFor["A-42"] = true
+	h.handler.SkipFor("A-42")
 	env := h.enqueue(t, nil)
 
 	assert.Equal(t, 1, h.drain(t))
@@ -55,7 +55,7 @@ func TestDrain_SkipClosesRow(t *testing.T) {
 func TestDrain_PermanentIsTerminal(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t, nil)
-	h.handler.PermanentFor["A-42"] = true
+	h.handler.PermanentFor("A-42")
 	env := h.enqueue(t, nil)
 
 	assert.Equal(t, 1, h.drain(t))
@@ -89,7 +89,7 @@ func TestDrain_ThrottledRespectsNamedDelay(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			h := newHarness(t, nil)
-			h.handler.ThrottleFor["A-42"] = tc.after
+			h.handler.ThrottleFor("A-42", tc.after)
 			env := h.enqueue(t, func(m *outbox.Message) {
 				if tc.notAfter != 0 {
 					m.NotAfter = baseTime.Add(tc.notAfter)
@@ -110,7 +110,7 @@ func TestDrain_ThrottledRespectsNamedDelay(t *testing.T) {
 func TestDrain_ThrottledDoesNotExhaustAttempts(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t, func(c *outbox.Config) { c.MaxAttempts = 1 })
-	h.handler.ThrottleFor["A-42"] = time.Minute
+	h.handler.ThrottleFor("A-42", time.Minute)
 	env := h.enqueue(t, nil)
 
 	assert.Equal(t, 1, h.drain(t))
@@ -122,7 +122,7 @@ func TestDrain_ThrottledDoesNotExhaustAttempts(t *testing.T) {
 func TestDrain_TemporaryFailureRetriesThenSucceeds(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t, nil)
-	h.handler.FailFor["A-42"] = 1
+	h.handler.FailFor("A-42", 1)
 	env := h.enqueue(t, nil)
 
 	assert.Equal(t, 1, h.drain(t))
@@ -144,7 +144,7 @@ func TestDrain_TemporaryFailureRetriesThenSucceeds(t *testing.T) {
 func TestDrain_ExhaustedAfterMaxAttempts(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t, func(c *outbox.Config) { c.MaxAttempts = 2 })
-	h.handler.FailFor["A-42"] = 5
+	h.handler.FailFor("A-42", 5)
 	env := h.enqueue(t, nil)
 
 	assert.Equal(t, 1, h.drain(t))
@@ -190,7 +190,7 @@ func TestDrain_NotBeforeDelaysRow(t *testing.T) {
 func TestDrain_HandlerPanicIsTemporary(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t, nil)
-	h.handler.PanicFor["A-42"] = 1
+	h.handler.PanicFor("A-42", 1)
 	env := h.enqueue(t, nil)
 	other := h.enqueue(t, func(m *outbox.Message) { m.AggregateID = "B-7" })
 
@@ -211,10 +211,10 @@ func TestDrain_HandlerPanicIsTemporary(t *testing.T) {
 func TestDrain_HandlerTimeoutIsTemporary(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t, func(c *outbox.Config) { c.HandlerTimeout = 20 * time.Millisecond })
-	h.handler.Hook = func(ctx context.Context, _ outbox.Delivery) error {
+	h.handler.SetHook(func(ctx context.Context, _ outbox.Delivery) error {
 		<-ctx.Done()
 		return ctx.Err()
-	}
+	})
 	env := h.enqueue(t, nil)
 
 	assert.Equal(t, 1, h.drain(t))

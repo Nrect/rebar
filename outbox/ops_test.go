@@ -15,7 +15,7 @@ import (
 func TestStats_CountsByStatus(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t, nil)
-	h.handler.PermanentFor["B-7"] = true
+	h.handler.PermanentFor("B-7")
 	h.enqueue(t, nil)
 	h.enqueue(t, func(m *outbox.Message) { m.AggregateID = "B-7" })
 	h.enqueue(t, func(m *outbox.Message) { m.Kind = kindLegacy; m.AggregateID = "C-1" })
@@ -63,7 +63,7 @@ func TestStats_OldestDueAgeIgnoresDeferredAndClaimed(t *testing.T) {
 func TestPurge_KeepsFailedAndFreshRows(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t, func(c *outbox.Config) { c.Retention = time.Hour })
-	h.handler.PermanentFor["C-1"] = true
+	h.handler.PermanentFor("C-1")
 	done := h.enqueue(t, nil)
 	expired := h.enqueue(t, func(m *outbox.Message) {
 		m.AggregateID, m.NotAfter = "B-7", baseTime.Add(-time.Second)
@@ -121,7 +121,7 @@ func TestListFailed_OldestFirstWithinLimit(t *testing.T) {
 	h := newHarness(t, nil)
 	ids := make([]uuid.UUID, 0, 3)
 	for _, agg := range []string{"A-1", "A-2", "A-3"} {
-		h.handler.PermanentFor[agg] = true
+		h.handler.PermanentFor(agg)
 		env := h.enqueue(t, func(m *outbox.Message) { m.AggregateID = agg })
 		require.Equal(t, 1, h.drain(t))
 		ids = append(ids, env.ID)
@@ -145,7 +145,7 @@ func TestListFailed_OldestFirstWithinLimit(t *testing.T) {
 func TestRedrive_OnlyFromFailed(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t, func(c *outbox.Config) { c.MaxAttempts = 1 })
-	h.handler.FailFor["A-42"] = 1
+	h.handler.FailFor("A-42", 1)
 	env := h.enqueue(t, nil)
 	require.Equal(t, 1, h.drain(t))
 	require.Equal(t, outbox.StatusFailed, h.row(t, env.ID).Status)

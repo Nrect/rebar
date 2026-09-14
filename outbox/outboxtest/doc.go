@@ -11,7 +11,8 @@
 //     AfterHandle для имитации убитого процесса, Rows и Get для проверок.
 //   - RecordingHandler — записывающий outbox.Handler: FailFor (временный
 //     сбой), PermanentFor, ThrottleFor, SkipFor, PanicFor по AggregateID или
-//     Kind, Hook для таймаутов, Handled для «ровно один раз».
+//     Kind, SetHook для таймаутов, Handled для «ровно один раз»; настройка —
+//     методами под замком, публичных полей нет.
 //   - Clock — управляемые часы для outbox.SetClock.
 //   - Enqueue — двойник пакетной функции адаптера (outboxpg.Enqueue): вставка
 //     и сверка отпечатка одним вызовом, чтобы тест потребителя писал ровно то
