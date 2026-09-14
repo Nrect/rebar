@@ -1,10 +1,11 @@
 // Package errstest — guard-тесты, которые потребитель ставит у себя один раз
 // и забывает: единственная точка ответа, реестр слагов, полнота таблицы
-// статусов.
+// статусов, класс у каждой sentinel.
 //
 //	func TestErrorFormat(t *testing.T) { errstest.NoDirectHTTPErrors(t, "..") }
 //	func TestSlugs(t *testing.T)       { errstest.CheckSlugRegistry(t, apislug.All) }
 //	func TestKinds(t *testing.T)       { errstest.KindStatusTable(t) }
+//	func TestSentinels(t *testing.T)   { errstest.EveryErrorHasKind(t, ".") }
 //
 // Безопасность:
 //
@@ -14,8 +15,11 @@
 //     причины под одним именем, и клиент не разведёт их поведением.
 //  3. НОВЫЙ Kind БЕЗ СТРОКИ В ТАБЛИЦЕ уходит клиенту как 500 — молча, пока
 //     KindStatusTable не скажет об этом на сборке.
+//  4. КЛАСС SENTINEL — ПО ИСХОДНИКАМ, А НЕ ПО СПИСКУ. Список не срабатывает на
+//     забытой sentinel; обход дерева ловит и новую, без правки теста.
 //
 // Чего в пакете нет: двойников (портов у errs нет — хватает
-// httptest.ResponseRecorder), проверки текстов и линтера как отдельного
-// бинаря.
+// httptest.ResponseRecorder), проверки текстов, линтера как отдельного бинаря
+// и загрузки типов: класс sentinel узнаётся по форме объявления, а непонятная
+// форма у Err… — находка, а не пропуск.
 package errstest

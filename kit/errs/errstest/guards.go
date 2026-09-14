@@ -23,7 +23,18 @@ var handwrittenBody = regexp.MustCompile(`"(slug|error)"\s*:`)
 var skipDirs = map[string]bool{".git": true, "vendor": true, "node_modules": true, "testdata": true}
 
 func noDirectHTTPErrors(rep reporter, root string, allow []string) {
-	walkErr := filepath.WalkDir(root, func(name string, entry fs.DirEntry, err error) error {
+	walkErr := walkGoFiles(root, allow, func(name, rel string) error {
+		return scanForDirectErrors(rep, name, rel)
+	})
+	if walkErr != nil {
+		rep.Fatalf("errstest: обход %s: %v", root, walkErr)
+	}
+}
+
+// walkGoFiles — исходники прода под root, общие для стражей: _test.go, testdata,
+// vendor и пути из allow пропускаются; сам root — никогда, даже если зовётся testdata.
+func walkGoFiles(root string, allow []string, visit func(name, rel string) error) error {
+	return filepath.WalkDir(root, func(name string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -41,11 +52,8 @@ func noDirectHTTPErrors(rep reporter, root string, allow []string) {
 		if !strings.HasSuffix(rel, ".go") || strings.HasSuffix(rel, "_test.go") || allowed(rel, allow) {
 			return nil
 		}
-		return scanForDirectErrors(rep, name, rel)
+		return visit(name, rel)
 	})
-	if walkErr != nil {
-		rep.Fatalf("errstest: обход %s: %v", root, walkErr)
-	}
 }
 
 // allowed — путь начинается с одного из разрешённых префиксов (файл или каталог).

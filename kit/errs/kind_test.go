@@ -54,6 +54,7 @@ func isKindSpec(spec *ast.ValueSpec) bool {
 
 // Значения Kind уходят клиенту в виде статуса и в метку метрики: они обязаны
 // быть годными слагами и не повторяться.
+// Дубль httperr.TestKindNamesAreValidSlugs намеренный: тот стоит у слага по имени класса.
 func TestAllKindsAreValidSlugs(t *testing.T) {
 	t.Parallel()
 

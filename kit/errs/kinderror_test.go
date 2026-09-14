@@ -28,6 +28,15 @@ func TestKinded_PanicsOnBadKind(t *testing.T) {
 		func() { errs.Kinded(errs.KindUnknown, "store: unavailable") })
 }
 
+// Пустой msg сделал бы две разные sentinel одного класса равными через errors.Is.
+func TestKinded_PanicsOnEmptyMsg(t *testing.T) {
+	t.Parallel()
+
+	assert.PanicsWithValue(t,
+		"errs.Kinded: msg must not be empty (errors.Is tells sentinels of one kind apart by msg)",
+		func() { errs.Kinded(errs.KindConflict, "") })
+}
+
 // Каждый класс, кроме KindUnknown, собирается и отдаётся тем же — сквозь обёртку.
 func TestKinded_KeepsKind(t *testing.T) {
 	t.Parallel()

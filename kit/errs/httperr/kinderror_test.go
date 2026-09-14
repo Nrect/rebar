@@ -133,6 +133,7 @@ func TestWrite_ZeroKindErrorIsInternal(t *testing.T) {
 
 // Страж ADR-0007: имя класса уходит слагом без таблицы умолчаний, поэтому
 // каждое значение Kind обязано быть годным слагом.
+// Дубль errs.TestAllKindsAreValidSlugs намеренный: этот стоит у решения, которое на него опирается.
 func TestKindNamesAreValidSlugs(t *testing.T) {
 	t.Parallel()
 

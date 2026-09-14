@@ -18,13 +18,17 @@ type KindError struct {
 // Kinded — ошибка с классом и без слага. Паникует на Kind вне AllKinds и на
 // KindUnknown: KindError существует ровно затем, чтобы нести класс, а «класс
 // неизвестен» — это отсутствие класса, и такая ошибка объявляется errors.New.
-// Объявляется в var-блоке, поэтому паника случится на старте, а не на запросе.
+// Паникует и на пустом msg: по нему errors.Is различает sentinel'ы одного
+// класса. Объявляется в var-блоке, поэтому паника случится на старте.
 func Kinded(kind Kind, msg string) KindError {
 	if !kind.valid() {
 		panic(fmt.Sprintf("errs.Kinded: kind %q must be one of errs.AllKinds", kind))
 	}
 	if kind == KindUnknown {
 		panic("errs.Kinded: kind must not be errs.KindUnknown (an error without a kind is errors.New)")
+	}
+	if msg == "" {
+		panic("errs.Kinded: msg must not be empty (errors.Is tells sentinels of one kind apart by msg)")
 	}
 	return KindError{kind: kind, msg: msg}
 }

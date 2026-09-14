@@ -16,3 +16,12 @@ func TestExportedGuardsOnCleanInput(t *testing.T) {
 	errstest.CheckSlugRegistry(t, []string{"internal-server-error", "user-not-found"})
 	errstest.KindStatusTable(t)
 }
+
+// Страж классов на настоящем *testing.T: корпус без нарушений и корпус, снятый
+// через allow, тест не роняют.
+func TestEveryErrorHasKind_ExportedOnCleanInput(t *testing.T) {
+	t.Parallel()
+
+	errstest.EveryErrorHasKind(t, filepath.Join("testdata", "kinds", "good"))
+	errstest.EveryErrorHasKind(t, filepath.Join("testdata", "kinds", "bad"), "aliased.go", "sentinels.go", "sub")
+}
