@@ -15,24 +15,24 @@
 
   | Sentinel | Класс | Почему |
   |---|---|---|
-  | `ErrInvalidMessage` | 400 `incorrect-input` | адрес и имя получателя приходят от клиента; CR/LF в них — подмешанный заголовок |
   | `ErrKeyReused` | 409 `conflict` | тот же ключ на другое письмо, как `payment.ErrIdempotencyKeyReused` |
-  | `ErrSuppressed` | 409 `conflict` | состояние получателя не допускает отправку |
   | `ErrUnavailable` | 503 `unavailable` | сбой хранилища или стоп-листа, повтор осмыслен |
   | `ErrTransportUnconfigured` | 503 `unavailable` | временный сбой (ADR-0001, «Транспорты») |
+  | `ErrInvalidMessage` | нет, `//errs:nokind` | `Prepare` зовёт код потребителя, и модуль не знает, пришёл адрес из формы или из шаблона; потребитель с открытой формой адреса ставит класс одним правилом `Translate` (ADR-0007, «Спорные назначения») |
   | `ErrBadKind`, `ErrKeyInvalid`, `ErrNoSuppressor`, `smtp.ErrInvalidConfig` | нет, `//errs:nokind` | тип, ключ и сборку задаёт код потребителя: негодные — дефект, то есть 500 |
 
-- **Ломающее для кода, который сравнивал тексты sentinel, присваивал их или
-  звал `SetClock(nil)`.** Замена:
+- **Ломающее для кода, который сравнивал тексты sentinel, присваивал их,
+  ссылался на `ErrSuppressed` или звал `SetClock(nil)`.** Замена:
 
   | Было | Стало |
   |---|---|
   | тип sentinel с классом — `error` | `errs.KindError`; `errors.Is` и `==` работают как прежде |
-  | `message is invalid`, `unknown message kind`, `dedup key …`, `recipient is suppressed` | тот же текст с префиксом `mail: ` |
+  | `message is invalid`, `unknown message kind`, `dedup key …` | тот же текст с префиксом `mail: ` |
   | `mail operation could not be completed` | `mail: operation could not be completed` |
   | `mail suppressor is not configured` | `mail: suppressor is not configured` |
   | `mail transport is not configured` | `mail: transport is not configured` |
   | паника `NewService`: `… must be a valid address: message is invalid: …` | `… must be a valid address: mail: message is invalid: …` |
+  | `ErrSuppressed` (`recipient is suppressed`) | удалена, заменителя нет: исход стоп-листа — статус строки `suppressed` (`FinishSuppressed`), а не ошибка. Ни один путь пакета её не возвращал, и `errors.Is(err, mail.ErrSuppressed)` у потребителя был бы вечно ложным |
   | `Service.SetClock(nil)` принимался и падал разыменованием при первом обращении к часам | паника `mail.Service.SetClock: now must not be nil` |
 
   Префикс не косметика: `KindError` равны по классу и тексту, и без него

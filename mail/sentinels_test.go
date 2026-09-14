@@ -34,11 +34,10 @@ func TestSentinelKinds(t *testing.T) {
 		kind   errs.Kind
 		prefix string
 	}{
-		{"ErrInvalidMessage", mail.ErrInvalidMessage, errs.KindIncorrectInput, "mail: "},
+		{"ErrInvalidMessage", mail.ErrInvalidMessage, errs.KindUnknown, "mail: "},
 		{"ErrBadKind", mail.ErrBadKind, errs.KindUnknown, "mail: "},
 		{"ErrKeyInvalid", mail.ErrKeyInvalid, errs.KindUnknown, "mail: "},
 		{"ErrKeyReused", mail.ErrKeyReused, errs.KindConflict, "mail: "},
-		{"ErrSuppressed", mail.ErrSuppressed, errs.KindConflict, "mail: "},
 		{"ErrUnavailable", mail.ErrUnavailable, errs.KindUnavailable, "mail: "},
 		{"ErrNoSuppressor", mail.ErrNoSuppressor, errs.KindUnknown, "mail: "},
 		{"ErrTransportUnconfigured", mail.ErrTransportUnconfigured, errs.KindUnavailable, "mail: "},
