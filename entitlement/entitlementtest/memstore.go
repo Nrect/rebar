@@ -129,6 +129,11 @@ func (m *MemStore) Grant(ctx context.Context, subjectID uuid.UUID, g entitlement
 	if err := m.fail(ctx); err != nil {
 		return err
 	}
+	// ПРЕДМЕТ — ТА ЖЕ ГРАНИЦА, ЧТО CHECK У БАЗЫ: 1..MaxItemIDLen байт. Двойник,
+	// принявший пустой предмет, зеленил бы потребителя, которого база отвергнет.
+	if g.ItemID == "" || len(g.ItemID) > entitlement.MaxItemIDLen {
+		return entitlement.ErrInvalidGrant
+	}
 	if m.grants[subjectID] == nil {
 		m.grants[subjectID] = map[string]entitlement.Grant{}
 	}

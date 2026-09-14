@@ -54,7 +54,8 @@ func TestMemStore_SurvivesEdgeArguments(t *testing.T) {
 	store := entitlementtest.NewMemStore()
 	assert.NotPanics(t, func() {
 		require.NoError(t, store.Revoke(t.Context(), uuid.Nil, ""))
-		require.NoError(t, store.Grant(t.Context(), uuid.Nil, entitlement.Grant{}, time.Time{}))
+		require.ErrorIs(t, store.Grant(t.Context(), uuid.Nil, entitlement.Grant{}, time.Time{}),
+			entitlement.ErrInvalidGrant, "пустой предмет отвергается, как CHECK у базы, а не принимается молча")
 		_, err := store.Open(t.Context(), uuid.Nil, time.Time{})
 		require.NoError(t, err)
 	})

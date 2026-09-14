@@ -2,6 +2,8 @@ package entitlementtest
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -61,6 +63,31 @@ var storeScenarios = []storeScenario{
 	{name: "сохранён переданный момент, а не «примерно сейчас»", run: suiteGrantedAtIsTheGivenMoment},
 	{name: "повторная выдача обновляет момент", run: suiteRegrantUpdatesGrantedAt},
 	{name: "отменённый контекст — ошибка", run: suiteCanceledContext},
+	{name: "предмет вне 1..MaxItemIDLen байт — ErrInvalidGrant, выдачи нет", run: suiteRejectsInvalidItem},
+}
+
+// ПРЕДМЕТ ВНЕ 1..MaxItemIDLen БАЙТ — ErrInvalidGrant, и выдачи не остаётся.
+// Выдачи пишут и мимо сервиса, и реализация, принявшая такой предмет, зеленит
+// потребителя, которого база отвергнет. Длина в БАЙТАХ: предмет в 65 знаков и
+// 129 байт проверка по символам пропустила бы.
+func suiteRejectsInvalidItem(t *testing.T, store entitlement.Store) {
+	t.Helper()
+	fits := strings.Repeat("я", entitlement.MaxItemIDLen/2)
+	if len(fits) != entitlement.MaxItemIDLen {
+		t.Fatalf("сценарий рассчитан на чётный потолок, а MaxItemIDLen = %d", entitlement.MaxItemIDLen)
+	}
+	subject := uuid.New()
+	mustGrant(t, store, subject, entitlement.Grant{ItemID: fits})
+
+	for _, itemID := range []string{"", fits + "x"} {
+		err := store.Grant(t.Context(), subject, entitlement.Grant{ItemID: itemID}, SuiteNow())
+		if !errors.Is(err, entitlement.ErrInvalidGrant) {
+			t.Fatalf("предмет в %d байт: ожидалась ErrInvalidGrant, получено %v", len(itemID), err)
+		}
+	}
+	if got := openAt(t, store, subject, SuiteNow()); len(got) != 1 {
+		t.Fatalf("отвергнутая выдача оставила след: выдач %d, ожидалась одна законная", len(got))
+	}
 }
 
 // «Ничего не куплено» — это отказ по правилу, а не сбой: ошибка здесь
