@@ -58,7 +58,9 @@ func TestPackageImportsAreWhitelisted(t *testing.T) {
 // allowedByDir — белый список внешних импортов по каталогу. Новый подпакет
 // добавляется сюда тем же коммитом, что и каталог.
 var allowedByDir = map[string][]string{
-	".":          {"github.com/google/uuid"},
+	// kit — класс у sentinel ядра (errs.Kinded, ADR-0007); зависимость на kit
+	// разрешена отовсюду (ADR-0005, «Межмодульные зависимости»).
+	".":          {"github.com/google/uuid", "github.com/nrect/rebar/kit"},
 	"outboxtest": {"github.com/google/uuid"},
 	// postgres — только каталогу адаптера хранилища: postgres.Sanitize это
 	// общая граница безопасности, а не удобство (ADR-0005, «Межмодульные

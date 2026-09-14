@@ -42,7 +42,14 @@ func NewService(store Store, transport Transport, supp Suppressor, cfg Config) *
 }
 
 // SetClock подменяет источник времени; только для тестов, до начала обслуживания.
-func (s *Service) SetClock(now func() time.Time) { s.now = now }
+// nil — паника здесь, на настройке, а не разыменование nil в чужом стеке при
+// первом обращении к часам.
+func (s *Service) SetClock(now func() time.Time) {
+	if now == nil {
+		panic("mail.Service.SetClock: now must not be nil")
+	}
+	s.now = now
+}
 
 // Prepare — чистая половина Enqueue: валидация, нормализация, отпечаток, id.
 // Вынесена отдельно, чтобы потребитель мог вставить строку в свою транзакцию
