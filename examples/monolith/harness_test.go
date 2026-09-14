@@ -55,7 +55,23 @@ func newStand(t *testing.T) *stand {
 func newStandWith(t *testing.T, overrides map[string]string) *stand {
 	t.Helper()
 	app, dsn := buildApp(t, overrides)
+	return serveStand(t, app, dsn)
+}
 
+// newReplica — вторая реплика приложения на базе стенда s: свои пул,
+// планировщик, провайдер и /metrics, схема та же. Так тест изображает два
+// инстанса одного сервиса.
+func newReplica(t *testing.T, s *stand) *stand {
+	t.Helper()
+	app, err := monolith.New(t.Context(), loadConfig(t, s.dsn, nil), monolith.Migrations())
+	require.NoError(t, err, "сборка реплики")
+	t.Cleanup(func() { _ = app.Close(context.WithoutCancel(t.Context())) })
+	return serveStand(t, app, s.dsn)
+}
+
+// serveStand — сервер и клиент поверх собранного приложения.
+func serveStand(t *testing.T, app *monolith.App, dsn string) *stand {
+	t.Helper()
 	srv := httptest.NewServer(app.Handler())
 	t.Cleanup(srv.Close)
 

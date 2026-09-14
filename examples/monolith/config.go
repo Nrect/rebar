@@ -39,6 +39,8 @@ type Config struct {
 	Addr    string
 	BaseURL string
 	// DSN — секрет: в лог, в текст ошибки и в ответ не попадает никогда.
+	// Пул обязан быть сессионным: PgBouncer в режиме transaction молча
+	// выключает pglock у payments_reconcile (ADR-0008).
 	DSN config.Secret
 
 	Realm      auth.Realm

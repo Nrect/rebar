@@ -9,14 +9,16 @@ import (
 
 	"github.com/nrect/rebar/mail"
 	"github.com/nrect/rebar/outbox"
+	"github.com/nrect/rebar/postgres/pglock"
 	"github.com/nrect/rebar/scheduler"
 	"github.com/nrect/rebar/scheduler/schedulerotel"
 
+	"github.com/nrect/rebar/examples/monolith/lockotel"
 	"github.com/nrect/rebar/examples/monolith/shoppg"
 )
 
-// Имена фоновых задач. Уезжают в метку метрики cron_runs{job,result}, поэтому
-// набор закрыт и объявлен здесь.
+// Имена фоновых задач. Уезжают в метки метрик cron_runs{job,result} и
+// cron_lock{job,result}, поэтому набор закрыт и объявлен здесь.
 const (
 	jobMailDeliver        = "mail_deliver"
 	jobOutboxDrain        = "outbox_drain"
@@ -34,10 +36,14 @@ const (
 //
 //	mail_deliver         mail.Service.Deliver
 //	outbox_drain         outbox.Worker.Drain
-//	payments_reconcile   payment.Reconciler.Run
+//	payments_reconcile   payment.Reconciler.Run под pglock
 //	auth_sweep           session.Service.Sweep
 //	objectstore_collect  objectstore.Collector.Run
 //	gauges_snapshot      App.refreshGauges — своя задача примера, не тулкита
+//
+// ПОД PGLOCK — ОДНА ЗАДАЧА ИЗ ШЕСТИ. pglock.Wrap не обёртка под сигнатуру: он
+// берёт и отдаёт ту же. Остальным пяти блокировка лишняя или вредна — разбор в
+// doc.go, «Распределённая блокировка».
 //
 // gauges_snapshot — ОТДЕЛЬНАЯ задача со своим тактом (GAUGES_TICK): снимки
 // гейджей — запросы к базе, и их частоту задаём мы, а не Prometheus
@@ -48,10 +54,17 @@ func (a *App) startJobs() error {
 	if err != nil {
 		return err
 	}
+	// Ряды cron_lock{job,result} рождаются нулём здесь, на сборке: первый же
+	// пропуск без них increase() не увидел бы.
+	lockObserver, err := lockotel.NewObserver(a.obs.Meter.Meter("rebar.pglock"), jobPaymentsReconcile)
+	if err != nil {
+		return err
+	}
+	lock := pglock.New(a.db.Pool, lockObserver)
 	jobs, err := scheduler.New(observer,
 		scheduler.Job{Name: jobMailDeliver, Interval: a.cfg.Tick, Run: a.letters.Deliver},
 		scheduler.Job{Name: jobOutboxDrain, Interval: a.cfg.Tick, Run: a.worker.Drain},
-		scheduler.Job{Name: jobPaymentsReconcile, Interval: a.cfg.Tick, Run: a.reconcile.Run},
+		scheduler.Job{Name: jobPaymentsReconcile, Interval: a.cfg.Tick, Run: lock.Wrap(jobPaymentsReconcile, a.reconcile.Run)},
 		scheduler.Job{Name: jobAuthSweep, Interval: a.cfg.Tick, Run: a.sessions.Sweep},
 		scheduler.Job{Name: jobObjectstoreCollect, Interval: a.cfg.Tick, Run: a.collector.Run},
 		scheduler.Job{Name: jobGaugesSnapshot, Interval: a.cfg.GaugesTick, Run: a.refreshGauges},
