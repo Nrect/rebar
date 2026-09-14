@@ -14,8 +14,8 @@ import (
 	"github.com/nrect/rebar/entitlement/entitlementtest"
 )
 
-// Тот же набор пойдёт по будущему pg-адаптеру: двойник и адаптер не имеют
-// права разойтись, иначе тесты потребителя зелены при сломанном проде.
+// Тот же набор гоняется по entitlementpg: двойник и адаптер не имеют права
+// разойтись, иначе тесты потребителя зелены при сломанном проде.
 func TestMemStore_SatisfiesStoreContract(t *testing.T) {
 	t.Parallel()
 

@@ -5,6 +5,53 @@
 
 ## Unreleased
 
+### Added
+- `entitlementpg` — pg-адаптер порта `Store`: таблица `entitlement_grants`,
+  `New`, `WithTx`, `CheckSchema` и `schema.sql` с goose-маркерами и обеими
+  сторонами (`Schema` — тот же файл побайтно). Контрактный набор
+  `entitlementtest.RunStoreSuite` гоняется по адаптеру так же, как по
+  двойнику.
+- Схема мигрирует **только выдачи**. Таблиц каталога из наброска в `doc.go` в
+  ней нет: порт их не пишет, а пакет, который не может записать таблицу, не
+  вправе ею владеть — `Down` адаптера снёс бы каталог потребителя. Тест держит
+  и одну таблицу в `Up`, и `Down` ровно из `DROP TABLE entitlement_grants;`.
+- `ck_entitlement_grants_item_id` зеркалит потолок ядра: предмет непустой и не
+  длиннее `MaxItemIDLen` **байт**. Выдачи пишут и мимо ядра — из хука платежей
+  в той же транзакции. Guard-тест сверяет число в `schema.sql` с константой, а
+  граничный тест на кириллице — что база режет по байтам, а не по символам.
+  Нарушение опознаётся **по имени ограничения** и приходит `ErrInvalidGrant`,
+  а не `ErrUnavailable`: база ответила определённо, повтор не поможет. CHECK
+  потребителя в той же таблице даёт тот же 23514 и остаётся сбоем.
+- Повторная выдача встаёт на `ux_entitlement_grants_subject_item` по имени
+  (`ON CONFLICT … DO UPDATE`): переписывает срок и `granted_at` и не роняет
+  транзакцию потребителя, в том числе под гонкой. Имена ограничений сверены и
+  с `schema.sql`, и с литералами: переименование в коде и в файле разом тоже
+  красное.
+- `Open` отдаёт пустой срез, а не `nil`, и выдачи в побайтном порядке
+  предметов (`COLLATE "C"`) — как двойник, при любой сортировке базы
+  потребителя; порядок проверен на колонке с ICU-сортировкой.
+- Граница ошибки — общий `postgres.Sanitize`. Тест сперва доказывает, что
+  `Detail` мимо адаптера несёт субъекта и предмет, затем по типу — что через
+  адаптер он недосягаем: `ErrorAs` на `*postgres.Error`, `NotErrorAs` на
+  `*pgconn.PgError`.
+- Тесты: `TestStore_SatisfiesStoreContract`, `TestStore_WithTx_IsAtomic`
+  (чтение из базы после отката), `TestStore_WithTx_RevokeIsAtomic`,
+  `TestStore_Grant_Race`, `TestStore_Grant_ItemCeiling`,
+  `TestStore_ErrorHasNoRowData`, `TestStore_ConsumerCheckStaysUnavailable`,
+  `TestStore_FailureIsUnavailable`, `TestSchemaCheck_MirrorsMaxItemIDLen`,
+  `TestContractNames_ArePinned`, `TestCheckSchema` с соседями,
+  `TestSchema_AppliesBothWays`. Мутационный прогон адаптера — на выделенной
+  машине: каждый мутант ходит в базу.
+
+### Changed
+- `doc.go`: «Эталонная схема адаптера» ссылается на `entitlementpg/schema.sql`
+  вместо своей копии DDL выдач; каталог подписан как миграция потребителя, с
+  причиной; «Адаптера в v0.1 нет» и пункт «pg-адаптера» заменены ссылкой на
+  подпакет.
+- `go.mod` модуля требует `pgx` и `postgres` — ради подпакета. Белый список
+  ядра в страже импортов не изменился: `pgx` и `postgres` разрешены только
+  каталогу `entitlementpg`.
+
 ## [0.1.0] — 2026-09-10
 
 ### Added
