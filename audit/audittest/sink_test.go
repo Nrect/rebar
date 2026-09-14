@@ -67,7 +67,7 @@ func TestSink_ErrStopsWrite(t *testing.T) {
 	t.Parallel()
 
 	sink := audittest.NewSink()
-	sink.Err = audittest.ErrSinkFailed
+	sink.SetErr(audittest.ErrSinkFailed)
 
 	err := sink.Write(t.Context(), event("a", audit.OutcomeSuccess))
 	require.ErrorIs(t, err, audittest.ErrSinkFailed)

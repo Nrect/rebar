@@ -158,7 +158,7 @@ func TestSink_DoesNotCountFailedWrite(t *testing.T) {
 
 	reader, meter := newMeter(t)
 	inner := audittest.NewSink()
-	inner.Err = audittest.ErrSinkFailed
+	inner.SetErr(audittest.ErrSinkFailed)
 	sink, err := auditotel.Wrap(inner, meter)
 	require.NoError(t, err)
 
@@ -177,7 +177,7 @@ func TestSink_PassesErrorChainThrough(t *testing.T) {
 
 	_, meter := newMeter(t)
 	inner := audittest.NewSink()
-	inner.Err = errors.Join(audit.ErrUnavailable, audittest.ErrSinkFailed)
+	inner.SetErr(errors.Join(audit.ErrUnavailable, audittest.ErrSinkFailed))
 	sink, err := auditotel.Wrap(inner, meter)
 	require.NoError(t, err)
 

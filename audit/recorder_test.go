@@ -331,7 +331,7 @@ func TestRecord_ReturnsSinkError(t *testing.T) {
 	t.Parallel()
 
 	sink := audittest.NewSink()
-	sink.Err = audittest.ErrSinkFailed
+	sink.SetErr(audittest.ErrSinkFailed)
 	rec := audit.NewRecorder(sink, testConfig())
 
 	err := rec.Record(userCtx(t), entry())

@@ -13,14 +13,11 @@ import (
 // поломку стенда за штатный ErrUnavailable домена.
 var ErrSinkFailed = errors.New("audittest: sink failed")
 
-// Sink — audit.Sink в памяти. Потокобезопасен.
+// Sink — audit.Sink в памяти. Потокобезопасен целиком, включая настройку.
 type Sink struct {
 	mu     sync.Mutex
 	events []audit.Event
-
-	// Err — ошибка Write: с ней проверяется поведение потребителя на
-	// недоступном журнале. Ставится до начала работы.
-	Err error
+	err    error
 }
 
 var _ audit.Sink = (*Sink)(nil)
@@ -28,13 +25,21 @@ var _ audit.Sink = (*Sink)(nil)
 // NewSink — пустой журнал.
 func NewSink() *Sink { return &Sink{} }
 
+// SetErr — ошибка Write: с ней проверяется поведение потребителя на
+// недоступном журнале; nil снимает.
+func (s *Sink) SetErr(err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.err = err
+}
+
 // Write добавляет событие в конец. Карта подробностей копируется: карта
 // вызывающего живёт своей жизнью, а журнал после записи не меняется.
 func (s *Sink) Write(_ context.Context, ev audit.Event) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.Err != nil {
-		return s.Err
+	if s.err != nil {
+		return s.err
 	}
 	s.events = append(s.events, copyEvent(ev))
 	return nil
