@@ -99,9 +99,9 @@ func (r *Responder) Write(ctx context.Context, w http.ResponseWriter, err error)
 	_ = json.NewEncoder(w).Encode(errorBody{Slug: slug, RequestID: requestID})
 }
 
-// slugAndStatus — SlugError решает первой: её слаг выбрал потребитель. Класс
-// без слага отвечает именем класса — таблицы умолчаний нет, значения Kind уже
-// годные слаги (ADR-0007).
+// slugAndStatus — слаг и класс самой внешней классифицированной ошибки: у
+// SlugError их выбрал потребитель, KindError отвечает именем класса — таблицы
+// умолчаний нет, значения Kind уже годные слаги (ADR-0007).
 func (r *Responder) slugAndStatus(err error) (slug string, status int) {
 	if s, ok := errs.SlugOf(err); ok {
 		// Негодный слаг у собранной вручную SlugError — тоже «внутренняя»:

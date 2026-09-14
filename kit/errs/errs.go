@@ -64,28 +64,83 @@ func (e SlugError) WithCause(err error) SlugError {
 	return e
 }
 
-// KindOf — класс ошибки; для чужой ошибки KindUnknown, то есть 500 без текста.
-// SlugError ищется раньше KindError: обернув нашу ошибку в свою через
-// Translate, потребитель решил за пакет, и его выбор старше.
+// KindOf — класс самой внешней классифицированной ошибки цепочки (SlugError или
+// KindError); для чужой ошибки KindUnknown, то есть 500 без текста.
+//
+// КЛАСС РЕШАЕТ ПОЛОЖЕНИЕ, А НЕ ТИП. Обёртка значит «теперь я эта ошибка,
+// вызванная той»: Translate кладёт свою SlugError сверху и выигрывает, а
+// SlugError хука потребителя, завёрнутая ядром в недоступность, проигрывает.
+// Иначе вебхук ответил бы классом хука вместо 503, провайдер перестал бы
+// повторять, и оплата потерялась бы.
 func KindOf(err error) Kind {
-	var slugErr SlugError
-	if errors.As(err, &slugErr) {
-		return slugErr.Kind
-	}
-	var kindErr KindError
-	if errors.As(err, &kindErr) {
-		return kindErr.Kind()
+	if c, ok := outermostClass(err); ok {
+		return c.kind
 	}
 	return KindUnknown
 }
 
-// SlugOf — слаг ошибки и признак того, что это SlugError.
+// SlugOf — слаг самой внешней классифицированной ошибки и признак того, что
+// это SlugError. Первой встретилась KindError — слага нет, даже если глубже
+// лежит SlugError.
 func SlugOf(err error) (string, bool) {
-	var slugErr SlugError
-	if errors.As(err, &slugErr) {
-		return slugErr.Slug, true
+	c, ok := outermostClass(err)
+	if !ok || !c.hasSlug {
+		return "", false
 	}
-	return "", false
+	return c.slug, true
+}
+
+// maxChainNodes — потолок узлов обхода цепочки. errors.As цикл не переживает:
+// на самоссылке висит, на ветвящемся цикле роняет процесс переполнением стека.
+const maxChainNodes = 1 << 10
+
+// chainClass — класс узла цепочки; слаг есть только у SlugError.
+type chainClass struct {
+	kind    Kind
+	slug    string
+	hasSlug bool
+}
+
+// outermostClass — класс первой SlugError или KindError в порядке errors.As:
+// Unwrap() error, у Unwrap() []error дети по порядку, каждый целиком; false —
+// такой нет в пределах maxChainNodes узлов.
+func outermostClass(err error) (chainClass, bool) {
+	stack := []error{err}
+	for visited := 0; len(stack) > 0 && visited < maxChainNodes; visited++ {
+		top := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if c, ok := classOf(top); ok {
+			return c, true
+		}
+		stack = pushChildren(stack, top)
+	}
+	return chainClass{}, false
+}
+
+// classOf — класс самого узла, без причины.
+func classOf(err error) (chainClass, bool) {
+	switch e := err.(type) { //nolint:errorlint // узел проверяется сам: цепочку обходит outermostClass, а errors.As перепрыгнул бы через положение
+	case SlugError:
+		return chainClass{kind: e.Kind, slug: e.Slug, hasSlug: true}, true
+	case KindError:
+		return chainClass{kind: e.Kind()}, true
+	default:
+		return chainClass{}, false
+	}
+}
+
+// pushChildren — дети узла на стек в обратном порядке: первый снимется первым.
+func pushChildren(stack []error, err error) []error {
+	switch u := err.(type) { //nolint:errorlint // формы Unwrap те же, что читает errors.As; обход ручной ради порядка и потолка
+	case interface{ Unwrap() error }:
+		return append(stack, u.Unwrap())
+	case interface{ Unwrap() []error }:
+		children := u.Unwrap()
+		for i := len(children) - 1; i >= 0; i-- {
+			stack = append(stack, children[i])
+		}
+	}
+	return stack
 }
 
 // TranslateAs — перевод чужой sentinel-ошибки в свою: errors.Is(err, target)
