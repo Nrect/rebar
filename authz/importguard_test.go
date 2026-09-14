@@ -15,7 +15,9 @@ import (
 // добавляется сюда тем же коммитом, что и каталог; пустой список означает
 // «только stdlib и собственный модуль».
 var allowedByDir = map[string][]string{
-	".":         {},
+	// kit — класс у sentinel ядра (errs.Kinded, ADR-0007); зависимость на kit
+	// разрешена отовсюду (ADR-0005, «Межмодульные зависимости»).
+	".":         {"github.com/nrect/rebar/kit"},
 	"authztest": {},
 	"authzhttp": {},
 	// postgres — граница ошибки (postgres.Sanitize), разрешённая адаптерам
