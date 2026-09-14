@@ -64,7 +64,10 @@ func startMinIO(ctx context.Context) (testcontainers.Container, string, error) {
 				"MINIO_ROOT_USER":     minioUser,
 				"MINIO_ROOT_PASSWORD": minioPassword,
 			},
-			WaitingFor: wait.ForHTTP("/minio/health/live").
+			// ГОТОВНОСТЬ ЗАПИСИ, А НЕ ЖИЗНЬ ПРОЦЕССА. live и ready отвечают 200
+			// раньше, чем поднят слой объектов, и бакет в это окно получает 503
+			// XMinioServerNotInitialized — TestMain мигал. cluster ждёт кворума записи.
+			WaitingFor: wait.ForHTTP("/minio/health/cluster").
 				WithPort("9000/tcp").
 				WithStartupTimeout(120 * time.Second),
 		},
