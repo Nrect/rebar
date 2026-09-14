@@ -32,10 +32,10 @@
 
   | Sentinel | Класс | Почему |
   |---|---|---|
-  | `ErrKeyReused` | 409 `conflict` | тот же `(Kind, DedupKey)` на другое сообщение |
   | `ErrClaimLost` | 409 `conflict` | строку держит другой токен аренды, состояние не менялось |
   | `ErrUnavailable` | 503 `unavailable` | сбой хранилища, повтор осмыслен |
   | `ErrInvalidMessage`, `ErrBadKind`, `ErrKeyInvalid` | нет, `//errs:nokind` | сообщение, тип и ключ строит код потребителя из факта: негодные — дефект, то есть 500 |
+  | `ErrKeyReused` | нет, `//errs:nokind` | `(Kind, DedupKey)` строит код потребителя из факта, поэтому тот же ключ на другое сообщение — ошибка ключа в коде, а не конфликт для клиента |
   | `ErrSkip` | нет, `//errs:nokind` | не отказ, а сигнал хендлера воркеру: строка закрывается как done |
 
 - **Ломающее для кода, который сравнивал тексты sentinel, присваивал их,
@@ -51,7 +51,7 @@
   | `Producer.SetClock(nil)`, `Worker.SetClock(nil)` принимались и падали разыменованием при первом обращении к часам | паника `outbox.Producer.SetClock: now must not be nil` и `outbox.Worker.SetClock: now must not be nil` |
 
   Префикс не косметика: `KindError` равны по классу и тексту, и без него
-  `outbox.ErrKeyReused` совпала бы через `errors.Is` с `mail.ErrKeyReused`.
+  `outbox.ErrUnavailable` совпала бы через `errors.Is` с `mail.ErrUnavailable`.
   Модуль требует `github.com/nrect/rebar/kit v0.2.0`.
 - `Backoff` берётся из `kit/retry`: копия экспоненты с джиттером удалена.
   Поведение то же — сверено построчно: тело и структура копии совпадали с
