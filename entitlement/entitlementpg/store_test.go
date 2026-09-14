@@ -118,6 +118,14 @@ func TestStore_Grant_Race(t *testing.T) {
 		require.NoError(t, err)
 	}
 	assert.Equal(t, 1, countRows(t, pool))
+
+	// Срок под гонкой тоже не сокращается: остаётся поздний из восьми, в каком
+	// бы порядке ни легли записи.
+	got, err := store.Open(t.Context(), subject, moment())
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	require.NotNil(t, got[0].ExpiresAt)
+	assert.Equal(t, moment().Add(workers*time.Hour), *got[0].ExpiresAt)
 }
 
 // ПОТОЛОК РЕЖЕТСЯ ПО БАЙТАМ, как len в ядре: length() по символам пропустил бы

@@ -115,8 +115,8 @@ func (m *MemStore) Open(ctx context.Context, subjectID uuid.UUID, now time.Time)
 	return out, nil
 }
 
-// Grant — выдать предмет. Повторная выдача ПРОДЛЕВАЕТ срок, а не удваивает
-// строку: ключ — предмет, как первичный ключ у адаптера.
+// Grant — выдать предмет. Повторная выдача не удваивает строку (ключ — предмет,
+// как первичный ключ у адаптера) и никогда не сокращает срок (laterExpiry).
 //
 // Момент приходит параметром и ЗАТИРАЕТ g.GrantedAt: у адаптера в granted_at
 // уезжает $at, а не поле структуры, и двойник, сохранивший поле, расходился бы
@@ -139,8 +139,24 @@ func (m *MemStore) Grant(ctx context.Context, subjectID uuid.UUID, g entitlement
 	}
 	stored := clone(g)
 	stored.GrantedAt = at
+	if prev, ok := m.grants[subjectID][g.ItemID]; ok {
+		stored.ExpiresAt = laterExpiry(prev.ExpiresAt, stored.ExpiresAt)
+	}
 	m.grants[subjectID][g.ItemID] = stored
 	return nil
+}
+
+// laterExpiry — срок после повторной выдачи: бессрочная с любой стороны даёт
+// бессрочную, из двух сроков остаётся поздний. Та же развилка, что CASE у
+// адаптера; голый «больший из двух» вернул бы срок там, где было бессрочно.
+func laterExpiry(prev, next *time.Time) *time.Time {
+	if prev == nil || next == nil {
+		return nil
+	}
+	if next.After(*prev) {
+		return next
+	}
+	return prev
 }
 
 // Revoke — отозвать предмет. Отзыв несуществующей выдачи не ошибка: у

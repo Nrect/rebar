@@ -56,7 +56,7 @@ var storeScenarios = []storeScenario{
 	{name: "пустое хранилище отдаёт пустой список, а не ошибку", run: suiteEmpty},
 	{name: "бессрочная выдача видна и через год", run: suiteForever},
 	{name: "момент истечения уже закрыт", run: suiteExpiryBoundary},
-	{name: "повторная выдача продлевает, а не удваивает", run: suiteRegrantExtends},
+	{name: "повторная выдача не удваивает и никогда не сокращает срок", run: suiteRegrantNeverShortens},
 	{name: "отзыв убирает выдачу и идемпотентен", run: suiteRevoke},
 	{name: "субъекты не видят выдач друг друга", run: suiteSubjectsIsolated},
 	{name: "снимок отдаётся копией", run: suiteOpenReturnsCopy},
@@ -132,21 +132,61 @@ func suiteExpiryBoundary(t *testing.T, store entitlement.Store) {
 	}
 }
 
-func suiteRegrantExtends(t *testing.T, store entitlement.Store) {
+// ПОВТОРНАЯ ВЫДАЧА НЕ УДВАИВАЕТ И НИКОГДА НЕ СОКРАЩАЕТ СРОК. Покупки, доехавшие
+// не в том порядке (повтор вебхука, redrive), не отнимают оплаченный доступ:
+// бессрочная с любой стороны даёт бессрочную, из двух сроков остаётся поздний.
+// Момент выдачи обновляется ВСЕГДА — и тогда, когда срок не сдвинулся. Читается
+// после раннего срока: сокращённая выдача там уже закрыта.
+func suiteRegrantNeverShortens(t *testing.T, store entitlement.Store) {
 	t.Helper()
-	subject := uuid.New()
-	first := SuiteNow().Add(time.Hour)
-	second := SuiteNow().Add(48 * time.Hour)
-	mustGrant(t, store, subject, entitlement.Grant{ItemID: SuiteItem, ExpiresAt: &first})
-	mustGrant(t, store, subject, entitlement.Grant{ItemID: SuiteItem, ExpiresAt: &second})
+	early := SuiteNow().Add(time.Hour)
+	late := SuiteNow().Add(48 * time.Hour)
+	firstAt, secondAt := SuiteNow().Add(-2*time.Hour), SuiteNow().Add(-time.Hour)
+	afterEarly := early.Add(time.Hour)
 
-	got := openAt(t, store, subject, first.Add(time.Hour))
-	if len(got) != 1 {
-		t.Fatalf("после повторной выдачи ожидалась одна строка, получено %v", items(got))
+	cases := []struct {
+		name          string
+		first, second *time.Time
+		want          *time.Time
+	}{
+		{name: "ранний срок, потом поздний", first: &early, second: &late, want: &late},
+		{name: "поздний срок, потом ранний", first: &late, second: &early, want: &late},
+		{name: "бессрочная, потом срочная", first: nil, second: &early, want: nil},
+		{name: "срочная, потом бессрочная", first: &early, second: nil, want: nil},
 	}
-	if got[0].ExpiresAt == nil || !got[0].ExpiresAt.Equal(second) {
-		t.Fatalf("повторная выдача не продлила срок: %v", got[0].ExpiresAt)
+	for _, c := range cases {
+		subject := uuid.New()
+		mustGrantAt(t, store, subject, entitlement.Grant{ItemID: SuiteItem, ExpiresAt: c.first}, firstAt)
+		mustGrantAt(t, store, subject, entitlement.Grant{ItemID: SuiteItem, ExpiresAt: c.second}, secondAt)
+
+		got := openAt(t, store, subject, afterEarly)
+		if len(got) != 1 {
+			t.Fatalf("%s: после раннего срока ожидалась одна открытая выдача (сокращённый срок её закрыл бы), получено %v",
+				c.name, items(got))
+		}
+		if !sameExpiry(got[0].ExpiresAt, c.want) {
+			t.Fatalf("%s: срок %s, ожидался %s", c.name, expiryText(got[0].ExpiresAt), expiryText(c.want))
+		}
+		if !got[0].GrantedAt.Equal(secondAt) {
+			t.Fatalf("%s: момент выдачи %s, ожидался момент повтора %s", c.name, got[0].GrantedAt, secondAt)
+		}
 	}
+}
+
+// sameExpiry — один и тот же срок; бессрочность сравнивается как значение.
+func sameExpiry(got, want *time.Time) bool {
+	if got == nil || want == nil {
+		return got == want
+	}
+	return got.Equal(*want)
+}
+
+// expiryText — срок для сообщения: бессрочность называется словом.
+func expiryText(e *time.Time) string {
+	if e == nil {
+		return "бессрочно"
+	}
+	return e.String()
 }
 
 func suiteRevoke(t *testing.T, store entitlement.Store) {
