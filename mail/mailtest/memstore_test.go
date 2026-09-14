@@ -232,7 +232,7 @@ func TestMemStore_FinishRequiresSendingRow(t *testing.T) {
 func TestMemStore_ErrIsReturnedByEveryMethod(t *testing.T) {
 	t.Parallel()
 	store := mailtest.NewMemStore()
-	store.Err = errUnavailable
+	store.SetErr(errUnavailable)
 
 	ctx := context.Background()
 	_, err := store.Enqueue(ctx, envelope("verify:a", storeBase))

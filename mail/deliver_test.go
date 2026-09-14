@@ -130,7 +130,7 @@ func TestDeliver_SuppressedIsNotSent(t *testing.T) {
 func TestDeliver_SuppressorFailureRetries(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t, true, nil)
-	h.supp.Err = errors.New("suppression store is down")
+	h.supp.SetErr(errors.New("suppression store is down"))
 	env := h.enqueue(t, nil)
 
 	assert.Equal(t, 1, h.deliver(t))

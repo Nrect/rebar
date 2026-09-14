@@ -21,17 +21,15 @@ import (
 var ErrIDReused = errors.New("mailtest: envelope id is already stored under a different dedup key")
 
 // MemStore — mail.Store в памяти: настоящая уникальность DedupKey, аренда и
-// SKIP-LOCKED-семантика, стирание тела в терминальном статусе. Потокобезопасен;
-// поля-настройки задаются до начала прогона.
+// SKIP-LOCKED-семантика, стирание тела в терминальном статусе. Потокобезопасен
+// целиком, включая настройку.
 type MemStore struct {
 	mu   sync.Mutex
 	rows map[uuid.UUID]mail.Envelope
 	keys map[string]uuid.UUID
 
-	// Err — ошибка из любого метода: для fail-closed тестов.
-	Err error
-	// FinishErr — ошибка только из Finish: после неё остаток пачки не идёт.
-	FinishErr error
+	err       error
+	finishErr error
 }
 
 // NewMemStore — пустое хранилище.
@@ -39,13 +37,27 @@ func NewMemStore() *MemStore {
 	return &MemStore{rows: map[uuid.UUID]mail.Envelope{}, keys: map[string]uuid.UUID{}}
 }
 
+// SetErr — ошибка из любого метода порта: для fail-closed тестов; nil снимает.
+func (m *MemStore) SetErr(err error) { m.set(func() { m.err = err }) }
+
+// SetFinishErr — ошибка только из Finish: после неё остаток пачки не идёт; nil
+// снимает.
+func (m *MemStore) SetFinishErr(err error) { m.set(func() { m.finishErr = err }) }
+
+// set — правка настройки под тем же замком, под которым её читают методы порта.
+func (m *MemStore) set(mutate func()) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	mutate()
+}
+
 // Enqueue вставляет строку в pending; повтор ключа возвращает существующую
 // строку с её отпечатком байт в байт — на нём домен решает, законен ли повтор.
 func (m *MemStore) Enqueue(_ context.Context, env mail.Envelope) (mail.EnqueueResult, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.Err != nil {
-		return mail.EnqueueResult{}, m.Err
+	if m.err != nil {
+		return mail.EnqueueResult{}, m.err
 	}
 	if id, dup := m.keys[env.DedupKey]; dup {
 		return mail.EnqueueResult{Outcome: mail.OutcomeDuplicate, Envelope: copyEnvelope(m.rows[id])}, nil
@@ -67,8 +79,8 @@ func (m *MemStore) Enqueue(_ context.Context, env mail.Envelope) (mail.EnqueueRe
 func (m *MemStore) Claim(_ context.Context, now time.Time, lease time.Duration, limit int) ([]mail.Envelope, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.Err != nil {
-		return nil, m.Err
+	if m.err != nil {
+		return nil, m.err
 	}
 	if limit <= 0 {
 		return []mail.Envelope{}, nil
@@ -128,11 +140,11 @@ func claimable(row mail.Envelope, now time.Time) bool {
 func (m *MemStore) Finish(_ context.Context, req mail.FinishRequest) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.Err != nil {
-		return m.Err
+	if m.err != nil {
+		return m.err
 	}
-	if m.FinishErr != nil {
-		return m.FinishErr
+	if m.finishErr != nil {
+		return m.finishErr
 	}
 	row, ok := m.rows[req.ID]
 	if !ok || row.Status != mail.StatusSending {
@@ -188,8 +200,8 @@ func terminalStatus(outcome mail.FinishOutcome) mail.Status {
 func (m *MemStore) Stats(_ context.Context, now time.Time) (mail.Stats, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.Err != nil {
-		return mail.Stats{}, m.Err
+	if m.err != nil {
+		return mail.Stats{}, m.err
 	}
 	var (
 		stats  mail.Stats
@@ -217,8 +229,8 @@ func (m *MemStore) Stats(_ context.Context, now time.Time) (mail.Stats, error) {
 func (m *MemStore) Purge(_ context.Context, before time.Time, limit int) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.Err != nil {
-		return 0, m.Err
+	if m.err != nil {
+		return 0, m.err
 	}
 	if limit <= 0 {
 		return 0, nil

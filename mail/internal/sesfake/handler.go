@@ -3,6 +3,7 @@ package sesfake
 import (
 	"encoding/json"
 	"io"
+	"maps"
 	"net/http"
 	netmail "net/mail"
 	"slices"
@@ -121,11 +122,15 @@ func (h *Handler) set(mutate func()) {
 	mutate()
 }
 
-// Sent — копия принятых писем в порядке приёма.
+// Sent — копии принятых писем в порядке приёма.
 func (h *Handler) Sent() []SentEmail {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return slices.Clone(h.sent)
+	sent := make([]SentEmail, len(h.sent))
+	for i, e := range h.sent {
+		sent[i] = copySentEmail(e)
+	}
+	return sent
 }
 
 // Reset — забыть принятые письма.
@@ -174,7 +179,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // accept — решение по письму и запись в хранилище под мьютексом. Хук берётся
-// под тем же замком, а зовётся снаружи: он вправе звать сам обработчик.
+// под тем же замком, а зовётся снаружи: он вправе звать сам обработчик. Письмо
+// наружу — копией: хук не делит память с хранилищем.
 func (h *Handler) accept(email SentEmail, recipient string) (SentEmail, func(SentEmail), *apiError) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -190,7 +196,15 @@ func (h *Handler) accept(email SentEmail, recipient string) (SentEmail, func(Sen
 	if h.storeLimit > 0 && len(h.sent) > h.storeLimit {
 		h.sent = slices.Delete(h.sent, 0, len(h.sent)-h.storeLimit)
 	}
-	return email, h.onAccepted, nil
+	return copySentEmail(email), h.onAccepted, nil
+}
+
+// copySentEmail — копия до последнего указателя: правка полученного письма не
+// доезжает до хранилища двойника (PATTERNS §7).
+func copySentEmail(e SentEmail) SentEmail {
+	e.Headers = maps.Clone(e.Headers)
+	e.ReplyTo = slices.Clone(e.ReplyTo)
+	return e
 }
 
 // sendEmailRequest — подмножество тела SendEmail; Raw и Template ловятся,

@@ -64,7 +64,7 @@ func TestEnqueue_SameKeyDifferentMessageIsKeyReused(t *testing.T) {
 func TestEnqueue_StoreFailureIsUnavailable(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t, false, nil)
-	h.store.Err = errors.New("connection refused")
+	h.store.SetErr(errors.New("connection refused"))
 
 	_, err := h.svc.Enqueue(context.Background(), validMessage())
 	require.ErrorIs(t, err, mail.ErrUnavailable)
@@ -74,7 +74,7 @@ func TestEnqueue_StoreFailureIsUnavailable(t *testing.T) {
 func TestEnqueue_InvalidMessageDoesNotReachStore(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t, false, nil)
-	h.store.Err = errors.New("store must not be called")
+	h.store.SetErr(errors.New("store must not be called"))
 
 	cases := map[string]func(*mail.Message){
 		"неизвестный тип":  func(m *mail.Message) { m.Kind = "newsletter" },

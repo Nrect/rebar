@@ -102,10 +102,10 @@ func TestDrain_CrashBetweenHandleAndFinish(t *testing.T) {
 	h := newHarness(t, nil)
 	env := h.enqueue(t, nil)
 
-	h.store.AfterHandle = func() {
-		h.store.AfterHandle = nil // «перезапуск»: следующий процесс хука не знает
+	h.store.SetAfterHandle(func() {
+		h.store.SetAfterHandle(nil) // «перезапуск»: следующий процесс хука не знает
 		panic("kill -9 между Handle и Finish")
-	}
+	})
 	assert.Panics(t, func() { _, _ = h.worker.Drain(context.Background()) })
 
 	row := h.row(t, env.ID)
@@ -155,7 +155,7 @@ func TestDrain_FinishFailureStopsBatch(t *testing.T) {
 	h := newHarness(t, nil)
 	h.enqueue(t, nil)
 	h.enqueue(t, func(m *outbox.Message) { m.AggregateID = "B-7" })
-	h.store.FinishErr = errors.New("connection reset")
+	h.store.SetFinishErr(errors.New("connection reset"))
 
 	processed, err := h.worker.Drain(context.Background())
 	require.ErrorIs(t, err, outbox.ErrUnavailable)
@@ -167,7 +167,7 @@ func TestDrain_FinishFailureStopsBatch(t *testing.T) {
 func TestDrain_ClaimFailureIsRunError(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t, nil)
-	h.store.Err = errors.New("connection reset")
+	h.store.SetErr(errors.New("connection reset"))
 
 	processed, err := h.worker.Drain(context.Background())
 	require.ErrorIs(t, err, outbox.ErrUnavailable)

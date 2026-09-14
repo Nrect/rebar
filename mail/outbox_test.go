@@ -64,7 +64,7 @@ func TestPurge_RespectsBatchSizeOldestFirst(t *testing.T) {
 func TestPurge_StoreFailureIsUnavailable(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t, false, nil)
-	h.store.Err = errors.New("connection refused")
+	h.store.SetErr(errors.New("connection refused"))
 
 	_, err := h.svc.Purge(context.Background())
 	require.ErrorIs(t, err, mail.ErrUnavailable)
@@ -106,7 +106,7 @@ func TestStats_CountsPendingSendingAndFailed(t *testing.T) {
 func TestStats_StoreFailureIsUnavailable(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t, false, nil)
-	h.store.Err = errors.New("connection refused")
+	h.store.SetErr(errors.New("connection refused"))
 
 	_, err := h.svc.Stats(context.Background())
 	require.ErrorIs(t, err, mail.ErrUnavailable)
@@ -166,7 +166,7 @@ func TestSuppress_WithoutSuppressor(t *testing.T) {
 func TestSuppress_StoreFailureIsUnavailable(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t, true, nil)
-	h.supp.Err = errors.New("suppression store is down")
+	h.supp.SetErr(errors.New("suppression store is down"))
 
 	err := h.svc.Suppress(context.Background(), mail.Suppression{
 		Email: "teacher@school.ru", Reason: mail.SuppressManual,
