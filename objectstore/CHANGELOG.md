@@ -5,6 +5,12 @@
 
 ## Unreleased
 
+### Fixed
+- Интеграционный тест `s3` берёт образ MinIO с `quay.io`, а не с Docker Hub:
+  тот отвечает «pull access denied … repository does not exist» без
+  `docker login`, и `make chip-check MODULE=objectstore` краснел у всех.
+  Digest прежний, побайтно тот же образ — переехал только источник.
+
 ## [0.1.0] — 2026-09-10
 
 ### Added

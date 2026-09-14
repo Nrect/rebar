@@ -15,7 +15,12 @@ import (
 
 // minioImage — пин по digest: тег переезжает на новый образ, и «тот же тест на
 // той же версии» перестаёт быть правдой (как postgres в pgtest).
-const minioImage = "minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:" +
+//
+// Реестр — quay.io, а не Docker Hub: с сентября 2026 тот отдаёт
+// «pull access denied ... repository does not exist» на minio/minio любому
+// без docker login, и гейт objectstore краснел у всех. Digest тот же самый,
+// побайтно — «тот же образ» осталось правдой, переехал только источник.
+const minioImage = "quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:" +
 	"14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e"
 
 const (
