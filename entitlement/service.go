@@ -36,7 +36,13 @@ func New(store Store, cfg Config) *Service {
 }
 
 // SetClock подменяет источник времени; только для тестов, до начала работы.
-func (s *Service) SetClock(now func() time.Time) { s.now = now }
+// nil — паника здесь, а не разыменование nil в чужом стеке при первом решении.
+func (s *Service) SetClock(now func() time.Time) {
+	if now == nil {
+		panic("entitlement.SetClock: now must not be nil")
+	}
+	s.now = now
+}
 
 // ready — собран ли сервис конструктором. НУЛЕВОЕ ЗНАЧЕНИЕ ОТВЕЧАЕТ ОТКАЗОМ,
 // а не паникой и не «разрешено»: забытая проводка не должна ни ронять процесс

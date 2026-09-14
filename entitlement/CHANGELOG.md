@@ -71,6 +71,32 @@
 - `go.mod` модуля требует `pgx` и `postgres` — ради подпакета. Белый список
   ядра в страже импортов не изменился: `pgx` и `postgres` разрешены только
   каталогу `entitlementpg`.
+- **Класс ошибки у sentinel ([ADR-0007](../docs/adr/0007-error-kind.md)).**
+  Потребителю больше не нужна таблица перевода ошибок `entitlement`:
+  `errs.KindOf` и `httperr` находят класс на самой sentinel. Страж
+  `errstest.EveryErrorHasKind` стоит в корне модуля (`sentinels_test.go`);
+  двойники `entitlementtest` из него исключены — их ошибки только причины,
+  класс несёт обёртка ядра, и это держит
+  `TestPortFailuresReachCallerAsUnavailable`.
+
+  | Sentinel | Класс | Почему |
+  |---|---|---|
+  | `ErrUnavailable` | 503 `unavailable` | решение не принято: хранилище прав не ответило |
+  | `ErrDenied` | 403 `forbidden` | решение принято и оно отрицательное |
+  | `ErrInvalidGrant` | нет, `//errs:nokind` | выдачу собирает код потребителя (хук платежей, миграция): негодная — ошибка программиста, то есть 500; `entitlementpg` отдаёт её и на CHECK предмета, класс тот же |
+
+- **Ломающее для кода, который присваивал sentinel или звал
+  `Service.SetClock(nil)`.** Замена:
+
+  | Было | Стало |
+  |---|---|
+  | тип `ErrUnavailable` и `ErrDenied` — `error` | `errs.KindError`; `errors.Is` и `==` работают как прежде |
+  | `Service.SetClock(nil)` принимался и падал разыменованием на первом решении | паника `entitlement.SetClock: now must not be nil` |
+
+  Тексты sentinel не менялись: префикс `entitlement:` стоял с первой версии.
+  Он и держит `entitlement.ErrUnavailable` неравной `authz.ErrUnavailable`
+  через `errors.Is` — текст после префикса у них дословно один. Модуль требует
+  `github.com/nrect/rebar/kit v0.2.0` — только в корне.
 
 ## [0.1.0] — 2026-09-10
 

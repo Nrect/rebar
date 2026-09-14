@@ -24,7 +24,7 @@ func storeError(op string, err error) error {
 		return nil
 	}
 	clean := postgres.Sanitize(err)
-	class := entitlement.ErrUnavailable
+	var class error = entitlement.ErrUnavailable
 	var sanitized *postgres.Error
 	if errors.As(clean, &sanitized) && sanitized.Constraint == ckItemID {
 		class = entitlement.ErrInvalidGrant
