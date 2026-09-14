@@ -23,14 +23,14 @@ func TestBackoff_DelayIsBoundedAndSafe(t *testing.T) {
 	t.Parallel()
 	b := Backoff{Base: time.Second, Max: time.Minute}
 	for attempt := 1; attempt <= 200; attempt++ {
-		d := b.delay(attempt)
+		d := b.Delay(attempt)
 		if d < 0 || d >= time.Minute {
 			t.Fatalf("attempt %d: delay %s вне [0, Max)", attempt, d)
 		}
 	}
 	// На первой попытке потолок — Base: задержка не может превысить секунду.
 	for range 100 {
-		if d := b.delay(1); d >= time.Second {
+		if d := b.Delay(1); d >= time.Second {
 			t.Fatalf("первая попытка: delay %s >= Base", d)
 		}
 	}

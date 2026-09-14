@@ -3,9 +3,10 @@ package mail
 import (
 	"errors"
 	"fmt"
-	"math/rand/v2"
 	"strings"
 	"time"
+
+	"github.com/nrect/rebar/kit/retry"
 )
 
 // UncertainPolicy — что делать со строкой, чья предыдущая попытка не
@@ -26,28 +27,9 @@ func (p UncertainPolicy) valid() bool {
 	return p == UncertainRetry || p == UncertainPark
 }
 
-// Backoff — экспонента с полным джиттером: delay = random(0, min(Max, Base·2^attempt)).
-// Джиттер обязателен: без него застрявшие письма уходят одной волной и
-// получают 429 той же волной.
-type Backoff struct {
-	Base time.Duration
-	Max  time.Duration
-}
-
-// delay — задержка перед попыткой номер attempt (1 — первая повторная).
-func (b Backoff) delay(attempt int) time.Duration {
-	ceiling := b.Max
-	// Сдвиг на 62 и больше переполняет int64; дальше потолок и так Max.
-	if attempt >= 1 && attempt < 62 {
-		if exp := b.Base << uint(attempt-1); exp > 0 && exp < ceiling {
-			ceiling = exp
-		}
-	}
-	if ceiling <= 0 {
-		return 0
-	}
-	return time.Duration(rand.Int64N(int64(ceiling))) //nolint:gosec // джиттер, не криптография
-}
+// Backoff — экспонента с полным джиттером из kit/retry: без джиттера
+// застрявшие письма уходят одной волной и получают 429 той же волной.
+type Backoff = retry.Backoff
 
 // Config — политика очереди и доставки. Нулевое значение любого поля — отказ
 // на старте, а не «выключено».

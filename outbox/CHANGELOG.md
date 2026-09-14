@@ -23,19 +23,26 @@
   | `ErrInvalidMessage`, `ErrBadKind`, `ErrKeyInvalid` | нет, `//errs:nokind` | сообщение, тип и ключ строит код потребителя из факта: негодные — дефект, то есть 500 |
   | `ErrSkip` | нет, `//errs:nokind` | не отказ, а сигнал хендлера воркеру: строка закрывается как done |
 
-- **Ломающее для кода, который сравнивал тексты sentinel, присваивал их или
-  звал `SetClock(nil)`.** Замена:
+- **Ломающее для кода, который сравнивал тексты sentinel, присваивал их,
+  различал `outbox.Backoff` и `mail.Backoff` как типы или звал
+  `SetClock(nil)`.** Замена:
 
   | Было | Стало |
   |---|---|
   | тип sentinel с классом — `error` | `errs.KindError`; `errors.Is` и `==` работают как прежде |
   | `message is invalid`, `unknown message kind`, `dedup key …`, `claim was lost: …` | тот же текст с префиксом `outbox: ` |
   | `outbox operation could not be completed` | `outbox: operation could not be completed` |
+  | `outbox.Backoff` — свой тип пакета | `outbox.Backoff = retry.Backoff` (псевдоним): литерал `outbox.Backoff{Base, Max}` и `Delay` работают как прежде; ломается код, различавший `outbox.Backoff` и `mail.Backoff` как разные типы (оба в одном type switch, `%T`, reflect) |
   | `Producer.SetClock(nil)`, `Worker.SetClock(nil)` принимались и падали разыменованием при первом обращении к часам | паника `outbox.Producer.SetClock: now must not be nil` и `outbox.Worker.SetClock: now must not be nil` |
 
   Префикс не косметика: `KindError` равны по классу и тексту, и без него
   `outbox.ErrKeyReused` совпала бы через `errors.Is` с `mail.ErrKeyReused`.
   Модуль требует `github.com/nrect/rebar/kit v0.2.0`.
+- `Backoff` берётся из `kit/retry`: копия экспоненты с джиттером удалена.
+  Поведение то же — сверено построчно: тело и структура копии совпадали с
+  `kit/retry`. Расходился только комментарий: он называл формулу
+  `Base·2^attempt`, а считала копия, как и `kit`, `Base·2^(attempt−1)`. Тесты
+  границ backoff остались в модуле и гоняют `kit` через псевдоним.
 - **API двойников меняется ломающе: настройка `outboxtest.RecordingHandler` и
   `outboxtest.MemStore` — методы, а не публичные поля.** Двойники читали поля
   под своим мьютексом, а тест писал их мимо него. Пока поле ставится до первого
