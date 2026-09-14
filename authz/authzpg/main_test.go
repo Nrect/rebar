@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 
@@ -79,6 +80,16 @@ func grant(sub authz.Subject, role authz.Role, mods ...func(*authzpg.Assignment)
 		mod(&a)
 	}
 	return a
+}
+
+// beginTx — транзакция потребителя. Откат в Cleanup: тест, упавший до своего
+// Rollback, иначе вешал бы pool.Close на занятом соединении до таймаута.
+func beginTx(t *testing.T, pool *pgxpool.Pool) pgx.Tx {
+	t.Helper()
+	tx, err := pool.Begin(t.Context())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = tx.Rollback(context.Background()) })
+	return tx
 }
 
 // countRows — сколько назначений в таблице: проверки идут мимо адаптера.

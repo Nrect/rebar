@@ -212,16 +212,14 @@ func TestStore_WithTx_IsAtomic(t *testing.T) {
 	t.Parallel()
 	store, pool := newStore(t)
 
-	tx, err := pool.Begin(t.Context())
-	require.NoError(t, err)
+	tx := beginTx(t, pool)
 	require.NoError(t, store.WithTx(tx).Assign(t.Context(), grant(staff("u1"), "viewer")))
 	require.NoError(t, tx.Rollback(t.Context()))
 
 	assert.Zero(t, countRows(t, pool),
 		"после отката роли остаться не должно")
 
-	tx, err = pool.Begin(t.Context())
-	require.NoError(t, err)
+	tx = beginTx(t, pool)
 	require.NoError(t, store.WithTx(tx).Assign(t.Context(), grant(staff("u1"), "viewer")))
 	require.NoError(t, tx.Commit(t.Context()))
 
@@ -237,8 +235,7 @@ func TestStore_WithTx_RevokeIsAtomic(t *testing.T) {
 
 	mustAssign(t, store, grant(staff("u1"), "viewer"))
 
-	tx, err := pool.Begin(t.Context())
-	require.NoError(t, err)
+	tx := beginTx(t, pool)
 	revoked, err := store.WithTx(tx).Revoke(t.Context(), staff("u1"), "viewer")
 	require.NoError(t, err)
 	require.True(t, revoked)
