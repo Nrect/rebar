@@ -3,17 +3,17 @@ package authhttp
 import (
 	"context"
 	"crypto/subtle"
-	"errors"
 	"net/http"
 
 	"github.com/nrect/rebar/auth"
 	"github.com/nrect/rebar/auth/session"
+	"github.com/nrect/rebar/kit/errs"
 )
 
 // ErrCSRF — небезопасный метод пришёл без совпадающего CSRF-токена. Отдельная
 // ошибка, потому что это 403, а не 401: сессия у клиента есть, а доказательства
 // того, что запрос отправил он сам, — нет.
-var ErrCSRF = errors.New("csrf token mismatch")
+var ErrCSRF = errs.Kinded(errs.KindForbidden, "authhttp: csrf token mismatch")
 
 // Resolver — то, чем middleware разбирает куку. *session.Service подходит как
 // есть; порт объявлен здесь, чтобы тест потребителя мог подставить свой.

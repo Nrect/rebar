@@ -5,6 +5,35 @@
 
 ## Unreleased
 
+### Changed
+- **Класс ошибки у sentinel ([ADR-0007](../docs/adr/0007-error-kind.md)).**
+  Потребителю больше не нужна таблица перевода ошибок `authz`: `errs.KindOf`
+  и `httperr` находят класс на самой sentinel. Страж
+  `errstest.EveryErrorHasKind` стоит в корне модуля (`sentinels_test.go`);
+  двойники `authztest` из него исключены — их ошибки только причины, класс
+  несёт обёртка ядра, и это держит `TestPortFailuresReachCallerAsUnavailable`.
+
+  | Sentinel | Класс | Почему |
+  |---|---|---|
+  | `ErrUnavailable` | 503 `unavailable` | решение не принято: источник ролей или хук политики не ответили |
+  | `ErrDenied` | 403 `forbidden` | решение принято и оно отрицательное |
+  | `ErrUnknownPermission` | нет, `//errs:nokind` | разрешение называет константой код потребителя: опечатка — ошибка программиста, то есть 500 |
+  | `authzpg.ErrInvalidAssignment` | нет, `//errs:nokind` | назначение собирает код потребителя, форму оператора он проверяет до стора (ADR-0007, «Спорные назначения») |
+
+- **Ломающее для кода, который присваивал sentinel или звал
+  `authzpg.Store.SetClock(nil)`.** Замена:
+
+  | Было | Стало |
+  |---|---|
+  | тип `ErrUnavailable` и `ErrDenied` — `error` | `errs.KindError`; `errors.Is` и `==` работают как прежде |
+  | `authzpg.Store.SetClock(nil)` принимался и падал разыменованием на первой проверке прав | паника `authzpg.SetClock: now must not be nil` |
+
+  Тексты sentinel не менялись: префиксы `authz:` и `authzpg:` стояли с первой
+  версии. Префикс и держит `authz.ErrUnavailable` неравной
+  `entitlement.ErrUnavailable` через `errors.Is` — текст после него у них
+  дословно один. Модуль требует `github.com/nrect/rebar/kit v0.2.0` — только
+  в корне.
+
 ## [0.1.0] — 2026-09-10
 
 ### Added

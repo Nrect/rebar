@@ -51,5 +51,11 @@ func (s *Store) WithTx(tx pgx.Tx) *Store {
 
 // SetClock подменяет источник времени; только для тестов, до начала работы.
 // Часы нужны одному вопросу — истёк ли срок назначения; в базу время уходит
-// параметром, без DEFAULT now() и без now() в запросе (CONVENTIONS §9).
-func (s *Store) SetClock(now func() time.Time) { s.now = now }
+// параметром, без DEFAULT now() и без now() в запросе (CONVENTIONS §9). nil —
+// паника здесь, а не разыменование nil на первой проверке прав.
+func (s *Store) SetClock(now func() time.Time) {
+	if now == nil {
+		panic("authzpg.SetClock: now must not be nil")
+	}
+	s.now = now
+}
