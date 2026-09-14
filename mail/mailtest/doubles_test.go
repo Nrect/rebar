@@ -15,7 +15,7 @@ import (
 	"github.com/nrect/rebar/mail/mailtest"
 )
 
-// errUnavailable — сбой контрагента, который тест внедряет полем Err.
+// errUnavailable — сбой контрагента, который тест внедряет через SetErr.
 var errUnavailable = errors.New("mailtest_test: backend is down")
 
 func TestTransport_RecordsSentEnvelopes(t *testing.T) {
@@ -95,7 +95,7 @@ func TestMemSuppressor_StoresAndFails(t *testing.T) {
 	assert.Equal(t, sup, got)
 	assert.Equal(t, []mail.Suppression{sup}, supp.Suppressions())
 
-	supp.Err = errUnavailable
+	supp.SetErr(errUnavailable)
 	_, _, err = supp.IsSuppressed(ctx, "teacher@school.ru")
 	require.ErrorIs(t, err, errUnavailable)
 	require.ErrorIs(t, supp.Suppress(ctx, sup), errUnavailable)

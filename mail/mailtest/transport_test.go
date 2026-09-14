@@ -2,7 +2,6 @@ package mailtest_test
 
 import (
 	"context"
-	"reflect"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -14,17 +13,6 @@ import (
 	"github.com/nrect/rebar/mail"
 	"github.com/nrect/rebar/mail/mailtest"
 )
-
-// Публичное поле-ручка краснеет здесь, а не гонкой у потребителя: Send читает
-// настройку под замком, и правиться она обязана под ним же.
-func TestTransport_HasNoExportedFields(t *testing.T) {
-	t.Parallel()
-
-	typ := reflect.TypeFor[mailtest.Transport]()
-	for i := range typ.NumField() {
-		assert.False(t, typ.Field(i).IsExported(), "поле Transport.%s публичное", typ.Field(i).Name)
-	}
-}
 
 // Настройка правится на ходу: тест потребителя меняет её, пока ручка его
 // HTTP-сервера в другой горутине шлёт письма. Под -race это обязано быть чисто.
@@ -52,34 +40,6 @@ func TestTransport_KnobsAreSafeWhileServing(t *testing.T) {
 		},
 		func(int) { _ = transport.Sent() },
 	)
-}
-
-// whileServing крутит каждую ручку в своей горутине, пока serve не отработает.
-// Своя горутина — не прихоть: ручка, пишущая мимо замка, не делит с serve ни
-// одной точки синхронизации, и -race видит гонку при любом порядке. В общей
-// горутине её прятали бы замки соседних ручек.
-func whileServing(serve func(), knobs ...func(i int)) {
-	served := make(chan struct{})
-	go func() {
-		defer close(served)
-		serve()
-	}()
-	var wg sync.WaitGroup
-	for _, knob := range knobs {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for i := 0; ; i++ {
-				knob(i) // до проверки: каждая ручка тронута хотя бы раз
-				select {
-				case <-served:
-					return
-				default:
-				}
-			}
-		}()
-	}
-	wg.Wait()
 }
 
 // Хук зовётся вне замка: хук, позвавший сам двойник, иначе повесил бы Send.

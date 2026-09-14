@@ -22,7 +22,7 @@ func TestDeliver_FinishFailureStopsBatch(t *testing.T) {
 	h := newHarness(t, false, nil)
 	h.enqueue(t, nil)
 	h.enqueue(t, func(m *mail.Message) { m.To.Email = "second@school.ru" })
-	h.store.FinishErr = errors.New("connection reset")
+	h.store.SetFinishErr(errors.New("connection reset"))
 
 	processed, err := h.svc.Deliver(context.Background())
 	require.ErrorIs(t, err, mail.ErrUnavailable)

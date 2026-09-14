@@ -354,3 +354,36 @@ func postStatus(ctx context.Context, url, body string) (int, error) {
 	_, _ = io.Copy(io.Discard, resp.Body)
 	return resp.StatusCode, nil
 }
+
+// Письма отдаются копией до последнего указателя — и из Sent, и в OnAccepted:
+// правка полученного не доезжает до хранилища (PATTERNS §7, п. 7).
+func TestHandler_SentEmailsAreDeepCopies(t *testing.T) {
+	t.Parallel()
+	h, url := newServer(t)
+	hooked := make(chan struct{})
+	h.SetOnAccepted(func(e SentEmail) {
+		e.Headers["X-Trace"] = "подмена из хука"
+		e.ReplyTo[0] = "hook@example.ru"
+		close(hooked)
+	})
+	body := strings.Replace(simpleBody("teacher@school.ru", map[string]string{"X-Trace": "ok"}),
+		`"Destination"`, `"ReplyToAddresses":["support@example.ru"],"Destination"`, 1)
+
+	status, _, raw := post(t, url, body, "", nil)
+	require.Equal(t, http.StatusOK, status, raw)
+	select {
+	case <-hooked:
+	case <-time.After(5 * time.Second):
+		t.Fatal("OnAccepted не позван")
+	}
+	require.Len(t, h.Sent(), 1)
+	assert.Equal(t, "ok", h.Sent()[0].Headers["X-Trace"], "правка в хуке не доехала до хранилища")
+	assert.Equal(t, []string{"support@example.ru"}, h.Sent()[0].ReplyTo, "правка в хуке не доехала до хранилища")
+
+	got := h.Sent()[0]
+	got.Headers["X-Trace"] = "подмена из теста"
+	got.ReplyTo[0] = "test@example.ru"
+	assert.Equal(t, "ok", h.Sent()[0].Headers["X-Trace"], "правка полученного из Sent не доехала до хранилища")
+	assert.Equal(t, []string{"support@example.ru"}, h.Sent()[0].ReplyTo,
+		"правка полученного из Sent не доехала до хранилища")
+}
