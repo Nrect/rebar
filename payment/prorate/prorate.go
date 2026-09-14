@@ -22,11 +22,14 @@ const MaxUnits = 3650
 var (
 	// ErrInvalidPeriod — срок вне (0, MaxUnits] либо использовано больше, чем
 	// длится срок.
-	ErrInvalidPeriod = errors.New("period must be within (0, MaxUnits] and used must not exceed it")
+	//errs:nokind срок и использованные единицы считает код потребителя из своего плана и дат, а не клиент: негодные — дефект вызывающего, то есть 500
+	ErrInvalidPeriod = errors.New("prorate: period must be within (0, MaxUnits] and used must not exceed it")
 	// ErrInvalidAmount — сумма отрицательна или больше MaxTotal.
-	ErrInvalidAmount = errors.New("amount must be within [0, MaxTotal]")
+	//errs:nokind сумму берёт код потребителя из своего заказа, а не из запроса: негодная — дефект вызывающего, то есть 500
+	ErrInvalidAmount = errors.New("prorate: amount must be within [0, MaxTotal]")
 	// ErrInvalidUnit — единица срока не положительна или короче секунды.
-	ErrInvalidUnit = errors.New("unit must be at least one second")
+	//errs:nokind единицу срока задаёт код потребителя константой: негодная — дефект сборки, то есть 500
+	ErrInvalidUnit = errors.New("prorate: unit must be at least one second")
 )
 
 // Prorate — сколько вернуть за неиспользованную часть срока:

@@ -51,7 +51,14 @@ func NewService(store Store, provider Provider, obs Observer, cfg Config) *Servi
 
 // SetClock подменяет источник времени. Только для тестов и только до начала
 // обслуживания: поле читается из каждого запроса, вызов под нагрузкой — гонка.
-func (s *Service) SetClock(now func() time.Time) { s.now = now }
+// nil — паника здесь, на настройке, а не разыменование nil в чужом стеке при
+// первом обращении к часам.
+func (s *Service) SetClock(now func() time.Time) {
+	if now == nil {
+		panic("payment.Service.SetClock: now must not be nil")
+	}
+	s.now = now
+}
 
 // Provider — имя провайдера, с которым собран сервис. Нужно вызывающему для
 // метки метрики и для маршрутизации вебхука.

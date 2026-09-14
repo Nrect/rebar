@@ -62,7 +62,9 @@ func TestPackageImportsAreWhitelisted(t *testing.T) {
 // следующие исполнители по портам этого пакета, и белый список — часть задания.
 // Страж падает на каталоге БЕЗ записи, а лишняя запись без каталога безвредна.
 var allowedByDir = map[string][]string{
-	".":           {"github.com/google/uuid"},
+	// kit — класс у sentinel ядра (errs.Kinded, ADR-0007); зависимость на kit
+	// разрешена отовсюду (ADR-0005, «Межмодульные зависимости»).
+	".":           {"github.com/google/uuid", "github.com/nrect/rebar/kit"},
 	"paymenttest": {"github.com/google/uuid"},
 	"prorate":     {},
 	// postgres — граница ошибки Postgres, разрешённая адаптерам хранилища
