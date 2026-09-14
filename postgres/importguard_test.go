@@ -59,6 +59,7 @@ func TestPackageImportsAreWhitelisted(t *testing.T) {
 // добавляется сюда тем же коммитом, что и каталог.
 var allowedByDir = map[string][]string{
 	".":      {"github.com/jackc/pgx/v5"},
+	"pglock": {"github.com/jackc/pgx/v5"},
 	"pgtest": {"github.com/jackc/pgx/v5", "github.com/testcontainers/testcontainers-go"},
 }
 
