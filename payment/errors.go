@@ -41,7 +41,8 @@ var (
 	// главный путь — запрос покупки.
 	ErrInvalidRequest = errs.Kinded(errs.KindIncorrectInput, "payment: purchase request is not sellable as given")
 	// ErrInvalidMoney — сумма отрицательна, превышает потолок или пришла в чужой
-	// валюте. Наружу 400: главный путь — запрос покупки и возврата.
+	// валюте. Наружу 400: главный путь — запрос покупки и возврата; негодная
+	// книга приходит под ErrUnavailable.
 	ErrInvalidMoney = errs.Kinded(errs.KindIncorrectInput,
 		"payment: amount must be positive, within the cap, and in the configured currency")
 	// ErrBadStatus — незнакомый статус: строка из БД, которую пакет не знает.
@@ -115,7 +116,9 @@ var (
 	//errs:nokind автора проставляет транспорт потребителя, а не пользователь: его отсутствие — дефект кода, то есть 500
 	ErrNoActor = errors.New("payment: a manual money movement requires an actor")
 
-	// ErrNotSettled — возврат просят по неоплаченному намерению. Наружу 409.
+	// ErrNotSettled — возврат просят по неоплаченному намерению. Наружу 409;
+	// оплаченное без записи зачисления — расхождение книг, оно приходит под
+	// ErrUnavailable.
 	ErrNotSettled = errs.Kinded(errs.KindConflict, "payment: only a settled payment can be refunded")
 	// ErrRefundTooLarge — сумма возврата больше нетто по книге
 	// (Σcapture − Σrefund). Наружу 409: отказ по существу, а не сбой.

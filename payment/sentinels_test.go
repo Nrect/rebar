@@ -6,7 +6,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/nrect/rebar/kit/errs"
 	"github.com/nrect/rebar/kit/errs/errstest"
@@ -144,5 +146,52 @@ func TestPortFailuresReachCallerAsUnavailable(t *testing.T) {
 		h.store.SetOnRefunded(hookDown)
 		_, _, err = h.svc.Refund(ctx, refundReq(sold, 100, "ref-1"))
 		assert.Equal(t, errs.KindUnavailable, errs.KindOf(err), "OnRefunded из Refund")
+	})
+}
+
+// Возврат по негодной книге — инцидент, а не «не оплачено» и не «вы ошиблись»:
+// класс 503 перекрывает 409 у ErrNotSettled и 400 у ErrInvalidMoney, а
+// errors.Is и Reason остаются прежними. Настоящее «не оплачено» — 409.
+func TestRefund_BrokenLedgerIsUnavailable(t *testing.T) {
+	t.Parallel()
+
+	t.Run("не оплачено", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t)
+		in := h.start(t, startReq())
+
+		_, reason, err := h.svc.Refund(context.Background(), refundReq(in, 100, "ref-1"))
+
+		require.ErrorIs(t, err, payment.ErrNotSettled)
+		assert.Equal(t, payment.ReasonNotSettled, reason)
+		assert.Equal(t, errs.KindConflict, errs.KindOf(err))
+	})
+
+	t.Run("оплачено без записи зачисления", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t)
+		in := h.sold(t)
+		h.store.ClearEntries()
+
+		_, reason, err := h.svc.Refund(context.Background(), refundReq(in, 100, "ref-1"))
+
+		require.ErrorIs(t, err, payment.ErrNotSettled)
+		assert.Equal(t, payment.ReasonNotSettled, reason)
+		assert.Equal(t, errs.KindUnavailable, errs.KindOf(err))
+	})
+
+	t.Run("запись в чужой валюте", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t)
+		in := h.sold(t)
+		h.store.SeedEntry(payment.LedgerEntry{
+			ID: uuid.New(), IntentID: in.ID, Kind: payment.LedgerRefund, AmountMinor: 100, Currency: "KZT",
+		})
+
+		_, reason, err := h.svc.Refund(context.Background(), refundReq(in, 100, "ref-1"))
+
+		require.ErrorIs(t, err, payment.ErrInvalidMoney)
+		assert.Equal(t, payment.ReasonStoreError, reason)
+		assert.Equal(t, errs.KindUnavailable, errs.KindOf(err))
 	})
 }

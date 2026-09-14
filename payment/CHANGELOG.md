@@ -33,6 +33,13 @@
   | `ErrAmountMismatch`, `ErrReceiptInvalid` | нет, `//errs:nokind` | класс зависит от пути (ADR-0007, «Спорные назначения») |
   | `prorate.ErrInvalidPeriod`, `prorate.ErrInvalidAmount`, `prorate.ErrInvalidUnit` | нет, `//errs:nokind` | срок, сумму и единицу считает код потребителя из своих данных: негодные — дефект, то есть 500 |
 
+- **`Refund` по негодной книге отвечает 503, а не классом вложенной
+  sentinel.** Оплаченное намерение без записи зачисления приезжало голой
+  `ErrNotSettled`, книга, которую не сложить (`Net`), — голой
+  `ErrInvalidMoney`. С классом у sentinel первое ответило бы 409 «не
+  оплачено», второе — 400 «вы ошиблись» вместо разбора как инцидента. Теперь
+  обе под `ErrUnavailable`; `errors.Is` на прежнюю sentinel и `Reason`
+  (`not_settled`, `store_error`) не изменились.
 - **Ломающее для кода, который сравнивал тексты sentinel, присваивал их или
   звал `SetClock(nil)`.** Замена:
 

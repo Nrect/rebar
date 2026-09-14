@@ -192,12 +192,15 @@ func (s *Service) refundable(ctx context.Context, intentID uuid.UUID) (refundTar
 		// Намерение оплачено, а денежной записи нет: это расхождение книг
 		// (DriftSucceededNoCapture), а не «возврат нуля». Придумывать сумму
 		// возврата из статуса — способ вернуть деньги, которых не получали.
+		// Под ErrUnavailable: 409 у ErrNotSettled соврал бы «не оплачено».
 		return refundTarget{}, ReasonNotSettled,
-			fmt.Errorf("%w: intent %s has no capture entry", ErrNotSettled, intentID)
+			fmt.Errorf("%w: intent %s has no capture entry: %w", ErrUnavailable, intentID, ErrNotSettled)
 	}
 	net, err := Net(entries, intent.Currency)
 	if err != nil {
-		return refundTarget{}, ReasonStoreError, err
+		// Негодная книга — инцидент, а не 400 от ErrInvalidMoney (ADR-0007).
+		return refundTarget{}, ReasonStoreError,
+			fmt.Errorf("%w: ledger of intent %s: %w", ErrUnavailable, intentID, err)
 	}
 	return refundTarget{intent: intent, capture: capture, entries: entries, net: net}, "", nil
 }
