@@ -134,7 +134,7 @@ func TestService_Register_FailsClosedOnStoreError(t *testing.T) {
 	t.Parallel()
 
 	st := newStand(t)
-	st.ids.Err = authtest.ErrInjected
+	st.ids.SetErr(authtest.ErrInjected)
 
 	err := st.register(t, knownLogin, goodPassword)
 

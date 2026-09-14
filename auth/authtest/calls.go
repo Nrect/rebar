@@ -21,6 +21,10 @@ type Calls struct {
 	n  map[string]int
 }
 
+// calls — Calls для встраивания в двойники: методы счётчика видны на двойнике,
+// а само поле наружу не торчит, и подменить счётчик мимо его замка нельзя.
+type calls = Calls
+
 // Hit отмечает вызов метода. Зовётся самим двойником.
 func (c *Calls) Hit(name string) {
 	c.mu.Lock()

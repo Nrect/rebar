@@ -30,27 +30,32 @@ func FastHasher() *password.Hasher { return password.NewHasher(FastHasherConfig(
 // Strength — проверка силы с заданным ответом. Двойник не запоминает вызовы:
 // тест проверяет исход политики, а не то, что метод позвали.
 type Strength struct {
-	mu sync.Mutex
-	// Default — ответ на всё, для чего нет точечного.
-	Default int
-	// ByPassword — точечные ответы: так тест задаёт «этот пароль слабый», не
-	// подбирая строку, которую забракует настоящий словарь.
-	ByPassword map[string]int
+	mu           sync.Mutex
+	defaultScore int
+	byPassword   map[string]int
 }
 
 // NewStrength — двойник, отвечающий score на любой пароль.
 func NewStrength(score int) *Strength {
-	return &Strength{Default: score, ByPassword: map[string]int{}}
+	return &Strength{defaultScore: score, byPassword: map[string]int{}}
 }
 
-// Set задаёт точечный ответ на конкретный пароль.
+// SetDefault — ответ на всё, для чего нет точечного.
+func (s *Strength) SetDefault(score int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.defaultScore = score
+}
+
+// Set задаёт точечный ответ на конкретный пароль: так тест задаёт «этот пароль
+// слабый», не подбирая строку, которую забракует настоящий словарь.
 func (s *Strength) Set(pw string, score int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.ByPassword == nil {
-		s.ByPassword = map[string]int{}
+	if s.byPassword == nil {
+		s.byPassword = map[string]int{}
 	}
-	s.ByPassword[pw] = score
+	s.byPassword[pw] = score
 }
 
 // Score — ответ двойника. Совпадение с userInputs двойник не моделирует: это
@@ -58,10 +63,10 @@ func (s *Strength) Set(pw string, score int) {
 func (s *Strength) Score(pw string, _ []string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if score, ok := s.ByPassword[pw]; ok {
+	if score, ok := s.byPassword[pw]; ok {
 		return score
 	}
-	return s.Default
+	return s.defaultScore
 }
 
 // Порт реализован.

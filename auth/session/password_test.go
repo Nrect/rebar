@@ -402,7 +402,7 @@ func TestService_RequestReset_FailsClosedWhenIssueFails(t *testing.T) {
 
 	st := newStand(t)
 	st.seed(t, knownLogin)
-	st.tokens.Err = authtest.ErrInjected
+	st.tokens.SetErr(authtest.ErrInjected)
 
 	err := st.svc.RequestReset(t.Context(), knownLogin)
 

@@ -67,7 +67,7 @@ func TestMemIdentities_MissingAndInjectedErrorsDiffer(t *testing.T) {
 	require.ErrorIs(t, err, auth.ErrIdentityNotFound)
 	require.ErrorIs(t, m.SetPasswordHash(t.Context(), uuid.New(), "h", time.Time{}), auth.ErrIdentityNotFound)
 
-	m.Err = authtest.ErrInjected
+	m.SetErr(authtest.ErrInjected)
 	_, err = m.ByLogin(t.Context(), "nobody@example.org")
 	require.ErrorIs(t, err, authtest.ErrInjected)
 	require.NotErrorIs(t, err, auth.ErrIdentityNotFound)

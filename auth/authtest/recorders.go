@@ -15,20 +15,25 @@ import (
 type RecordingNotifier struct {
 	mu    sync.Mutex
 	notes []session.Notification
-
-	// Err — если не nil, Notify возвращает его, ничего не записав.
-	Err error
+	err   error
 }
 
 // NewRecordingNotifier — пустой двойник.
 func NewRecordingNotifier() *RecordingNotifier { return &RecordingNotifier{} }
 
+// SetErr — отказ Notify: письмо не записывается; nil снимает.
+func (n *RecordingNotifier) SetErr(err error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.err = err
+}
+
 // Notify записывает письмо.
 func (n *RecordingNotifier) Notify(_ context.Context, note session.Notification) error {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	if n.Err != nil {
-		return n.Err
+	if n.err != nil {
+		return n.err
 	}
 	n.notes = append(n.notes, note)
 	return nil
@@ -60,20 +65,25 @@ func (n *RecordingNotifier) CountOf(kind session.NotificationKind) int {
 type RecordingAuditor struct {
 	mu     sync.Mutex
 	events []session.Event
-
-	// Err — если не nil, Record возвращает его, ничего не записав.
-	Err error
+	err    error
 }
 
 // NewRecordingAuditor — пустой двойник.
 func NewRecordingAuditor() *RecordingAuditor { return &RecordingAuditor{} }
 
+// SetErr — отказ Record: событие не записывается; nil снимает.
+func (a *RecordingAuditor) SetErr(err error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.err = err
+}
+
 // Record записывает событие.
 func (a *RecordingAuditor) Record(_ context.Context, ev session.Event) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if a.Err != nil {
-		return a.Err
+	if a.err != nil {
+		return a.err
 	}
 	a.events = append(a.events, ev)
 	return nil

@@ -171,7 +171,7 @@ func TestService_Resolve_FailsClosedWhenTouchFails(t *testing.T) {
 	require.NoError(t, err)
 
 	st.clock.Advance(2 * time.Minute)
-	st.sessions.TouchErr = authtest.ErrInjected
+	st.sessions.SetTouchErr(authtest.ErrInjected)
 	_, err = st.svc.Resolve(t.Context(), res.Token)
 
 	require.ErrorIs(t, err, auth.ErrUnavailable)
@@ -250,7 +250,7 @@ func TestService_Sweep_FailsClosedOnStoreError(t *testing.T) {
 	t.Parallel()
 
 	st := newStand(t)
-	st.sessions.Err = authtest.ErrInjected
+	st.sessions.SetErr(authtest.ErrInjected)
 
 	_, err := st.svc.Sweep(t.Context())
 
@@ -318,7 +318,7 @@ func TestService_Sweep_ReportsWhatItManagedToClear(t *testing.T) {
 	require.ErrorIs(t, signInErr(t, st, unknownLogin), session.ErrInvalidCredentials)
 
 	st.clock.Advance(48 * time.Hour)
-	st.tokens.Err = authtest.ErrInjected
+	st.tokens.SetErr(authtest.ErrInjected)
 	n, err := st.svc.Sweep(t.Context())
 
 	require.ErrorIs(t, err, auth.ErrUnavailable)

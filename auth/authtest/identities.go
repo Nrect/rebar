@@ -38,11 +38,24 @@ type Record struct {
 type MemIdentities struct {
 	mu      sync.Mutex
 	records map[uuid.UUID]Record
+	err     error
+	genID   func() uuid.UUID
+}
 
-	// Err — если не nil, любой вызов возвращает его, не трогая память.
-	Err error
-	// NewID — генератор идентификаторов; подменяется ради детерминизма.
-	NewID func() uuid.UUID
+// SetErr — отказ любого метода порта, память не трогается; nil снимает.
+func (m *MemIdentities) SetErr(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.err = err
+}
+
+// SetIDs — генератор идентификаторов, подменяется ради детерминизма; nil —
+// uuid.New. Зовётся под замком двойника, изнутри Create и Put, как default в
+// INSERT, и трогать сам двойник не вправе.
+func (m *MemIdentities) SetIDs(newID func() uuid.UUID) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.genID = newID
 }
 
 // NewMemIdentities — пустой двойник с заранее заведёнными личностями.
@@ -86,8 +99,8 @@ func (m *MemIdentities) Len() int {
 func (m *MemIdentities) ByLogin(_ context.Context, login string) (auth.Identity, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.Err != nil {
-		return auth.Identity{}, m.Err
+	if m.err != nil {
+		return auth.Identity{}, m.err
 	}
 	for _, r := range m.records {
 		if r.Identity.Login == login {
@@ -101,8 +114,8 @@ func (m *MemIdentities) ByLogin(_ context.Context, login string) (auth.Identity,
 func (m *MemIdentities) ByID(_ context.Context, id uuid.UUID) (auth.Identity, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.Err != nil {
-		return auth.Identity{}, m.Err
+	if m.err != nil {
+		return auth.Identity{}, m.err
 	}
 	r, ok := m.records[id]
 	if !ok {
@@ -116,8 +129,8 @@ func (m *MemIdentities) ByID(_ context.Context, id uuid.UUID) (auth.Identity, er
 func (m *MemIdentities) Create(_ context.Context, login, passwordHash string, at time.Time) (uuid.UUID, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.Err != nil {
-		return uuid.Nil, m.Err
+	if m.err != nil {
+		return uuid.Nil, m.err
 	}
 	for _, r := range m.records {
 		if r.Identity.Login == login {
@@ -141,8 +154,8 @@ func (m *MemIdentities) Create(_ context.Context, login, passwordHash string, at
 func (m *MemIdentities) SetPasswordHash(_ context.Context, id uuid.UUID, hash string, at time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.Err != nil {
-		return m.Err
+	if m.err != nil {
+		return m.err
 	}
 	r, ok := m.records[id]
 	if !ok {
@@ -156,8 +169,8 @@ func (m *MemIdentities) SetPasswordHash(_ context.Context, id uuid.UUID, hash st
 
 // newID зовётся под захваченным мьютексом.
 func (m *MemIdentities) newID() uuid.UUID {
-	if m.NewID != nil {
-		return m.NewID()
+	if m.genID != nil {
+		return m.genID()
 	}
 	return uuid.New()
 }
