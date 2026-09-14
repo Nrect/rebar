@@ -40,6 +40,26 @@ var storeScenarios = []storeScenario{
 	{name: "моменты возвращаются как из timestamptz: UTC и микросекунды", run: suiteMomentsAsStored},
 	{name: "аренда истекает по микросекундам timestamptz", run: suiteLeaseInMicroseconds},
 	{name: "Purge сравнивает по микросекундам timestamptz", run: suitePurgeInMicroseconds},
+	{name: "часы позади строк: возраст ноль, а не отрицательный", run: suiteStatsClockBehindRows},
+}
+
+// ЧАСЫ ПОЗАДИ СТРОК: возраст ноль, а не отрицательный. Часы потребителя и
+// строк расходятся; база отдаёт ноль, а реализация с голой разностью отдала бы
+// гейджу минус там, где прод показывает ноль.
+func suiteStatsClockBehindRows(t *testing.T, store mail.Store) {
+	t.Helper()
+	mustEnqueue(t, store, suiteEnvelope(suiteMoment(time.Hour)))
+
+	stats, err := store.Stats(t.Context(), suiteMoment(0))
+	if err != nil {
+		t.Fatalf("Stats: %v", err)
+	}
+	if stats.Pending != 1 {
+		t.Errorf("Pending = %d, ожидалась 1", stats.Pending)
+	}
+	if stats.OldestPendingAge != 0 {
+		t.Errorf("OldestPendingAge = %s при часах на час позади created_at, ожидался ноль", stats.OldestPendingAge)
+	}
 }
 
 // МОМЕНТЫ ВОЗВРАЩАЮТСЯ ТАК, КАК ИХ ХРАНИТ timestamptz: в UTC и с точностью до
