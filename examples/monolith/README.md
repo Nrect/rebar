@@ -16,6 +16,10 @@ GOWORK=off go run ./cmd/monolith
 Миграции накатываются на старте (goose, каталог `migrations/`), схемы адаптеров
 там лежат как есть и сверяются `CheckSchema`.
 
+`DATABASE_URL` — прямо в Postgres либо через пулер в режиме `session`. В
+режиме `transaction` ключ `pglock` у сверки платежей не держится, и две
+реплики сверяют одновременно (ADR-0008, «Условие развёртывания»).
+
 Без почтовика: `SMTP_TRANSPORT=unconfigured` — письма копятся в очереди и
 честно падают с `ErrTransportUnconfigured`. Это выбор, а не запасной вариант:
 опечатка в настройках SMTP роняет старт.
@@ -23,7 +27,8 @@ GOWORK=off go run ./cmd/monolith
 ## Смотреть
 
 - `http://localhost:8025` — Mailpit: письма со ссылками подтверждения и оплаты;
-- `http://localhost:8080/metrics` — `build_info`, `cron_*`, `outbox_*`, `emails_*`,
+- `http://localhost:8080/metrics` — `build_info`, `cron_*` (в том числе
+  `cron_lock_total` — сверка платежей под `pglock`), `outbox_*`, `emails_*`,
   `payments_total`, `payment_*`; гейджи обновляет задача `gauges_snapshot` раз в
   `GAUGES_TICK` (минута), а не scrape; первый снимок — сразу при старте;
 - `http://localhost:8080/healthz` — жив ли процесс.
