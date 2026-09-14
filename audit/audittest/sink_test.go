@@ -3,6 +3,7 @@ package audittest_test
 import (
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -73,6 +74,30 @@ func TestSink_ErrStopsWrite(t *testing.T) {
 	require.ErrorIs(t, err, audittest.ErrSinkFailed)
 	require.NotErrorIs(t, err, audit.ErrUnavailable, "поломка стенда отличима от доменного отказа")
 	assert.Zero(t, sink.Count())
+}
+
+// МОМЕНТ ХРАНИТСЯ ТАК, КАК ЕГО ХРАНИТ timestamptz У auditpg: в UTC и до
+// микросекунд. Двойник, отдающий наносекунды и чужую зону, зеленит у
+// потребителя сравнение меток, которое на базе красное. То же утверждение
+// держит адаптер: auditpg, TestSink_Write_StoresMomentAsTimestamptz.
+func TestSink_KeepsMomentAsTimestamptz(t *testing.T) {
+	t.Parallel()
+
+	sink := audittest.NewSink()
+	ev := event("a", audit.OutcomeSuccess)
+	ev.At = time.Date(2026, 9, 14, 12, 0, 0, 123456789, time.FixedZone("UTC+3", 3*60*60))
+	require.NoError(t, sink.Write(t.Context(), ev))
+
+	stored, ok := sink.Last()
+	require.True(t, ok)
+	assert.Truef(t, sameStoredMoment(stored.At, ev.At), "момент %s, ожидалось %s — в UTC и до микросекунд",
+		stored.At.Format(time.RFC3339Nano), ev.At.Truncate(time.Microsecond).UTC().Format(time.RFC3339Nano))
+}
+
+// sameStoredMoment — got равен want так, как want хранит timestamptz:
+// усечённым до микросекунд и в UTC. Голый Equal зоны не видит.
+func sameStoredMoment(got, want time.Time) bool {
+	return got.Location() == time.UTC && got.Equal(want.Truncate(time.Microsecond))
 }
 
 // Пустой журнал не паникует и последнего события не выдумывает.

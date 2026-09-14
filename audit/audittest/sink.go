@@ -5,6 +5,7 @@ import (
 	"errors"
 	"maps"
 	"sync"
+	"time"
 
 	"github.com/nrect/rebar/audit"
 )
@@ -34,14 +35,17 @@ func (s *Sink) SetErr(err error) {
 }
 
 // Write добавляет событие в конец. Карта подробностей копируется: карта
-// вызывающего живёт своей жизнью, а журнал после записи не меняется.
+// вызывающего живёт своей жизнью, а журнал после записи не меняется. Момент
+// хранится так, как его хранит timestamptz у auditpg: в UTC и до микросекунд.
 func (s *Sink) Write(_ context.Context, ev audit.Event) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.err != nil {
 		return s.err
 	}
-	s.events = append(s.events, copyEvent(ev))
+	stored := copyEvent(ev)
+	stored.At = dbMoment(stored.At)
+	s.events = append(s.events, stored)
 	return nil
 }
 
@@ -94,3 +98,8 @@ func copyEvent(ev audit.Event) audit.Event {
 	}
 	return ev
 }
+
+// dbMoment — момент так, как его хранит timestamptz: UTC и микросекунды.
+// Двойник, хранящий наносекунды и зону, зеленит у потребителя сравнение меток,
+// которое на базе красное.
+func dbMoment(t time.Time) time.Time { return t.Truncate(time.Microsecond).UTC() }

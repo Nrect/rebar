@@ -6,6 +6,50 @@
 ## Unreleased
 
 ### Changed
+- **Класс ошибки у sentinel ([ADR-0007](../docs/adr/0007-error-kind.md)).**
+  Потребителю больше не нужна таблица перевода ошибок `audit`: `errs.KindOf` и
+  `httperr` находят класс на самой sentinel. Страж
+  `errstest.EveryErrorHasKind` стоит в корне модуля (`sentinels_test.go`);
+  двойник `audittest` из него исключён — его ошибка только причина, класс
+  несёт обёртка `Recorder.Record`, и это держит
+  `TestPortFailuresReachCallerAsUnavailable`. Запись в транзакции действия
+  (`Prepare` и `auditpg.Sink.WithTx`) идёт мимо ядра: класс на этом пути даёт
+  обёртка `auditpg` в `ErrUnavailable`.
+
+  | Sentinel | Класс | Почему |
+  |---|---|---|
+  | `ErrUnavailable` | 503 `unavailable` | приёмник не записал событие, повтор осмыслен; падать или продолжать — решает вызывающий |
+  | `ErrUnknownAction`, `ErrInvalidEntry` | нет, `//errs:nokind` | действие и исход ставит код потребителя, род актора — его обвязка входа: вне набора — дефект, то есть 500 |
+  | `ErrForbiddenDetail`, `ErrInvalidDetail` | нет, `//errs:nokind` | ключи и число подробностей задаёт код потребителя, а значения из запроса усекаются, а не отвергаются |
+  | `ErrNoActor` | нет, `//errs:nokind` | актора кладёт обвязка входа, аноним ставится явно: не положила — дефект сборки, то есть 500, а не 401 |
+
+- **`audittest.Sink` хранит момент события так, как его хранит `timestamptz`
+  у `auditpg`: в UTC и с точностью до микросекунд.** Раньше двойник отдавал
+  `At` как передали — с наносекундами и зоной, и сравнение меток у потребителя
+  было зелёным на двойнике и красным на базе. Контрактного набора у `audit`
+  нет (у порта нет чтения), поэтому держат два теста одним утверждением:
+  `TestSink_KeepsMomentAsTimestamptz` у двойника и
+  `TestSink_Write_StoresMomentAsTimestamptz` у адаптера. Ломающее для теста
+  потребителя, который сравнивал `At` записанного события голым `==` или
+  `assert.Equal` с моментом в чужой зоне или с наносекундами.
+- **Ломающее для кода, который сравнивал тексты sentinel, присваивал их или
+  звал `SetClock(nil)`.** Замена:
+
+  | Было | Стало |
+  |---|---|
+  | тип `ErrUnavailable` — `error` | `errs.KindError`; `errors.Is` и `==` работают как прежде |
+  | `audit action is not declared in Config.Actions` | `audit: action is not declared in Config.Actions` |
+  | `audit entry is invalid` | `audit: entry is invalid` |
+  | `audit detail key looks like a secret` | `audit: detail key looks like a secret` |
+  | `audit detail is invalid` | `audit: detail is invalid` |
+  | `audit actor is missing from context` | `audit: actor is missing from context` |
+  | `audit event could not be recorded` | `audit: event could not be recorded` |
+  | `Recorder.SetClock(nil)` принимался и падал разыменованием при первом обращении к часам | паника `audit.Recorder.SetClock: now must not be nil` |
+
+  Префикс не косметика: `KindError` равны по классу и тексту, и без него
+  `audit.ErrUnavailable` совпала бы через `errors.Is` с `ErrUnavailable`
+  другого модуля того же текста. Модуль требует
+  `github.com/nrect/rebar/kit v0.2.0`.
 - **API двойника меняется ломающе: отказ `audittest.Sink` задаётся методом
   `SetErr`, а не публичным полем `Err`.** `Write` читал поле под своим
   мьютексом, а тест писал его мимо него: тест потребителя, у которого журнал
