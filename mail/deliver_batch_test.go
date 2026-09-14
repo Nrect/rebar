@@ -40,11 +40,11 @@ func TestDeliver_ContextCancelStopsBatch(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	sends := 0
-	h.tr.SendHook = func(context.Context, mail.Envelope) (mail.SendResult, error) {
+	h.tr.SetSendHook(func(context.Context, mail.Envelope) (mail.SendResult, error) {
 		sends++
 		cancel()
 		return mail.SendResult{ProviderMessageID: "mem-1"}, nil
-	}
+	})
 
 	processed, err := h.svc.Deliver(ctx)
 	require.ErrorIs(t, err, context.Canceled)

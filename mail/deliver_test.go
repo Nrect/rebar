@@ -44,7 +44,7 @@ func TestDeliver_SendsAndClearsBody(t *testing.T) {
 func TestDeliver_RejectedIsTerminal(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t, false, nil)
-	h.tr.RejectFor["teacher@school.ru"] = "MessageRejected"
+	h.tr.RejectFor("teacher@school.ru", "MessageRejected")
 	env := h.enqueue(t, nil)
 
 	assert.Equal(t, 1, h.deliver(t))
@@ -62,7 +62,7 @@ func TestDeliver_RejectedIsTerminal(t *testing.T) {
 func TestDeliver_TemporaryFailureRetriesThenSends(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t, false, nil)
-	h.tr.FailFor["teacher@school.ru"] = 1
+	h.tr.FailFor("teacher@school.ru", 1)
 	env := h.enqueue(t, nil)
 
 	assert.Equal(t, 1, h.deliver(t))
@@ -85,7 +85,7 @@ func TestDeliver_TemporaryFailureRetriesThenSends(t *testing.T) {
 func TestDeliver_ExhaustedAfterMaxAttempts(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t, false, func(c *mail.Config) { c.MaxAttempts = 2 })
-	h.tr.FailFor["teacher@school.ru"] = 5
+	h.tr.FailFor("teacher@school.ru", 5)
 	env := h.enqueue(t, nil)
 
 	assert.Equal(t, 1, h.deliver(t))
@@ -211,10 +211,10 @@ func TestDeliver_UnconfiguredLeavesQueueUntouched(t *testing.T) {
 func TestDeliver_SendTimeoutIsTemporary(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t, false, func(c *mail.Config) { c.SendTimeout = 20 * time.Millisecond })
-	h.tr.SendHook = func(ctx context.Context, _ mail.Envelope) (mail.SendResult, error) {
+	h.tr.SetSendHook(func(ctx context.Context, _ mail.Envelope) (mail.SendResult, error) {
 		<-ctx.Done()
 		return mail.SendResult{}, ctx.Err()
-	}
+	})
 	env := h.enqueue(t, nil)
 
 	assert.Equal(t, 1, h.deliver(t))
@@ -229,9 +229,9 @@ func TestDeliver_TruncatesLongError(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t, false, nil)
 	// Трёхбайтовая руна: 500 не делится на 3, обрезка обязана отступить назад.
-	h.tr.SendHook = func(context.Context, mail.Envelope) (mail.SendResult, error) {
+	h.tr.SetSendHook(func(context.Context, mail.Envelope) (mail.SendResult, error) {
 		return mail.SendResult{}, errors.New(strings.Repeat("→", 400))
-	}
+	})
 	env := h.enqueue(t, nil)
 
 	assert.Equal(t, 1, h.deliver(t))

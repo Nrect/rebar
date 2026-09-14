@@ -58,13 +58,17 @@ func main() {
 
 func run(ctx context.Context, opts options, logger *log.Logger) error {
 	h := sesfake.NewHandler()
-	h.Secret, h.Region, h.StoreLimit = opts.secret, opts.region, opts.storeLimit
-	maps.Copy(h.RejectFor, opts.reject)
+	h.SetSecret(opts.secret)
+	h.SetRegion(opts.region)
+	h.SetStoreLimit(opts.storeLimit)
+	for email, code := range opts.reject {
+		h.RejectFor(email, code)
+	}
 
 	var relay *relayer
 	if opts.relay != "" {
 		relay = newRelayer(opts.relay, logger)
-		h.OnAccepted = relay.enqueue
+		h.SetOnAccepted(relay.enqueue)
 	}
 	srv := &http.Server{
 		Addr:              opts.listen,

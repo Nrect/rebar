@@ -48,8 +48,8 @@ func newTransport(t *testing.T, endpoint string, mutate func(*sesv2.Config)) *se
 func newServer(t *testing.T) *mailtest.SESServer {
 	t.Helper()
 	srv := mailtest.NewSESServer(t)
-	srv.Secret = testSecret
-	srv.Region = testRegion
+	srv.SetSecret(testSecret)
+	srv.SetRegion(testRegion)
 	return srv
 }
 
@@ -154,7 +154,7 @@ func TestSend_ASCIINameIsQuoted(t *testing.T) {
 func TestSend_RejectFor(t *testing.T) {
 	t.Parallel()
 	srv := newServer(t)
-	srv.RejectFor["teacher@school.ru"] = "MessageRejected"
+	srv.RejectFor("teacher@school.ru", "MessageRejected")
 	tr := newTransport(t, srv.URL(), nil)
 
 	_, err := tr.Send(t.Context(), envelope())
@@ -174,7 +174,7 @@ func TestSend_RejectFor(t *testing.T) {
 func TestSend_ThrottleFor(t *testing.T) {
 	t.Parallel()
 	srv := newServer(t)
-	srv.ThrottleFor["teacher@school.ru"] = 1
+	srv.ThrottleFor("teacher@school.ru", 1)
 	tr := newTransport(t, srv.URL(), nil)
 
 	_, err := tr.Send(t.Context(), envelope())
