@@ -31,13 +31,13 @@ require (
 	github.com/nrect/rebar/auth v0.0.0-20260908221018-051fd21c2237
 	github.com/nrect/rebar/authz v0.0.0-20260908221018-051fd21c2237
 	github.com/nrect/rebar/entitlement v0.0.0-20260908221018-051fd21c2237
-	github.com/nrect/rebar/kit v0.2.0
+	github.com/nrect/rebar/kit v0.3.0
 	github.com/nrect/rebar/mail v0.0.0-20260908221018-051fd21c2237
 	github.com/nrect/rebar/objectstore v0.0.0-20260908221018-051fd21c2237
 	github.com/nrect/rebar/otelboot v0.0.0-20260908221018-051fd21c2237
 	github.com/nrect/rebar/outbox v0.0.0-20260908221018-051fd21c2237
 	github.com/nrect/rebar/payment v0.0.0-20260908221018-051fd21c2237
-	github.com/nrect/rebar/postgres v0.1.0
+	github.com/nrect/rebar/postgres v0.2.0
 	github.com/nrect/rebar/scheduler v0.0.0-20260908221018-051fd21c2237
 	github.com/pressly/goose/v3 v3.27.3
 	github.com/stretchr/testify v1.12.1
