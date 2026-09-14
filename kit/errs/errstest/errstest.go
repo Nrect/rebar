@@ -37,3 +37,19 @@ func KindStatusTable(t *testing.T) {
 	t.Helper()
 	kindStatusTable(t)
 }
+
+// EveryErrorHasKind — каждая экспортируемая sentinel под root несёт класс
+// (ADR-0007). Страж обходит ИСХОДНИКИ, а не принимает список: забытая в
+// списке sentinel прошла бы мимо, а новый файл и подпакет проверяются без
+// правки теста.
+//
+// Класс узнаётся по форме объявления: errs.Kinded, конструкторы errs, обёртка
+// fmt.Errorf("%w: …", ErrX). Находка — errors.New, fmt.Errorf без %w,
+// KindUnknown, литерал errs.KindError{}, а у имени Err… ещё и отсутствие
+// значения или форма, класс которой не определить. Неэкспортируемые,
+// _test.go, testdata, vendor и пути из allow (как у NoDirectHTTPErrors) не
+// проверяются.
+func EveryErrorHasKind(t *testing.T, root string, allow ...string) {
+	t.Helper()
+	everyErrorHasKind(t, root, allow)
+}
