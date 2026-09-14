@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
@@ -135,6 +136,16 @@ func readRow(t *testing.T, pool *pgxpool.Pool, id uuid.UUID) row {
 			&r.LastError, &r.FailReason, &r.UpdatedAt, &r.DoneAt)
 	require.NoError(t, err)
 	return r
+}
+
+// beginTx — транзакция потребителя. Откат в Cleanup: тест, упавший до своего
+// Rollback, иначе вешал бы pool.Close на занятом соединении до таймаута.
+func beginTx(t *testing.T, pool *pgxpool.Pool) pgx.Tx {
+	t.Helper()
+	tx, err := pool.Begin(t.Context())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = tx.Rollback(context.Background()) })
+	return tx
 }
 
 func countRows(t *testing.T, pool *pgxpool.Pool, query string, args ...any) int {

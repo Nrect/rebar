@@ -186,8 +186,7 @@ func TestEnqueue_WithTx_IsAtomic(t *testing.T) {
 	require.NoError(t, err)
 
 	rolled := envelope()
-	tx, err := pool.Begin(ctx)
-	require.NoError(t, err)
+	tx := beginTx(t, pool)
 	_, err = tx.Exec(ctx, `INSERT INTO consumer_fact (id) VALUES ($1)`, rolled.ID)
 	require.NoError(t, err)
 	res, err := outboxpg.Enqueue(ctx, tx, rolled)
@@ -202,8 +201,7 @@ func TestEnqueue_WithTx_IsAtomic(t *testing.T) {
 		"откат унёс и строку дедупа: иначе ключ остался бы занят навсегда")
 
 	committed := envelope()
-	tx, err = pool.Begin(ctx)
-	require.NoError(t, err)
+	tx = beginTx(t, pool)
 	_, err = tx.Exec(ctx, `INSERT INTO consumer_fact (id) VALUES ($1)`, committed.ID)
 	require.NoError(t, err)
 	_, err = outboxpg.Enqueue(ctx, tx, committed)
@@ -228,8 +226,7 @@ func TestEnqueue_DuplicateDoesNotAbortTx(t *testing.T) {
 		e.DedupKey, e.Fingerprint = first.DedupKey, first.Fingerprint
 	})
 
-	tx, err := pool.Begin(ctx)
-	require.NoError(t, err)
+	tx := beginTx(t, pool)
 	res, err := outboxpg.Enqueue(ctx, tx, repeat)
 	require.NoError(t, err, "повтор — успех, а не ошибка")
 	assert.Equal(t, outbox.OutcomeDuplicate, res.Outcome)
