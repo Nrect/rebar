@@ -217,7 +217,13 @@ tr, err := sesv2.New(sesv2.Config{
 Двойники в [mailtest](mailtest): `NewMemStore` (уникальность ключа, аренда,
 стирание тела), `NewTransport` (записывает конверты; `RejectFor`/`FailFor` —
 отказы по адресу), `NewMemSuppressor` (стоп-лист в памяти), `NewSESServer(t)`
-(фейк SES v2 для адаптера `sesv2` без Docker). Тест потребителя:
+(фейк SES v2 для адаптера `sesv2` без Docker).
+
+Настройка задаётся методами (`RejectFor`, `FailFor`, `SetErr`, `SetSendHook`),
+а не публичными полями, и правится прямо во время прогона: поле, которое метод
+порта читает под мьютексом, краснело бы `-race` в вашем тесте, а не в нашем.
+
+Тест потребителя:
 
 ```go
 func TestRegister_SendsVerifyEmail(t *testing.T) {
