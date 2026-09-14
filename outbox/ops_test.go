@@ -179,7 +179,7 @@ func TestRedrive_OnlyFromFailed(t *testing.T) {
 func TestWorkerOps_StoreFailureIsUnavailable(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t, nil)
-	h.store.Err = context.DeadlineExceeded
+	h.store.SetErr(context.DeadlineExceeded)
 	ctx := context.Background()
 
 	_, err := h.worker.Stats(ctx)

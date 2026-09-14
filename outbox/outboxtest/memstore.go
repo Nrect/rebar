@@ -28,27 +28,42 @@ type dedupKey struct {
 }
 
 // MemStore — outbox.Store в памяти: настоящая уникальность (Kind, DedupKey),
-// аренда со SKIP-LOCKED-семантикой, fencing по токену. Потокобезопасен;
-// поля-настройки задаются до начала прогона.
+// аренда со SKIP-LOCKED-семантикой, fencing по токену. Потокобезопасен
+// целиком, включая настройку.
 type MemStore struct {
 	mu   sync.Mutex
 	rows map[uuid.UUID]outbox.Envelope
 	keys map[dedupKey]uuid.UUID
 
-	// Err — ошибка из любого метода: для fail-closed тестов.
-	Err error
-	// FinishErr — ошибка только из Finish: после неё остаток пачки не идёт.
-	FinishErr error
-	// AfterHandle — хук в начале Finish, то есть ровно в окне между работой
-	// хендлера и записью исхода. Паника в нём имитирует убитый процесс:
-	// строка остаётся в processing со старым токеном и ждёт истечения аренды.
-	// Зовётся без замка — хук вправе трогать само хранилище.
-	AfterHandle func()
+	err         error
+	finishErr   error
+	afterHandle func()
 }
 
 // NewMemStore — пустое хранилище.
 func NewMemStore() *MemStore {
 	return &MemStore{rows: map[uuid.UUID]outbox.Envelope{}, keys: map[dedupKey]uuid.UUID{}}
+}
+
+// SetErr — ошибка из любого метода порта: для fail-closed тестов; nil снимает.
+func (m *MemStore) SetErr(err error) { m.set(func() { m.err = err }) }
+
+// SetFinishErr — ошибка только из Finish: после неё остаток пачки не идёт; nil
+// снимает.
+func (m *MemStore) SetFinishErr(err error) { m.set(func() { m.finishErr = err }) }
+
+// SetAfterHandle — хук в начале Finish, ровно в окне между работой хендлера и
+// записью исхода; nil снимает. Паника в нём имитирует убитый процесс: строка
+// остаётся в processing со старым токеном и ждёт истечения аренды. Хук
+// изображает внешнее событие, поэтому зовётся вне замка и вправе звать само
+// хранилище.
+func (m *MemStore) SetAfterHandle(hook func()) { m.set(func() { m.afterHandle = hook }) }
+
+// set — правка настройки под тем же замком, под которым её читают методы порта.
+func (m *MemStore) set(mutate func()) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	mutate()
 }
 
 // Enqueue вставляет строку в pending. Повтор пары (Kind, DedupKey) возвращает
@@ -159,8 +174,8 @@ func (m *MemStore) Finish(ctx context.Context, req outbox.FinishRequest) error {
 	if err := m.fail(ctx); err != nil {
 		return err
 	}
-	if m.FinishErr != nil {
-		return m.FinishErr
+	if m.finishErr != nil {
+		return m.finishErr
 	}
 	row, ok := m.rows[req.ID]
 	if !ok || !heldBy(row, req.Token) {
@@ -179,8 +194,8 @@ func (m *MemStore) Finish(ctx context.Context, req outbox.FinishRequest) error {
 // по отменённому ctx драйвер писать откажется, и двойник, который этого не
 // замечает, зеленит код, где исход записывается «после остановки».
 func (m *MemStore) fail(ctx context.Context) error {
-	if m.Err != nil {
-		return m.Err
+	if m.err != nil {
+		return m.err
 	}
 	return ctx.Err()
 }
@@ -188,7 +203,7 @@ func (m *MemStore) fail(ctx context.Context) error {
 func (m *MemStore) afterHandleHook() func() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.AfterHandle
+	return m.afterHandle
 }
 
 func heldBy(row outbox.Envelope, token uuid.UUID) bool {

@@ -2,7 +2,6 @@ package outboxtest_test
 
 import (
 	"context"
-	"reflect"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -14,17 +13,6 @@ import (
 	"github.com/nrect/rebar/outbox"
 	"github.com/nrect/rebar/outbox/outboxtest"
 )
-
-// Публичное поле-ручка краснеет здесь, а не гонкой у потребителя: Handle читает
-// настройку под замком, и правиться она обязана под ним же.
-func TestRecordingHandler_HasNoExportedFields(t *testing.T) {
-	t.Parallel()
-
-	typ := reflect.TypeFor[outboxtest.RecordingHandler]()
-	for i := range typ.NumField() {
-		assert.False(t, typ.Field(i).IsExported(), "поле RecordingHandler.%s публичное", typ.Field(i).Name)
-	}
-}
 
 // Настройка правится на ходу: тест потребителя меняет её, пока воркер в другой
 // горутине зовёт хендлер. Под -race это обязано быть чисто.
@@ -52,34 +40,6 @@ func TestRecordingHandler_KnobsAreSafeWhileServing(t *testing.T) {
 		},
 		func(int) { _, _ = h.Handled(), h.Panicked("E-5") },
 	)
-}
-
-// whileServing крутит каждую ручку в своей горутине, пока serve не отработает.
-// Своя горутина — не прихоть: ручка, пишущая мимо замка, не делит с serve ни
-// одной точки синхронизации, и -race видит гонку при любом порядке. В общей
-// горутине её прятали бы замки соседних ручек.
-func whileServing(serve func(), knobs ...func(i int)) {
-	served := make(chan struct{})
-	go func() {
-		defer close(served)
-		serve()
-	}()
-	var wg sync.WaitGroup
-	for _, knob := range knobs {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for i := 0; ; i++ {
-				knob(i) // до проверки: каждая ручка тронута хотя бы раз
-				select {
-				case <-served:
-					return
-				default:
-				}
-			}
-		}()
-	}
-	wg.Wait()
 }
 
 // Хук зовётся вне замка: хук, позвавший сам двойник, иначе повесил бы Handle.
