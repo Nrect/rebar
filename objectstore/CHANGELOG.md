@@ -5,7 +5,54 @@
 
 ## Unreleased
 
+### Added
+- Сценарий `RunStoreSuite` «ModifiedAt — в UTC у Put и у List»: контракт
+  `Object.ModifiedAt` из `ports.go` набор до сих пор не сторожил. Точность
+  момента у реализаций своя и контрактом не является — `fs` отдаёт наносекунды
+  файловой системы, `s3` секунды заголовка `Date` у `Put` и миллисекунды
+  `LastModified` у `List`, — поэтому сценарий сравнивает зону, а не момент.
+  Усечения до микросекунд, как у двойников с pg-адаптером, здесь нет
+  намеренно: `timestamptz` в модуле нет, и усекающий двойник разошёлся бы с
+  `fs` в том же бинаре. Двойник в наборе `fs` идёт на часах в чужой зоне: на
+  часах в UTC сценарий у него зелен и без приведения. Ломающее для своей
+  реализации `Store`, которая отдаёт местное время.
+
 ### Changed
+- **Класс ошибки у sentinel ([ADR-0007](../docs/adr/0007-error-kind.md)).**
+  Потребителю больше не нужна таблица перевода ошибок `objectstore`:
+  `errs.KindOf` и `httperr` находят класс на самой sentinel. Страж
+  `errstest.EveryErrorHasKind` стоит в корне модуля (`sentinels_test.go`);
+  двойники `objectstoretest` из него исключены — их ошибка только причина,
+  класс несёт обёртка ядра, и это держит
+  `TestPortFailuresReachCallerAsUnavailable` на путях `Uploader.Upload` и
+  `Collector.Run`.
+
+  | Sentinel | Класс | Почему |
+  |---|---|---|
+  | `ErrTooLarge` | 413 `payload-too-large` | тело присылает клиент, и у превышения размера свой класс |
+  | `ErrEmptyBody`, `ErrUnsupportedType`, `ErrSVGRejected` | 400 `incorrect-input` | тело загрузки и его содержимое присылает клиент |
+  | `ErrBadKey`, `ErrSizeUnknown` | 400 `incorrect-input` | ключ и размер приходят с запросом (ADR-0007, «Спорные назначения») |
+  | `ErrUnavailable` | 503 `unavailable` | сбой хранилища, повтор осмыслен |
+  | `ErrBadMethod`, `ErrBadTTL` | нет, `//errs:nokind` | метод и срок ссылки задаёт код потребителя: негодные — дефект, то есть 500 |
+  | `ErrNotFound` | нет, `//errs:nokind` | в модуле её отдаёт только `s3` на ответ 404, а у `Put`, `Delete` и `List` это нет бакета — дефект конфигурации, то есть 500. Расходится с правилом примера-монолита (404 `file-not-found`) |
+  | `ErrCursorStuck` | нет, `//errs:nokind` | курсор тот же, и повтор не поможет; путь фоновый (ADR-0007, «Спорные назначения») |
+
+- **Ломающее для кода, который сравнивал тексты sentinel, присваивал их или
+  звал `SetClock(nil)`.** Замена:
+
+  | Было | Стало |
+  |---|---|
+  | тип sentinel с классом — `error` | `errs.KindError`; `errors.Is` и `==` работают как прежде, но переменная, выведенная из неё (`kind := objectstore.ErrUnavailable`), больше не принимает sentinel без класса — объявлять `var kind error` (так правлен `s3.statusError`) |
+  | `object body is …`, `object content type is not accepted`, `svg is never accepted: …`, `object key is …`, `object size is …`, `object is not found` | тот же текст с префиксом `objectstore: ` |
+  | `presign method is not one of AllMethods`, `presign ttl is …` | тот же текст с префиксом `objectstore: ` |
+  | `object store operation could not be completed` | `objectstore: operation could not be completed` |
+  | `object store returned a cursor that does not advance` | `objectstore: store returned a cursor that does not advance` |
+  | `Collector.SetClock(nil)` и `s3.Store.SetClock(nil)` принимались и падали разыменованием при первом обращении к часам | паника `objectstore.Collector.SetClock: now must not be nil` и `objectstore/s3.Store.SetClock: now must not be nil` |
+
+  Префикс не косметика: `KindError` равны по классу и тексту, и без него
+  `objectstore.ErrUnavailable` совпала бы через `errors.Is` с
+  `ErrUnavailable` другого модуля того же текста. Модуль требует
+  `github.com/nrect/rebar/kit v0.2.0`.
 - **API двойников меняется ломающе: настройка `objectstoretest.MemStore` и
   `objectstoretest.MemOwned` — методы, а не публичные поля.** Двойники читали
   поля под своим мьютексом, а тест писал их мимо него. Пока поле ставится до
@@ -20,10 +67,10 @@
   | `store.Now = now` | `store.SetClock(now)` |
   | `owned.Err = err` | `owned.SetErr(err)` |
 
-  Ошибки снимаются `nil`. `SetClock` — та же форма, что у ядра
+  Ошибки снимаются `nil`. `SetClock` — метод, как у ядра
   (`Collector.SetClock`, `s3.Store.SetClock`); часы зовутся под замком
-  двойника, изнутри `Put`. `nil` вместо часов по-прежнему поломка стенда:
-  `Put` ответит `ErrDoubleBroken`.
+  двойника, изнутри `Put`. `nil` вместо часов у двойника по-прежнему поломка
+  стенда, а не паника, как у ядра: `Put` ответит `ErrDoubleBroken`.
 
 ### Fixed
 - Интеграционный тест `s3` берёт образ MinIO с `quay.io`, а не с Docker Hub:

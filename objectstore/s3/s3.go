@@ -42,7 +42,14 @@ func New(cfg Config) *Store {
 }
 
 // SetClock подменяет источник времени; только для тестов, до начала работы.
-func (s *Store) SetClock(now func() time.Time) { s.now = now }
+// nil — паника здесь, на настройке, а не разыменование nil в чужом стеке при
+// первом обращении к часам.
+func (s *Store) SetClock(now func() time.Time) {
+	if now == nil {
+		panic("objectstore/s3.Store.SetClock: now must not be nil")
+	}
+	s.now = now
+}
 
 // Put кладёт объект, перезаписывая существующий.
 //

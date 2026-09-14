@@ -36,7 +36,14 @@ func NewCollector(store Store, owned Owned, cfg CollectorConfig) *Collector {
 }
 
 // SetClock подменяет источник времени; только для тестов, до начала работы.
-func (c *Collector) SetClock(now func() time.Time) { c.now = now }
+// nil — паника здесь, на настройке, а не разыменование nil в чужом стеке при
+// первом обращении к часам.
+func (c *Collector) SetClock(now func() time.Time) {
+	if now == nil {
+		panic("objectstore.Collector.SetClock: now must not be nil")
+	}
+	c.now = now
+}
 
 // Run обходит префикс и убирает сирот. Возвращает их число: удалённых в режиме
 // CollectDelete, найденных в CollectDryRun.

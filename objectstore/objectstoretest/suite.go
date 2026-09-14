@@ -61,6 +61,7 @@ var storeScenarios = []storeScenario{
 	{name: "ключ с обходом каталога отвергается", run: suiteRejectsTraversal},
 	{name: "Presign проверяет метод и срок", run: suitePresign},
 	{name: "PublicURL детерминирован", run: suitePublicURL},
+	{name: "ModifiedAt — в UTC у Put и у List", run: suiteModifiedAtInUTC},
 }
 
 func suiteRoundTrip(t *testing.T, store objectstore.Store) {
@@ -261,6 +262,25 @@ func suitePublicURL(t *testing.T, store objectstore.Store) {
 	}
 	if !strings.Contains(first, "public.png") {
 		t.Errorf("PublicURL %q не ведёт на ключ", first)
+	}
+}
+
+// MODIFIEDAT ОТДАЁТСЯ В UTC — у Put и у List (ports.go, Object). Точность у
+// реализаций своя и контрактом не является: fs отдаёт наносекунды файловой
+// системы, s3 — секунды заголовка Date у Put и миллисекунды LastModified у
+// List. Поэтому сравнивается зона, а не момент.
+func suiteModifiedAtInUTC(t *testing.T, store objectstore.Store) {
+	t.Helper()
+	obj := mustPut(t, store, SuitePrefix+"/moment.png", PNG(32))
+	page := mustList(t, store, SuitePrefix, "", 10)
+	if len(page.Objects) != 1 {
+		t.Fatalf("List отдал %d объектов, ожидался 1", len(page.Objects))
+	}
+
+	for what, moment := range map[string]time.Time{"Put": obj.ModifiedAt, "List": page.Objects[0].ModifiedAt} {
+		if moment.Location() != time.UTC {
+			t.Errorf("%s отдал ModifiedAt %s в зоне %s, ожидался UTC", what, moment.Format(time.RFC3339Nano), moment.Location())
+		}
 	}
 }
 

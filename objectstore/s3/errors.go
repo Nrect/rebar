@@ -28,7 +28,8 @@ type errorResult struct {
 // Ни ключа, ни URL, ни подписи в тексте нет.
 func statusError(op string, resp *http.Response) error {
 	code := errorCode(resp)
-	kind := objectstore.ErrUnavailable
+	// error, а не выведенный errs.KindError: у ErrNotFound класса нет.
+	var kind error = objectstore.ErrUnavailable
 	if resp.StatusCode == http.StatusNotFound {
 		kind = objectstore.ErrNotFound
 	}
