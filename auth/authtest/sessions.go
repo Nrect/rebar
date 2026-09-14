@@ -28,17 +28,28 @@ var ErrSessionExists = fmt.Errorf("%w: authtest: session already exists", auth.E
 // скользящий срок, а DeleteExpired смотрит на оба срока — иначе тест «сессия
 // умерла по простою» был бы зелёным на уборке, которая простой не считает.
 type MemSessions struct {
-	Calls
+	calls
 
-	mu   sync.Mutex
-	rows map[sessionKey]session.Session
+	mu       sync.Mutex
+	rows     map[sessionKey]session.Session
+	err      error
+	touchErr error
+}
 
-	// Err — если не nil, любой вызов возвращает его, не трогая память.
-	Err error
-	// TouchErr — отказ ТОЛЬКО на продлении: чтение при этом работает. Отдельным
-	// полем, потому что «сессия читается, но не продлевается» — самостоятельный
-	// отказ, и разбор куки обязан на него закрыться.
-	TouchErr error
+// SetErr — отказ любого метода порта, память не трогается; nil снимает.
+func (m *MemSessions) SetErr(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.err = err
+}
+
+// SetTouchErr — отказ ТОЛЬКО на продлении: чтение при этом работает. Отдельной
+// ручкой, потому что «сессия читается, но не продлевается» — самостоятельный
+// отказ, и разбор куки обязан на него закрыться; nil снимает.
+func (m *MemSessions) SetTouchErr(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.touchErr = err
 }
 
 type sessionKey struct {
@@ -63,8 +74,8 @@ func (m *MemSessions) Insert(_ context.Context, s session.Session) error {
 	m.Hit("Insert")
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.Err != nil {
-		return m.Err
+	if m.err != nil {
+		return m.err
 	}
 	key := sessionKey{realm: s.Realm, hash: s.TokenHash}
 	if _, ok := m.rows[key]; ok {
@@ -82,8 +93,8 @@ func (m *MemSessions) ByHash(_ context.Context, realm auth.Realm, hash string) (
 	m.Hit("ByHash")
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.Err != nil {
-		return session.Session{}, m.Err
+	if m.err != nil {
+		return session.Session{}, m.err
 	}
 	s, ok := m.rows[sessionKey{realm: realm, hash: hash}]
 	if !ok {
@@ -100,11 +111,11 @@ func (m *MemSessions) Touch(_ context.Context, realm auth.Realm, hash string,
 	m.Hit("Touch")
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.Err != nil {
-		return m.Err
+	if m.err != nil {
+		return m.err
 	}
-	if m.TouchErr != nil {
-		return m.TouchErr
+	if m.touchErr != nil {
+		return m.touchErr
 	}
 	key := sessionKey{realm: realm, hash: hash}
 	s, ok := m.rows[key]
@@ -121,8 +132,8 @@ func (m *MemSessions) Delete(_ context.Context, realm auth.Realm, hash string) e
 	m.Hit("Delete")
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.Err != nil {
-		return m.Err
+	if m.err != nil {
+		return m.err
 	}
 	delete(m.rows, sessionKey{realm: realm, hash: hash})
 	return nil
@@ -147,8 +158,8 @@ func (m *MemSessions) DeleteExpired(_ context.Context, realm auth.Realm, now tim
 func (m *MemSessions) deleteWhere(match func(session.Session) bool) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.Err != nil {
-		return 0, m.Err
+	if m.err != nil {
+		return 0, m.err
 	}
 	var doomed []sessionKey
 	for key, s := range m.rows {

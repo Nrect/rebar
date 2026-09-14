@@ -208,7 +208,7 @@ func TestService_SignIn_FailsClosedWhenAttemptsAreUnreadable(t *testing.T) {
 
 	st := newStand(t)
 	st.seed(t, knownLogin)
-	st.attempts.Err = authtest.ErrInjected
+	st.attempts.SetErr(authtest.ErrInjected)
 
 	_, err := st.signIn(t, knownLogin, goodPassword)
 
@@ -223,7 +223,7 @@ func TestService_SignIn_FailsClosedWhenAttemptIsNotRecorded(t *testing.T) {
 
 	st := newStand(t)
 	st.seed(t, knownLogin)
-	st.attempts.RecordErr = authtest.ErrInjected
+	st.attempts.SetRecordErr(authtest.ErrInjected)
 
 	_, err := st.signIn(t, knownLogin, wrongPassword)
 

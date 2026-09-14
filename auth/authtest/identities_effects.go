@@ -20,8 +20,8 @@ import (
 func (m *MemIdentities) SetVerified(id uuid.UUID, verified bool) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.Err != nil {
-		return m.Err
+	if m.err != nil {
+		return m.err
 	}
 	r, ok := m.records[id]
 	if !ok {
@@ -37,8 +37,8 @@ func (m *MemIdentities) SetVerified(id uuid.UUID, verified bool) error {
 func (m *MemIdentities) SetLogin(id uuid.UUID, login string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.Err != nil {
-		return m.Err
+	if m.err != nil {
+		return m.err
 	}
 	r, ok := m.records[id]
 	if !ok {

@@ -33,7 +33,7 @@ var ErrNoEffect = errors.New("authtest: token has no effect to apply")
 // потребителя. Двойник, гасящий токен до эффекта, оставил бы человека без
 // ссылки и без смены адреса.
 type MemTokens struct {
-	Calls
+	calls
 
 	mu   sync.Mutex
 	ids  *MemIdentities
@@ -41,9 +41,14 @@ type MemTokens struct {
 	// notes — письма, поставленные Issue в очередь ТЕМ ЖЕ вызовом, что и
 	// строка токена: у потребителя это одна транзакция.
 	notes []session.Notification
+	err   error
+}
 
-	// Err — если не nil, любой вызов возвращает его, не трогая память.
-	Err error
+// SetErr — отказ любого метода порта, память не трогается; nil снимает.
+func (m *MemTokens) SetErr(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.err = err
 }
 
 type tokenKey struct {
@@ -73,8 +78,8 @@ func (m *MemTokens) Issue(_ context.Context, t session.OneTimeToken, n session.N
 	m.Hit("Issue")
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.Err != nil {
-		return m.Err
+	if m.err != nil {
+		return m.err
 	}
 	key := tokenKey{realm: t.Realm, purpose: t.Purpose, hash: t.TokenHash}
 	if _, ok := m.rows[key]; ok {
@@ -94,8 +99,8 @@ func (m *MemTokens) Consume(ctx context.Context, req session.ConsumeRequest) (se
 	m.Hit("Consume")
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.Err != nil {
-		return session.ConsumeResult{}, m.Err
+	if m.err != nil {
+		return session.ConsumeResult{}, m.err
 	}
 	key := tokenKey{realm: req.Realm, purpose: req.Purpose, hash: req.TokenHash}
 	entry, ok := m.rows[key]
@@ -119,8 +124,8 @@ func (m *MemTokens) Revoke(_ context.Context, realm auth.Realm, subjectID uuid.U
 	m.Hit("Revoke")
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.Err != nil {
-		return 0, m.Err
+	if m.err != nil {
+		return 0, m.err
 	}
 	return m.revokeLocked(realm, subjectID, purpose, at), nil
 }
@@ -130,8 +135,8 @@ func (m *MemTokens) PurgeExpired(_ context.Context, realm auth.Realm, before tim
 	m.Hit("PurgeExpired")
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.Err != nil {
-		return 0, m.Err
+	if m.err != nil {
+		return 0, m.err
 	}
 	var doomed []tokenKey
 	for key, entry := range m.rows {

@@ -20,29 +20,41 @@ import (
 // адаптере. Двойник, считающий строго, разошёлся бы с базой на одной попытке —
 // как раз на той, которая решает, заперт человек или нет.
 type MemAttempts struct {
-	Calls
+	calls
 
-	mu   sync.Mutex
-	rows []session.Attempt
-
-	// Err — если не nil, любой вызов возвращает его, не трогая память.
-	Err error
-	// RecordErr — отказ ТОЛЬКО на записи: счёт при этом проходит. Отдельным
-	// полем, потому что «счётчик читается, но не пишется» — самостоятельный
-	// отказ, и вход обязан на него закрыться, а не пропустить попытку молча.
-	RecordErr error
+	mu        sync.Mutex
+	rows      []session.Attempt
+	err       error
+	recordErr error
 }
 
 // NewMemAttempts — пустой двойник.
 func NewMemAttempts() *MemAttempts { return &MemAttempts{} }
+
+// SetErr — отказ любого метода порта, память не трогается; nil снимает.
+func (m *MemAttempts) SetErr(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.err = err
+}
+
+// SetRecordErr — отказ ТОЛЬКО на записи: счёт при этом проходит. Отдельной
+// ручкой, потому что «счётчик читается, но не пишется» — самостоятельный
+// отказ, и вход обязан на него закрыться, а не пропустить попытку молча; nil
+// снимает.
+func (m *MemAttempts) SetRecordErr(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.recordErr = err
+}
 
 // Count — сколько попыток по ключу начиная с since включительно.
 func (m *MemAttempts) Count(_ context.Context, realm auth.Realm, loginKey string, since time.Time) (int, error) {
 	m.Hit("Count")
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.Err != nil {
-		return 0, m.Err
+	if m.err != nil {
+		return 0, m.err
 	}
 	var n int
 	for _, a := range m.rows {
@@ -58,11 +70,11 @@ func (m *MemAttempts) Record(_ context.Context, a session.Attempt) error {
 	m.Hit("Record")
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.Err != nil {
-		return m.Err
+	if m.err != nil {
+		return m.err
 	}
-	if m.RecordErr != nil {
-		return m.RecordErr
+	if m.recordErr != nil {
+		return m.recordErr
 	}
 	m.rows = append(m.rows, a)
 	return nil
@@ -73,8 +85,8 @@ func (m *MemAttempts) Purge(_ context.Context, realm auth.Realm, before time.Tim
 	m.Hit("Purge")
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.Err != nil {
-		return 0, m.Err
+	if m.err != nil {
+		return 0, m.err
 	}
 	kept := make([]session.Attempt, 0, len(m.rows))
 	for _, a := range m.rows {

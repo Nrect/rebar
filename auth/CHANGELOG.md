@@ -5,6 +5,29 @@
 
 ## Unreleased
 
+### Changed
+- **API двойников меняется ломающе: настройка двойников `authtest` — методы,
+  а не публичные поля.** Двойники читали поля под своим мьютексом, а тест
+  писал их мимо него. Пока поле ставится до первого вызова, гонки нет; но тест
+  потребителя через живой HTTP-сервер пишет поле, пока ручка сервера его
+  читает, — и `-race` краснеет у потребителя
+  ([CONVENTIONS §3](../CONVENTIONS.md#3-двойники)). Замена:
+
+  | Было | Стало |
+  |---|---|
+  | `m.Err = err` у `MemIdentities`, `MemSessions`, `MemTokens`, `MemAttempts`, `RecordingNotifier`, `RecordingAuditor` | `m.SetErr(err)` |
+  | `sessions.TouchErr = err` | `sessions.SetTouchErr(err)` |
+  | `attempts.RecordErr = err` | `attempts.SetRecordErr(err)` |
+  | `ids.NewID = gen` | `ids.SetIDs(gen)` |
+  | `strength.Default = score` | `strength.SetDefault(score)` |
+  | `strength.ByPassword[pw] = score` | `strength.Set(pw, score)` |
+  | `m.Calls.CallCount(name)` | `m.CallCount(name)` |
+
+  Ошибки и генератор снимаются `nil`. Счётчик `Calls` у `MemSessions`,
+  `MemTokens` и `MemAttempts` больше не поле: он встроен скрыто, `CallCount`,
+  `Snapshot` и `Reset` остались на двойнике. Генератор идентификаторов зовётся
+  под замком двойника, изнутри `Create` и `Put`, и трогать двойник не вправе.
+
 ## [0.1.0] — 2026-09-10
 
 ### Added

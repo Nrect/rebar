@@ -19,7 +19,7 @@ func newCollector(t *testing.T, mode objectstore.CollectMode, owned *objectstore
 ) {
 	t.Helper()
 	store := objectstoretest.NewMemStore()
-	store.Now = func() time.Time { return testNow }
+	store.SetClock(func() time.Time { return testNow })
 	c := objectstore.NewCollector(store, owned, testCollectorConfig(mode))
 	c.SetClock(func() time.Time { return testNow })
 	return c, store
@@ -51,7 +51,7 @@ func TestCollector_KeepsYoungObjects(t *testing.T) {
 func TestCollector_StopsOnOwnedFailure(t *testing.T) {
 	t.Parallel()
 	owned := objectstoretest.NewMemOwned()
-	owned.Err = errors.New("dial tcp 10.0.0.5:5432: connect: connection refused")
+	owned.SetErr(errors.New("dial tcp 10.0.0.5:5432: connect: connection refused"))
 	c, store := newCollector(t, objectstore.CollectDelete, owned)
 	keys := []string{testPrefix + "/a.png", testPrefix + "/b.png", testPrefix + "/c.png"}
 	for _, key := range keys {
@@ -153,7 +153,7 @@ func TestCollector_StopsOnListFailure(t *testing.T) {
 	t.Parallel()
 	owned := objectstoretest.NewMemOwned()
 	c, store := newCollector(t, objectstore.CollectDelete, owned)
-	store.Err = errors.New("dial tcp 10.0.0.7:9000: connect: connection refused")
+	store.SetErr(errors.New("dial tcp 10.0.0.7:9000: connect: connection refused"))
 
 	_, err := c.Run(t.Context())
 

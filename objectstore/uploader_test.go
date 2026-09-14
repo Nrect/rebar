@@ -305,7 +305,7 @@ func TestUploader_RejectsEmptyBody(t *testing.T) {
 func TestUploader_StoreFailureHidesDetails(t *testing.T) {
 	t.Parallel()
 	store := objectstoretest.NewMemStore()
-	store.Err = errors.New("dial tcp 10.0.0.7:9000: connect: connection refused, key=uploads/secret.png")
+	store.SetErr(errors.New("dial tcp 10.0.0.7:9000: connect: connection refused, key=uploads/secret.png"))
 	up := objectstore.NewUploader(store, testUploaderConfig())
 
 	_, err := up.Upload(t.Context(), objectstore.UploadRequest{
