@@ -72,9 +72,8 @@ func TestStore_WithTx_IsAtomic(t *testing.T) {
 		row := tokenRow(subject, token.PurposeVerify, now)
 		require.NoError(t, tokens.Insert(t.Context(), row))
 
-		tx, err := pool.Begin(t.Context())
-		require.NoError(t, err)
-		_, err = tokens.WithTx(tx).ConsumeRow(t.Context(), consumeReq(row, now))
+		tx := beginTx(t, pool)
+		_, err := tokens.WithTx(tx).ConsumeRow(t.Context(), consumeReq(row, now))
 		require.NoError(t, err)
 		_, err = tx.Exec(t.Context(), `UPDATE consumer_users SET verified = true WHERE id = $1`, subject)
 		require.NoError(t, err)
@@ -244,9 +243,8 @@ func TestNewTokens_PanicsOnNil(t *testing.T) {
 // rollback гоняет fn в транзакции и всегда откатывает её.
 func rollback(t *testing.T, pool *pgxpool.Pool, fn func(tx pgx.Tx) error) {
 	t.Helper()
-	tx, err := pool.Begin(t.Context())
-	require.NoError(t, err)
-	err = fn(tx)
+	tx := beginTx(t, pool)
+	err := fn(tx)
 	require.NoError(t, err)
 	require.NoError(t, tx.Rollback(t.Context()))
 }

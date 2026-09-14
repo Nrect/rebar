@@ -141,8 +141,7 @@ func TestStore_WithTx_IsAtomic(t *testing.T) {
 	require.NoError(t, err)
 
 	rolled := envelope()
-	tx, err := pool.Begin(ctx)
-	require.NoError(t, err)
+	tx := beginTx(t, pool)
 	_, err = tx.Exec(ctx, `INSERT INTO consumer_fact (id) VALUES ($1)`, rolled.ID)
 	require.NoError(t, err)
 	res, err := store.WithTx(tx).Enqueue(ctx, rolled)
@@ -154,8 +153,7 @@ func TestStore_WithTx_IsAtomic(t *testing.T) {
 	assert.Zero(t, countRows(t, pool, `SELECT count(*) FROM consumer_fact WHERE id = $1`, rolled.ID))
 
 	committed := envelope()
-	tx, err = pool.Begin(ctx)
-	require.NoError(t, err)
+	tx = beginTx(t, pool)
 	_, err = tx.Exec(ctx, `INSERT INTO consumer_fact (id) VALUES ($1)`, committed.ID)
 	require.NoError(t, err)
 	_, err = store.WithTx(tx).Enqueue(ctx, committed)
@@ -176,8 +174,7 @@ func TestStore_WithTx_DuplicateKeepsTransactionUsable(t *testing.T) {
 	require.NoError(t, err)
 	first := mustEnqueue(t, store, envelope())
 
-	tx, err := pool.Begin(ctx)
-	require.NoError(t, err)
+	tx := beginTx(t, pool)
 	res, err := store.WithTx(tx).Enqueue(ctx, envelope(func(e *mail.Envelope) { e.DedupKey = first.DedupKey }))
 	require.NoError(t, err)
 	assert.Equal(t, mail.OutcomeDuplicate, res.Outcome)

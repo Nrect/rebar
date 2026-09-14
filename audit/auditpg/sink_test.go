@@ -89,8 +89,7 @@ func TestSink_WithTx_IsAtomic(t *testing.T) {
 	ev := testEvent()
 	factID := uuid.New()
 
-	tx, err := pool.Begin(ctx)
-	require.NoError(t, err)
+	tx := beginTx(t, pool)
 	_, err = tx.Exec(ctx, `INSERT INTO facts (id) VALUES ($1)`, factID)
 	require.NoError(t, err)
 	require.NoError(t, sink.WithTx(tx).Write(ctx, ev))
@@ -103,8 +102,7 @@ func TestSink_WithTx_IsAtomic(t *testing.T) {
 
 	// Тот же путь после Commit кладёт обе строки: тест отката обязан
 	// отличать «не записалось» от «не записывается никогда».
-	tx, err = pool.Begin(ctx)
-	require.NoError(t, err)
+	tx = beginTx(t, pool)
 	_, err = tx.Exec(ctx, `INSERT INTO facts (id) VALUES ($1)`, factID)
 	require.NoError(t, err)
 	require.NoError(t, sink.WithTx(tx).Write(ctx, ev))
