@@ -5,7 +5,28 @@
 
 ## Unreleased
 
+### Added
+- `mailtest.RunStoreSuite(t, factory)` — контрактный набор порта `mail.Store`
+  ([CONVENTIONS §5](../CONVENTIONS.md#5-тесты)) на `testing`, без testify.
+  Гоняется в одном бинаре по `mailtest.MemStore` и по `mailpg.Store`
+  (`TestStoreContract`). Сценарии — моменты как из `timestamptz`: возврат в
+  UTC и до микросекунд, возраст в `Stats` от усечённого момента, аренда и
+  `Purge` на границе одной микросекунды. Остальной контракт порта по-прежнему
+  держат интеграционные тесты `mailpg`.
+
 ### Changed
+- **`mailtest.MemStore` хранит и отдаёт моменты как `timestamptz`: в UTC и с
+  точностью до микросекунд, — и с той же точностью сравнивает параметры
+  (аренда в `Claim`, `Purge`).** Раньше двойник отдавал время как передали, с
+  наносекундами и зоной: сравнение меток у потребителя было зелёным на
+  двойнике и красным на базе, а наносекунда после конца аренды отдавала
+  второму воркеру строку, которую база ещё держит. Контракт записан у
+  `mail.Store`. Ломающее для теста потребителя, который сравнивал момент
+  строки двойника голым `==` или `assert.Equal` с часами в чужой зоне или с
+  наносекундами, — на базе такой тест был красным всегда.
+- `doc.go`: на пути вставки в транзакцию класс ошибки принадлежит потребителю
+  — вставка идёт его хендлом в его транзакции, ядро ошибку не видит и не
+  заворачивает; `mailpg` заворачивает сбой в `ErrUnavailable` сам.
 - **Класс ошибки у sentinel ([ADR-0007](../docs/adr/0007-error-kind.md)).**
   Потребителю больше не нужна таблица перевода ошибок `mail`: `errs.KindOf` и
   `httperr` находят класс на самой sentinel. Страж
@@ -15,29 +36,36 @@
 
   | Sentinel | Класс | Почему |
   |---|---|---|
-  | `ErrInvalidMessage` | 400 `incorrect-input` | адрес и имя получателя приходят от клиента; CR/LF в них — подмешанный заголовок |
   | `ErrKeyReused` | 409 `conflict` | тот же ключ на другое письмо, как `payment.ErrIdempotencyKeyReused` |
-  | `ErrSuppressed` | 409 `conflict` | состояние получателя не допускает отправку |
   | `ErrUnavailable` | 503 `unavailable` | сбой хранилища или стоп-листа, повтор осмыслен |
   | `ErrTransportUnconfigured` | 503 `unavailable` | временный сбой (ADR-0001, «Транспорты») |
+  | `ErrInvalidMessage` | нет, `//errs:nokind` | `Prepare` зовёт код потребителя, и модуль не знает, пришёл адрес из формы или из шаблона; потребитель с открытой формой адреса ставит класс одним правилом `Translate` (ADR-0007, «Спорные назначения») |
   | `ErrBadKind`, `ErrKeyInvalid`, `ErrNoSuppressor`, `smtp.ErrInvalidConfig` | нет, `//errs:nokind` | тип, ключ и сборку задаёт код потребителя: негодные — дефект, то есть 500 |
 
-- **Ломающее для кода, который сравнивал тексты sentinel, присваивал их или
-  звал `SetClock(nil)`.** Замена:
+- **Ломающее для кода, который сравнивал тексты sentinel, присваивал их,
+  ссылался на `ErrSuppressed`, различал `mail.Backoff` и `outbox.Backoff` как
+  типы или звал `SetClock(nil)`.** Замена:
 
   | Было | Стало |
   |---|---|
   | тип sentinel с классом — `error` | `errs.KindError`; `errors.Is` и `==` работают как прежде |
-  | `message is invalid`, `unknown message kind`, `dedup key …`, `recipient is suppressed` | тот же текст с префиксом `mail: ` |
+  | `message is invalid`, `unknown message kind`, `dedup key …` | тот же текст с префиксом `mail: ` |
   | `mail operation could not be completed` | `mail: operation could not be completed` |
   | `mail suppressor is not configured` | `mail: suppressor is not configured` |
   | `mail transport is not configured` | `mail: transport is not configured` |
   | паника `NewService`: `… must be a valid address: message is invalid: …` | `… must be a valid address: mail: message is invalid: …` |
+  | `ErrSuppressed` (`recipient is suppressed`) | удалена, заменителя нет: исход стоп-листа — статус строки `suppressed` (`FinishSuppressed`), а не ошибка. Ни один путь пакета её не возвращал, и `errors.Is(err, mail.ErrSuppressed)` у потребителя был бы вечно ложным |
+  | `mail.Backoff` — свой тип пакета | `mail.Backoff = retry.Backoff` (псевдоним): литерал `mail.Backoff{Base, Max}` компилируется как прежде, у типа появился `Delay`; ломается код, различавший `mail.Backoff` и `outbox.Backoff` как разные типы (оба в одном type switch, `%T`, reflect) |
   | `Service.SetClock(nil)` принимался и падал разыменованием при первом обращении к часам | паника `mail.Service.SetClock: now must not be nil` |
 
   Префикс не косметика: `KindError` равны по классу и тексту, и без него
   `mail.ErrKeyReused` совпала бы через `errors.Is` с `outbox.ErrKeyReused`.
   Модуль требует `github.com/nrect/rebar/kit v0.2.0`.
+- `Backoff` берётся из `kit/retry`: копия экспоненты с джиттером удалена.
+  Поведение то же — сверено построчно: тело и структура копии совпадали с
+  `kit/retry`. Расходился только комментарий: он называл формулу
+  `Base·2^attempt`, а считала копия, как и `kit`, `Base·2^(attempt−1)`. Тесты
+  границ backoff остались в модуле и гоняют `kit` через псевдоним.
 - **API двойников меняется ломающе: настройка `mailtest.Transport`,
   `mailtest.SESServer`, `mailtest.MemStore` и `mailtest.MemSuppressor` —
   методы, а не публичные поля.** Двойники читали поля под своим мьютексом, а

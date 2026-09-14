@@ -128,7 +128,7 @@ func (s *Service) send(ctx context.Context, now time.Time, req FinishRequest, en
 
 func (s *Service) retryLater(now time.Time, req FinishRequest, env Envelope, cause error) FinishRequest {
 	req.Outcome = FinishRetry
-	req.NextAttemptAt = now.Add(s.cfg.Backoff.delay(env.Attempts))
+	req.NextAttemptAt = now.Add(s.cfg.Backoff.Delay(env.Attempts))
 	req.Error = truncateError(cause.Error())
 	return req
 }

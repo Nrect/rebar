@@ -28,8 +28,8 @@ type dedupKey struct {
 }
 
 // MemStore — outbox.Store в памяти: настоящая уникальность (Kind, DedupKey),
-// аренда со SKIP-LOCKED-семантикой, fencing по токену. Потокобезопасен
-// целиком, включая настройку.
+// аренда со SKIP-LOCKED-семантикой, fencing по токену, моменты как в
+// timestamptz. Потокобезопасен целиком, включая настройку.
 type MemStore struct {
 	mu   sync.Mutex
 	rows map[uuid.UUID]outbox.Envelope
@@ -87,7 +87,7 @@ func (m *MemStore) Enqueue(ctx context.Context, env outbox.Envelope) (outbox.Enq
 	if _, taken := m.rows[env.ID]; taken {
 		return outbox.EnqueueResult{}, fmt.Errorf("%w: %s", ErrIDReused, env.ID)
 	}
-	row := copyEnvelope(env)
+	row := asStored(env)
 	row.Status, row.Reclaimed = outbox.StatusPending, false
 	row.ClaimToken, row.LockedUntil = nil, nil
 	m.rows[env.ID] = row
@@ -118,9 +118,9 @@ func (m *MemStore) Claim(ctx context.Context, req outbox.ClaimRequest) ([]outbox
 	for _, id := range due {
 		row := m.rows[id]
 		reclaimed := row.Status == outbox.StatusProcessing
-		token, lockedUntil := req.Token, req.Now.Add(req.Lease)
+		token, lockedUntil := req.Token, dbMoment(req.Now.Add(req.Lease))
 		row.Status, row.Attempts = outbox.StatusProcessing, row.Attempts+1
-		row.ClaimToken, row.LockedUntil, row.UpdatedAt = &token, &lockedUntil, req.Now
+		row.ClaimToken, row.LockedUntil, row.UpdatedAt = &token, &lockedUntil, dbMoment(req.Now)
 		m.rows[id] = row
 
 		out := copyEnvelope(row)
@@ -130,11 +130,14 @@ func (m *MemStore) Claim(ctx context.Context, req outbox.ClaimRequest) ([]outbox
 	return claimed, nil
 }
 
-// dueIDs — кандидаты к выполнению в порядке (AvailableAt, ID).
+// dueIDs — кандидаты к выполнению в порядке (AvailableAt, ID). Момент запроса
+// усечён, как его усечёт драйвер: аренда, истекающая в ту же микросекунду, для
+// timestamptz ещё жива.
 func (m *MemStore) dueIDs(req outbox.ClaimRequest) []uuid.UUID {
+	now := dbMoment(req.Now)
 	due := make([]uuid.UUID, 0, len(m.rows))
 	for id, row := range m.rows {
-		if slices.Contains(req.Kinds, row.Kind) && claimable(row, req.Now) {
+		if slices.Contains(req.Kinds, row.Kind) && claimable(row, now) {
 			due = append(due, id)
 		}
 	}
@@ -213,20 +216,21 @@ func heldBy(row outbox.Envelope, token uuid.UUID) bool {
 // applyOutcome — исход в строку. Payload не стирается ни в одном исходе,
 // включая failed: без него redrive невозможен (outbox, doc.go, п. 7).
 func applyOutcome(row outbox.Envelope, req outbox.FinishRequest) (outbox.Envelope, error) {
-	row.LastError, row.UpdatedAt = req.Error, req.Now
+	now := dbMoment(req.Now)
+	row.LastError, row.UpdatedAt = req.Error, now
 	row.ClaimToken, row.LockedUntil = nil, nil
 	switch req.Outcome {
 	case outbox.FinishDone, outbox.FinishSkipped:
-		doneAt := req.Now
+		doneAt := now
 		row.Status, row.DoneAt = outbox.StatusDone, &doneAt
 	case outbox.FinishRetry:
-		row.Status, row.AvailableAt = outbox.StatusPending, req.NextAttemptAt
+		row.Status, row.AvailableAt = outbox.StatusPending, dbMoment(req.NextAttemptAt)
 	case outbox.FinishFailed:
 		row.Status, row.FailReason = outbox.StatusFailed, req.FailReason
 	case outbox.FinishExpired:
 		row.Status = outbox.StatusExpired
 	case outbox.FinishReleased:
-		row.Status, row.AvailableAt = outbox.StatusPending, req.Now
+		row.Status, row.AvailableAt = outbox.StatusPending, now
 		if row.Attempts > 0 {
 			row.Attempts--
 		}
@@ -307,7 +311,7 @@ func (m *MemStore) Redrive(ctx context.Context, id uuid.UUID, now time.Time) (bo
 		return false, nil
 	}
 	row.Status, row.Attempts, row.FailReason = outbox.StatusPending, 0, ""
-	row.AvailableAt, row.UpdatedAt = now, now
+	row.AvailableAt, row.UpdatedAt = dbMoment(now), dbMoment(now)
 	m.rows[id] = row
 	return true, nil
 }
@@ -323,8 +327,10 @@ func (m *MemStore) Purge(ctx context.Context, before time.Time, limit int) (int,
 	if limit <= 0 {
 		return 0, nil
 	}
+	// Отметка усечена, как её усечёт драйвер: строгое «раньше» — на микросекундах.
+	cutoff := dbMoment(before)
 	stale := m.selectRows(func(row outbox.Envelope) bool {
-		return purgeable(row.Status) && row.UpdatedAt.Before(before)
+		return purgeable(row.Status) && row.UpdatedAt.Before(cutoff)
 	})
 	if len(stale) > limit {
 		stale = stale[:limit]
@@ -400,6 +406,31 @@ func copyEnvelope(env outbox.Envelope) outbox.Envelope {
 	out.DoneAt = copyTime(env.DoneAt)
 	out.ClaimToken = copyID(env.ClaimToken)
 	return out
+}
+
+// asStored — копия строки с моментами так, как их хранит timestamptz.
+func asStored(env outbox.Envelope) outbox.Envelope {
+	row := copyEnvelope(env)
+	row.AvailableAt = dbMoment(row.AvailableAt)
+	row.OccurredAt = dbMoment(row.OccurredAt)
+	row.CreatedAt = dbMoment(row.CreatedAt)
+	row.UpdatedAt = dbMoment(row.UpdatedAt)
+	row.NotAfter = dbMomentPtr(row.NotAfter)
+	row.DoneAt = dbMomentPtr(row.DoneAt)
+	return row
+}
+
+// dbMoment — момент так, как его вернёт круг через timestamptz: UTC и
+// микросекунды. Двойник, хранящий наносекунды и зону, зеленит у потребителя
+// сравнение меток, которое на базе красное.
+func dbMoment(t time.Time) time.Time { return t.Truncate(time.Microsecond).UTC() }
+
+func dbMomentPtr(t *time.Time) *time.Time {
+	if t == nil {
+		return nil
+	}
+	moment := dbMoment(*t)
+	return &moment
 }
 
 func copyTime(t *time.Time) *time.Time {
