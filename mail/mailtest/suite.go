@@ -2,6 +2,7 @@ package mailtest
 
 import (
 	"bytes"
+	"slices"
 	"testing"
 	"time"
 
@@ -41,6 +42,47 @@ var storeScenarios = []storeScenario{
 	{name: "аренда истекает по микросекундам timestamptz", run: suiteLeaseInMicroseconds},
 	{name: "Purge сравнивает по микросекундам timestamptz", run: suitePurgeInMicroseconds},
 	{name: "часы позади строк: возраст ноль, а не отрицательный", run: suiteStatsClockBehindRows},
+	{name: "Purge при равных updated_at удаляет первые по id", run: suitePurgeTiesByID},
+}
+
+// PURGE ПРИ РАВНЫХ updated_at УДАЛЯЕТ ПЕРВЫЕ ПО id. Лимит меньше группы равных:
+// без второго ключа сортировки база берёт строки в том порядке, в каком их
+// нашла, а двойник — по id, и удалённое на двойнике расходится с продом.
+// Исходы пишутся в порядке УБЫВАНИЯ id: база без id в ORDER BY удалила бы
+// последние.
+func suitePurgeTiesByID(t *testing.T, store mail.Store) {
+	t.Helper()
+	sentAt := suiteMoment(0)
+	rows := make([]mail.Envelope, 6)
+	for i := range rows {
+		rows[i] = mustEnqueue(t, store, suiteEnvelope(sentAt))
+	}
+	mustClaim(t, store, sentAt)
+	slices.SortFunc(rows, func(a, b mail.Envelope) int { return bytes.Compare(b.ID[:], a.ID[:]) })
+	for _, row := range rows {
+		mustFinish(t, store, mail.FinishRequest{ID: row.ID, Outcome: mail.FinishSent, Now: sentAt, Transport: "suite"})
+	}
+
+	deleted, err := store.Purge(t.Context(), sentAt.Add(time.Microsecond), 3)
+	if err != nil {
+		t.Fatalf("Purge: %v", err)
+	}
+	if deleted != 3 {
+		t.Fatalf("удалено %d строк, ожидалось 3", deleted)
+	}
+
+	// Удалённая строка освобождает ключ дедупа: повторная вставка проходит как новая.
+	slices.Reverse(rows)
+	for i, row := range rows {
+		res, enqueueErr := store.Enqueue(t.Context(), row)
+		if enqueueErr != nil {
+			t.Fatalf("повторная вставка %d-й по id строки: %v", i+1, enqueueErr)
+		}
+		if gone, want := res.Outcome == mail.OutcomeInserted, i < 3; gone != want {
+			t.Errorf("%d-я по id строка: удалена=%t, ожидалось %t — при равных updated_at Purge берёт первые по id",
+				i+1, gone, want)
+		}
+	}
 }
 
 // ЧАСЫ ПОЗАДИ СТРОК: возраст ноль, а не отрицательный. Часы потребителя и
