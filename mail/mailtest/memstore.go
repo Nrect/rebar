@@ -222,7 +222,8 @@ func (m *MemStore) Stats(_ context.Context, now time.Time) (mail.Stats, error) {
 		default:
 		}
 	}
-	if !oldest.IsZero() {
+	// Как у mailpg: часы потребителя позади строк — возраст ноль, а не минус.
+	if !oldest.IsZero() && now.After(oldest) {
 		stats.OldestPendingAge = now.Sub(oldest)
 	}
 	return stats, nil

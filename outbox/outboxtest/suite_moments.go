@@ -182,3 +182,23 @@ func mustFinish(t *testing.T, store outbox.Store, req outbox.FinishRequest) {
 		t.Fatalf("запись исхода %q: %v", req.Outcome, err)
 	}
 }
+
+// ТОЛЬКО ОТЛОЖЕННЫЕ СТРОКИ: возраст ноль, а не отрицательный. Срок не наступил —
+// строка в возраст не входит; реализация без этого фильтра отдала бы гейджу
+// минус час там, где прод показывает ноль.
+func suiteStatsOnlyDeferred(t *testing.T, store outbox.Store) {
+	t.Helper()
+	now := suiteNow()
+	suiteInsert(t, store, now, func(e *outbox.Envelope) { e.AvailableAt = now.Add(time.Hour) })
+
+	stats, err := store.Stats(t.Context(), now, []outbox.Kind{SuiteKind})
+	if err != nil {
+		t.Fatalf("Stats: %v", err)
+	}
+	if stats.Pending != 1 {
+		t.Errorf("Pending = %d, ожидалась 1: отложенная строка всё равно в очереди", stats.Pending)
+	}
+	if stats.OldestDueAge != 0 {
+		t.Errorf("OldestDueAge = %s при единственной отложенной строке, ожидался ноль", stats.OldestDueAge)
+	}
+}

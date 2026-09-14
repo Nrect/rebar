@@ -94,7 +94,8 @@ type Store interface {
 	// а ErrUnavailable.
 	Finish(ctx context.Context, req FinishRequest) error
 
-	// Stats — состояние очереди на момент now.
+	// Stats — состояние очереди на момент now. Часы потребителя позади строк
+	// дают нулевой возраст, а не отрицательный.
 	Stats(ctx context.Context, now time.Time) (Stats, error)
 
 	// Purge удаляет терминальные строки с updated_at < before, не больше limit

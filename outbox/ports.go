@@ -147,7 +147,8 @@ type Store interface {
 	Finish(ctx context.Context, req FinishRequest) error
 
 	// Stats — снимок очереди на момент now. known — типы, которые умеет
-	// воркер: pending со Kind вне этого списка попадают в Unhandled.
+	// воркер: pending со Kind вне этого списка попадают в Unhandled. Возраст
+	// считается только по готовым строкам и отрицательным не бывает.
 	Stats(ctx context.Context, now time.Time, known []Kind) (Stats, error)
 
 	// ListFailed — dead-letter для оператора, самые старые первыми, не больше

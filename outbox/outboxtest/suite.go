@@ -68,6 +68,7 @@ var storeScenarios = []storeScenario{
 	{name: "моменты исходов и Redrive хранятся как в timestamptz", run: suiteOutcomeMomentsAsStored},
 	{name: "аренда истекает по микросекундам timestamptz", run: suiteLeaseInMicroseconds},
 	{name: "Purge сравнивает по микросекундам timestamptz", run: suitePurgeInMicroseconds},
+	{name: "только отложенные строки: возраст ноль, а не отрицательный", run: suiteStatsOnlyDeferred},
 }
 
 func suiteDuplicate(t *testing.T, store outbox.Store) {
