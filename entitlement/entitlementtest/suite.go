@@ -2,6 +2,8 @@ package entitlementtest
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -54,13 +56,39 @@ var storeScenarios = []storeScenario{
 	{name: "пустое хранилище отдаёт пустой список, а не ошибку", run: suiteEmpty},
 	{name: "бессрочная выдача видна и через год", run: suiteForever},
 	{name: "момент истечения уже закрыт", run: suiteExpiryBoundary},
-	{name: "повторная выдача продлевает, а не удваивает", run: suiteRegrantExtends},
+	{name: "повторная выдача не удваивает и никогда не сокращает срок", run: suiteRegrantNeverShortens},
 	{name: "отзыв убирает выдачу и идемпотентен", run: suiteRevoke},
 	{name: "субъекты не видят выдач друг друга", run: suiteSubjectsIsolated},
 	{name: "снимок отдаётся копией", run: suiteOpenReturnsCopy},
 	{name: "сохранён переданный момент, а не «примерно сейчас»", run: suiteGrantedAtIsTheGivenMoment},
 	{name: "повторная выдача обновляет момент", run: suiteRegrantUpdatesGrantedAt},
 	{name: "отменённый контекст — ошибка", run: suiteCanceledContext},
+	{name: "предмет вне 1..MaxItemIDLen байт — ErrInvalidGrant, выдачи нет", run: suiteRejectsInvalidItem},
+	{name: "моменты возвращаются как из timestamptz: UTC и микросекунды", run: suiteMomentsAsStored},
+}
+
+// ПРЕДМЕТ ВНЕ 1..MaxItemIDLen БАЙТ — ErrInvalidGrant, и выдачи не остаётся.
+// Выдачи пишут и мимо сервиса, и реализация, принявшая такой предмет, зеленит
+// потребителя, которого база отвергнет. Длина в БАЙТАХ: предмет в 65 знаков и
+// 129 байт проверка по символам пропустила бы.
+func suiteRejectsInvalidItem(t *testing.T, store entitlement.Store) {
+	t.Helper()
+	fits := strings.Repeat("я", entitlement.MaxItemIDLen/2)
+	if len(fits) != entitlement.MaxItemIDLen {
+		t.Fatalf("сценарий рассчитан на чётный потолок, а MaxItemIDLen = %d", entitlement.MaxItemIDLen)
+	}
+	subject := uuid.New()
+	mustGrant(t, store, subject, entitlement.Grant{ItemID: fits})
+
+	for _, itemID := range []string{"", fits + "x"} {
+		err := store.Grant(t.Context(), subject, entitlement.Grant{ItemID: itemID}, SuiteNow())
+		if !errors.Is(err, entitlement.ErrInvalidGrant) {
+			t.Fatalf("предмет в %d байт: ожидалась ErrInvalidGrant, получено %v", len(itemID), err)
+		}
+	}
+	if got := openAt(t, store, subject, SuiteNow()); len(got) != 1 {
+		t.Fatalf("отвергнутая выдача оставила след: выдач %d, ожидалась одна законная", len(got))
+	}
 }
 
 // «Ничего не куплено» — это отказ по правилу, а не сбой: ошибка здесь
@@ -105,21 +133,62 @@ func suiteExpiryBoundary(t *testing.T, store entitlement.Store) {
 	}
 }
 
-func suiteRegrantExtends(t *testing.T, store entitlement.Store) {
+// ПОВТОРНАЯ ВЫДАЧА НЕ УДВАИВАЕТ И НИКОГДА НЕ СОКРАЩАЕТ СРОК. Покупки, доехавшие
+// не в том порядке (повтор вебхука, redrive), не отнимают оплаченный доступ:
+// бессрочная с любой стороны даёт бессрочную, из двух сроков остаётся поздний.
+// Момент выдачи обновляется ВСЕГДА — и тогда, когда срок не сдвинулся. Читается
+// после раннего срока: сокращённая выдача там уже закрыта.
+func suiteRegrantNeverShortens(t *testing.T, store entitlement.Store) {
 	t.Helper()
-	subject := uuid.New()
-	first := SuiteNow().Add(time.Hour)
-	second := SuiteNow().Add(48 * time.Hour)
-	mustGrant(t, store, subject, entitlement.Grant{ItemID: SuiteItem, ExpiresAt: &first})
-	mustGrant(t, store, subject, entitlement.Grant{ItemID: SuiteItem, ExpiresAt: &second})
+	early := SuiteNow().Add(time.Hour)
+	late := SuiteNow().Add(48 * time.Hour)
+	firstAt, secondAt := SuiteNow().Add(-2*time.Hour), SuiteNow().Add(-time.Hour)
+	afterEarly := early.Add(time.Hour)
 
-	got := openAt(t, store, subject, first.Add(time.Hour))
-	if len(got) != 1 {
-		t.Fatalf("после повторной выдачи ожидалась одна строка, получено %v", items(got))
+	cases := []struct {
+		name          string
+		first, second *time.Time
+		want          *time.Time
+	}{
+		{name: "ранний срок, потом поздний", first: &early, second: &late, want: &late},
+		{name: "поздний срок, потом ранний", first: &late, second: &early, want: &late},
+		{name: "бессрочная, потом срочная", first: nil, second: &early, want: nil},
+		{name: "срочная, потом бессрочная", first: &early, second: nil, want: nil},
 	}
-	if got[0].ExpiresAt == nil || !got[0].ExpiresAt.Equal(second) {
-		t.Fatalf("повторная выдача не продлила срок: %v", got[0].ExpiresAt)
+	for _, c := range cases {
+		subject := uuid.New()
+		mustGrantAt(t, store, subject, entitlement.Grant{ItemID: SuiteItem, ExpiresAt: c.first}, firstAt)
+		mustGrantAt(t, store, subject, entitlement.Grant{ItemID: SuiteItem, ExpiresAt: c.second}, secondAt)
+
+		got := openAt(t, store, subject, afterEarly)
+		if len(got) != 1 {
+			t.Fatalf("%s: после раннего срока ожидалась одна открытая выдача (сокращённый срок её закрыл бы), получено %v",
+				c.name, items(got))
+		}
+		if !sameExpiry(got[0].ExpiresAt, c.want) {
+			t.Fatalf("%s: срок %s, ожидался %s", c.name, expiryText(got[0].ExpiresAt), expiryText(c.want))
+		}
+		if !sameStoredMoment(got[0].GrantedAt, secondAt) {
+			t.Fatalf("%s: момент выдачи %s, ожидался момент повтора %s", c.name, got[0].GrantedAt, secondAt)
+		}
 	}
+}
+
+// sameExpiry — один и тот же срок; бессрочность сравнивается как значение,
+// срок — как момент из timestamptz.
+func sameExpiry(got, want *time.Time) bool {
+	if got == nil || want == nil {
+		return got == want
+	}
+	return sameStoredMoment(*got, *want)
+}
+
+// expiryText — срок для сообщения: бессрочность называется словом.
+func expiryText(e *time.Time) string {
+	if e == nil {
+		return "бессрочно"
+	}
+	return e.String()
 }
 
 func suiteRevoke(t *testing.T, store entitlement.Store) {
@@ -172,7 +241,7 @@ func suiteOpenReturnsCopy(t *testing.T, store entitlement.Store) {
 	if len(again) != 1 || again[0].ItemID != SuiteItem {
 		t.Fatalf("правка полученного среза изменила хранилище: %v", items(again))
 	}
-	if again[0].ExpiresAt == nil || !again[0].ExpiresAt.Equal(expires) {
+	if again[0].ExpiresAt == nil || !sameStoredMoment(*again[0].ExpiresAt, expires) {
 		t.Fatalf("правка времени через указатель изменила хранилище: %v", again[0].ExpiresAt)
 	}
 }
@@ -195,7 +264,7 @@ func suiteGrantedAtIsTheGivenMoment(t *testing.T, store entitlement.Store) {
 	if len(got) != 1 {
 		t.Fatalf("выдача не отдана: %v", items(got))
 	}
-	if !got[0].GrantedAt.Equal(at) {
+	if !sameStoredMoment(got[0].GrantedAt, at) {
 		t.Fatalf("сохранён момент %s, а передан %s", got[0].GrantedAt, at)
 	}
 }
@@ -214,7 +283,7 @@ func suiteRegrantUpdatesGrantedAt(t *testing.T, store entitlement.Store) {
 	if len(got) != 1 {
 		t.Fatalf("после повторной выдачи ожидалась одна строка, получено %v", items(got))
 	}
-	if !got[0].GrantedAt.Equal(second) {
+	if !sameStoredMoment(got[0].GrantedAt, second) {
 		t.Fatalf("повторная выдача оставила момент %s, ожидался %s", got[0].GrantedAt, second)
 	}
 }
@@ -231,6 +300,42 @@ func suiteCanceledContext(t *testing.T, store entitlement.Store) {
 	if _, err := store.Open(ctx, subject, SuiteNow()); err == nil {
 		t.Fatal("Open на отменённом контексте обязан вернуть ошибку")
 	}
+}
+
+// МОМЕНТЫ ВОЗВРАЩАЮТСЯ ТАК, КАК ИХ ХРАНИТ timestamptz: в UTC и с точностью до
+// микросекунд. Остальные сценарии идут на целых секундах в UTC и этого не
+// видят; здесь моменты с наносекундами и в чужой зоне. Реализация, отдающая их
+// как передали, зеленит у потребителя сравнение меток, которое на базе красное.
+func suiteMomentsAsStored(t *testing.T, store entitlement.Store) {
+	t.Helper()
+	zone := time.FixedZone("UTC+3", 3*60*60)
+	at := SuiteNow().Add(-time.Hour + 123456789*time.Nanosecond).In(zone)
+	expires := SuiteNow().Add(time.Hour + 987654321*time.Nanosecond).In(zone)
+	subject := uuid.New()
+	mustGrantAt(t, store, subject, entitlement.Grant{ItemID: SuiteItem, ExpiresAt: &expires}, at)
+
+	got := openAt(t, store, subject, SuiteNow())
+	if len(got) != 1 || got[0].ExpiresAt == nil {
+		t.Fatalf("выдача со сроком не отдана: %v", items(got))
+	}
+	for _, m := range []struct {
+		what      string
+		got, want time.Time
+	}{
+		{what: "срок", got: *got[0].ExpiresAt, want: expires},
+		{what: "момент выдачи", got: got[0].GrantedAt, want: at},
+	} {
+		if !sameStoredMoment(m.got, m.want) {
+			t.Fatalf("%s: получено %s, ожидалось %s — в UTC и до микросекунд", m.what,
+				m.got.Format(time.RFC3339Nano), m.want.Truncate(time.Microsecond).UTC().Format(time.RFC3339Nano))
+		}
+	}
+}
+
+// sameStoredMoment — got равен want так, как want вернётся из timestamptz:
+// усечённым до микросекунд и в UTC. Голый Equal зоны не видит.
+func sameStoredMoment(got, want time.Time) bool {
+	return got.Location() == time.UTC && got.Equal(want.Truncate(time.Microsecond))
 }
 
 // mustGrant — выдача в момент SuiteNow. Момент называется явно даже там, где

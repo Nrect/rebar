@@ -47,11 +47,20 @@ func scanGrant(row pgx.CollectableRow) (entitlement.Grant, error) {
 
 // ON CONFLICT ПО ИМЕНИ ПЕРВИЧНОГО КЛЮЧА, а не перехват 23505: повтор покупки —
 // штатное событие, а ошибка Postgres перевела бы транзакцию потребителя в
-// aborted вместе с оплатой. Повтор переписывает и срок, и момент выдачи.
-const grantSQL = `INSERT INTO entitlement_grants (subject_id, item_id, expires_at, granted_at)
+// aborted вместе с оплатой.
+//
+// СРОК НИКОГДА НЕ СОКРАЩАЕТСЯ: бессрочная с любой стороны даёт бессрочную, из
+// двух сроков остаётся поздний. Явный CASE, а не GREATEST: тот пропускает NULL
+// и вернул бы срок там, где было бессрочно. Момент выдачи обновляется всегда.
+const grantSQL = `INSERT INTO entitlement_grants AS cur (subject_id, item_id, expires_at, granted_at)
 VALUES ($1, $2, $3, $4)
 ON CONFLICT ON CONSTRAINT ` + uxSubjectItem + ` DO UPDATE
-SET expires_at = EXCLUDED.expires_at, granted_at = EXCLUDED.granted_at`
+SET expires_at = CASE
+		WHEN cur.expires_at IS NULL OR EXCLUDED.expires_at IS NULL THEN NULL
+		WHEN EXCLUDED.expires_at > cur.expires_at THEN EXCLUDED.expires_at
+		ELSE cur.expires_at
+	END,
+	granted_at = EXCLUDED.granted_at`
 
 // Grant — выдать предмет в момент at; g.GrantedAt на записи игнорируется.
 func (s *Store) Grant(ctx context.Context, subjectID uuid.UUID, g entitlement.Grant, at time.Time) error {
