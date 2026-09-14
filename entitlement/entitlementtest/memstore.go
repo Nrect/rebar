@@ -138,13 +138,21 @@ func (m *MemStore) Grant(ctx context.Context, subjectID uuid.UUID, g entitlement
 		m.grants[subjectID] = map[string]entitlement.Grant{}
 	}
 	stored := clone(g)
-	stored.GrantedAt = at
+	if stored.ExpiresAt != nil {
+		*stored.ExpiresAt = dbMoment(*stored.ExpiresAt)
+	}
+	stored.GrantedAt = dbMoment(at)
 	if prev, ok := m.grants[subjectID][g.ItemID]; ok {
 		stored.ExpiresAt = laterExpiry(prev.ExpiresAt, stored.ExpiresAt)
 	}
 	m.grants[subjectID][g.ItemID] = stored
 	return nil
 }
+
+// dbMoment — момент так, как его вернёт круг через timestamptz: UTC и
+// микросекунды. Двойник, хранящий наносекунды и зону, зеленит у потребителя
+// сравнение меток, которое на базе красное.
+func dbMoment(t time.Time) time.Time { return t.Truncate(time.Microsecond).UTC() }
 
 // laterExpiry — срок после повторной выдачи: бессрочная с любой стороны даёт
 // бессрочную, из двух сроков остаётся поздний. Та же развилка, что CASE у
