@@ -46,6 +46,25 @@ func TestEveryErrorHasKind_FindsEverySentinelWithoutKind(t *testing.T) {
 	}, rec.errors)
 }
 
+// Отказ от класса — директива с доводом над объявлением. Без довода и при
+// классе — свои находки, отличные от «без класса»; директива над блоком
+// var ( … ) и с пробелом после // не действует.
+func TestEveryErrorHasKind_NoKindDirective(t *testing.T) {
+	t.Parallel()
+
+	rec := &recorder{}
+	everyErrorHasKind(rec, filepath.Join("testdata", "kinds", "nokind"), nil)
+
+	assert.Empty(t, rec.fatals)
+	assert.Equal(t, []string{
+		"nokind.go:16: ErrNoReason — " + msgNoKindNoReason,
+		"nokind.go:19: ErrBothWays — " + msgNoKindHasKind,
+		"nokind.go:27: ErrWrappedRefused — " + msgNoKindHasKind,
+		"nokind.go:32: ErrUnderBlockDirective — " + msgErrorsNew,
+		"nokind.go:36: ErrSpaced — " + msgErrorsNew,
+	}, rec.errors)
+}
+
 func TestEveryErrorHasKind_CleanPackagePasses(t *testing.T) {
 	t.Parallel()
 

@@ -49,6 +49,10 @@ func KindStatusTable(t *testing.T) {
 // значения или форма, класс которой не определить. Неэкспортируемые,
 // _test.go, testdata, vendor и пути из allow (как у NoDirectHTTPErrors) не
 // проверяются.
+//
+// Отказ от класса — директива строкой над объявлением, по образцу
+// authz.Rule{Public, Why}: «//errs:nokind <почему класса нет>». Без довода и
+// при классе — находки; над блоком var ( … ) директива не действует.
 func EveryErrorHasKind(t *testing.T, root string, allow ...string) {
 	t.Helper()
 	everyErrorHasKind(t, root, allow)

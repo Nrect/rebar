@@ -21,3 +21,8 @@ var (
 	errInternal  = errors.New("good: internal")
 	DefaultLimit = 10
 )
+
+// ErrRefused — отказ от класса с доводом: не находка.
+//
+//errs:nokind класс зависит от вызывающего
+var ErrRefused = errors.New("good: refused")

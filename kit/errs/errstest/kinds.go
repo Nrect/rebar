@@ -18,15 +18,20 @@ import (
 // копирования kit в чужой модуль литерал пути молча выключил бы узнавание.
 var errsImportPath = reflect.TypeFor[errs.KindError]().PkgPath()
 
+// noKindDirective — отказ от класса с доводом, строкой над объявлением.
+const noKindDirective = "//errs:nokind"
+
 // Находки EveryErrorHasKind.
 const (
-	msgNoValue      = "объявлена без значения — класса нет"
-	msgErrorsNew    = "errors.New без класса: объяви через errs.Kinded(errs.Kind…, \"…\")"
-	msgErrorfNoWrap = "fmt.Errorf без %w — класса нет: объяви через errs.Kinded или оберни sentinel с классом"
-	msgKindUnknown  = "класс errs.KindUnknown — это отсутствие класса"
-	msgUnknownCtor  = "errs.Unknown — класс KindUnknown, то есть класса нет"
-	msgKindErrorLit = "errs.KindError собрана литералом — у нулевого значения класса нет: объяви через errs.Kinded"
-	msgUnknownForm  = "класс по исходнику не определить: узнаются errs.Kinded, конструкторы errs и обёртка fmt.Errorf(\"%w: …\", ErrX)"
+	msgNoValue        = "объявлена без значения — класса нет"
+	msgErrorsNew      = "errors.New без класса: объяви через errs.Kinded(errs.Kind…, \"…\")"
+	msgErrorfNoWrap   = "fmt.Errorf без %w — класса нет: объяви через errs.Kinded или оберни sentinel с классом"
+	msgKindUnknown    = "класс errs.KindUnknown — это отсутствие класса"
+	msgUnknownCtor    = "errs.Unknown — класс KindUnknown, то есть класса нет"
+	msgKindErrorLit   = "errs.KindError собрана литералом — у нулевого значения класса нет: объяви через errs.Kinded"
+	msgUnknownForm    = "класс по исходнику не определить: узнаются errs.Kinded, конструкторы errs и обёртка fmt.Errorf(\"%w: …\", ErrX)"
+	msgNoKindNoReason = "//errs:nokind без довода — отказ от класса требует причины: //errs:nokind <почему класса нет>"
+	msgNoKindHasKind  = "//errs:nokind при классе — два способа сказать одно: убери директиву (у обёртки %w класс у обёрнутой)"
 )
 
 // importNames — локальные имена импортов, из которых собирают sentinel; "" —
@@ -47,7 +52,7 @@ func everyErrorHasKind(rep reporter, root string, allow []string) {
 // checkFileKinds — экспортируемые package-level var одного файла.
 func checkFileKinds(rep reporter, name, rel string) error {
 	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, name, nil, parser.SkipObjectResolution)
+	file, err := parser.ParseFile(fset, name, nil, parser.ParseComments|parser.SkipObjectResolution)
 	if err != nil {
 		return err
 	}
@@ -59,28 +64,66 @@ func checkFileKinds(rep reporter, name, rel string) error {
 		}
 		for _, spec := range gen.Specs {
 			if values, isValue := spec.(*ast.ValueSpec); isValue {
-				imports.reportSpec(rep, fset, rel, values)
+				imports.reportSpec(rep, fset, rel, gen, values)
 			}
 		}
 	}
 	return nil
 }
 
-// reportSpec — sentinel'ы одного объявления: ErrA, ErrB = a, b делится по индексу.
-func (im importNames) reportSpec(rep reporter, fset *token.FileSet, rel string, spec *ast.ValueSpec) {
+// reportSpec — sentinel'ы одного объявления: ErrA, ErrB = a, b делится по
+// индексу, директива над объявлением относится ко всем его именам.
+func (im importNames) reportSpec(rep reporter, fset *token.FileSet, rel string, gen *ast.GenDecl, spec *ast.ValueSpec) {
+	reason, refused := noKindOf(gen, spec)
 	for i, ident := range spec.Names {
 		if !ident.IsExported() {
 			continue
 		}
 		problem, known := im.verdict(valueOf(spec, i))
-		if problem == "" {
-			continue
-		}
 		if !known && !isErrName(ident.Name) {
 			continue // экспортируемая переменная другого рода
 		}
+		if problem = withNoKind(problem, reason, refused); problem == "" {
+			continue
+		}
 		rep.Errorf("%s:%d: %s — %s", rel, fset.Position(ident.Pos()).Line, ident.Name, problem)
 	}
+}
+
+// noKindOf — директива //errs:nokind над объявлением и её довод. У var без
+// скобок комментарий висит на всём объявлении, в блоке var ( … ) — на своей
+// строке: директива над блоком не прячет его будущие sentinel'ы.
+func noKindOf(gen *ast.GenDecl, spec *ast.ValueSpec) (reason string, found bool) {
+	doc := spec.Doc
+	if doc == nil && !gen.Lparen.IsValid() {
+		doc = gen.Doc
+	}
+	if doc == nil {
+		return "", false
+	}
+	for _, comment := range doc.List {
+		fields := strings.Fields(comment.Text)
+		if fields[0] == noKindDirective {
+			return strings.Join(fields[1:], " "), true
+		}
+	}
+	return "", false
+}
+
+// withNoKind — находка с учётом отказа от класса, по образцу authz.Rule{Public,
+// Why}: отказ без довода — своя находка, отказ при классе — тоже, отказ с
+// доводом снимает находку «класса нет».
+func withNoKind(problem, reason string, refused bool) string {
+	if !refused {
+		return problem
+	}
+	if reason == "" {
+		return msgNoKindNoReason
+	}
+	if problem == "" {
+		return msgNoKindHasKind
+	}
+	return ""
 }
 
 // valueOf — значение i-го имени; nil — значения нет. Одно значение на
