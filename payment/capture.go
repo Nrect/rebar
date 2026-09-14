@@ -2,6 +2,7 @@ package payment
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -154,14 +155,21 @@ func cancelable(in Intent) (Reason, error) {
 // приходит из metadata и доверять ему нельзя. Но ответ ПРО ДРУГОЙ платёж не
 // применяется: это либо перепутанные магазины, либо баг адаптера, и в обоих
 // случаях зачисление ушло бы не тому.
+//
+// Непригодный ответ провайдера на НАШ вызов — его аномалия, а не «вы ошиблись»:
+// под ErrUnavailable (503), как мусорный ответ CreatePayment в checkCreated.
+// errors.Is на ErrMalformedEvent и Reason остаются.
 func (s *Service) applyAnswer(ctx context.Context, ev Event, intent Intent) (Intent, Reason, error) {
 	if ev.ProviderPaymentID != "" && ev.ProviderPaymentID != intent.ProviderPaymentID {
-		return intent, ReasonMalformedEvent, fmt.Errorf("%w: asked about %s, got %s",
-			ErrMalformedEvent, intent.ProviderPaymentID, ev.ProviderPaymentID)
+		return intent, ReasonMalformedEvent, fmt.Errorf("%w: asked about %s, got %s: %w",
+			ErrUnavailable, intent.ProviderPaymentID, ev.ProviderPaymentID, ErrMalformedEvent)
 	}
 	ev.IntentID = intent.ID
 
 	res, reason, err := s.apply(ctx, ev)
+	if errors.Is(err, ErrMalformedEvent) {
+		err = fmt.Errorf("%w: provider answer: %w", ErrUnavailable, err)
+	}
 	if err != nil {
 		return intent, reason, err
 	}

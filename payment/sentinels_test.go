@@ -41,7 +41,7 @@ func TestSentinelKinds(t *testing.T) {
 		{"ErrIdempotencyKeyReused", payment.ErrIdempotencyKeyReused, errs.KindConflict, "payment: "},
 		{"ErrIdempotencyRace", payment.ErrIdempotencyRace, errs.KindConflict, "payment: "},
 		{"ErrReferenceBusy", payment.ErrReferenceBusy, errs.KindConflict, "payment: "},
-		{"ErrInvalidRequest", payment.ErrInvalidRequest, errs.KindIncorrectInput, "payment: "},
+		{"ErrInvalidRequest", payment.ErrInvalidRequest, errs.KindUnknown, "payment: "},
 		{"ErrInvalidMoney", payment.ErrInvalidMoney, errs.KindIncorrectInput, "payment: "},
 		{"ErrBadStatus", payment.ErrBadStatus, errs.KindUnknown, "payment: "},
 		{"ErrBadTransition", payment.ErrBadTransition, errs.KindUnknown, "payment: "},
@@ -194,4 +194,72 @@ func TestRefund_BrokenLedgerIsUnavailable(t *testing.T) {
 		assert.Equal(t, payment.ReasonStoreError, reason)
 		assert.Equal(t, errs.KindUnavailable, errs.KindOf(err))
 	})
+}
+
+// Непригодный ответ провайдера на НАШ вызов — его аномалия, 503, как мусорный
+// ответ CreatePayment; тот же изъян в теле вебхука — 400. errors.Is и Reason у
+// обоих прежние.
+func TestProviderAnswerAnomalyIsUnavailable(t *testing.T) {
+	t.Parallel()
+
+	t.Run("ответ сверки про чужой платёж", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t)
+		in := h.start(t, startReq())
+		foreign := h.event(in, payment.EventSucceeded, in.AmountMinor)
+		foreign.ProviderPaymentID = "pay-someone-else"
+		h.prov.SetPayment(in.ProviderPaymentID, foreign)
+
+		reason, err := h.svc.Reconcile(context.Background(), in.ID)
+
+		require.ErrorIs(t, err, payment.ErrMalformedEvent)
+		assert.Equal(t, payment.ReasonMalformedEvent, reason)
+		assert.Equal(t, errs.KindUnavailable, errs.KindOf(err))
+	})
+
+	t.Run("ответ сверки без id события", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t)
+		in := h.start(t, startReq())
+		ev := h.event(in, payment.EventSucceeded, in.AmountMinor)
+		ev.ProviderEventID = ""
+		h.prov.SetPayment(in.ProviderPaymentID, ev)
+
+		reason, err := h.svc.Reconcile(context.Background(), in.ID)
+
+		require.ErrorIs(t, err, payment.ErrMalformedEvent)
+		assert.Equal(t, payment.ReasonMalformedEvent, reason)
+		assert.Equal(t, errs.KindUnavailable, errs.KindOf(err))
+	})
+
+	t.Run("вебхук без id события — 400", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t)
+		in := h.start(t, startReq())
+		ev := h.event(in, payment.EventSucceeded, in.AmountMinor)
+		ev.ProviderEventID = ""
+		h.prov.Push(ev)
+
+		_, reason, err := h.svc.HandleWebhook(context.Background(), webhook())
+
+		require.ErrorIs(t, err, payment.ErrMalformedEvent)
+		assert.Equal(t, payment.ReasonMalformedEvent, reason)
+		assert.Equal(t, errs.KindIncorrectInput, errs.KindOf(err))
+	})
+}
+
+// Эхо возврата с негодной суммой — аномалия провайдера: у ErrAmountMismatch
+// класса нет, и класс 400 причины сквозь неё не проступает.
+func TestRefund_ProviderEchoWithBadMoneyHasNoClientKind(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	in := h.sold(t)
+	h.prov.SetRefundEcho(-1)
+
+	_, reason, err := h.svc.Refund(context.Background(), refundReq(in, 50000, "ref-1"))
+
+	require.ErrorIs(t, err, payment.ErrAmountMismatch)
+	assert.Equal(t, payment.ReasonAmountMismatch, reason)
+	assert.Equal(t, errs.KindUnknown, errs.KindOf(err))
 }

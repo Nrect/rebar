@@ -122,13 +122,15 @@ func checkRefundEcho(ev Event, expectedMinor int64, currency string) error {
 	if ev.AmountMinor == 0 && ev.Currency == "" {
 		return nil
 	}
+	// Причина NewMoney — только текстом: через %w её класс 400 проступил бы
+	// сквозь ErrAmountMismatch без класса (ADR-0007).
 	expected, err := NewMoney(expectedMinor, currency)
 	if err != nil {
-		return fmt.Errorf("%w: refund amount %d %s: %w", ErrAmountMismatch, expectedMinor, currency, err)
+		return fmt.Errorf("%w: refund amount %d %s: %s", ErrAmountMismatch, expectedMinor, currency, err.Error())
 	}
 	got, err := ev.Money()
 	if err != nil {
-		return fmt.Errorf("%w: provider refund event %s: %w", ErrAmountMismatch, ev.ProviderEventID, err)
+		return fmt.Errorf("%w: provider refund event %s: %s", ErrAmountMismatch, ev.ProviderEventID, err.Error())
 	}
 	if !expected.Equal(got) {
 		return fmt.Errorf("%w: asked to refund %s, provider refunded %s", ErrAmountMismatch, expected, got)

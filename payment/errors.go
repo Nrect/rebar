@@ -37,9 +37,9 @@ var (
 
 	// ErrInvalidRequest — покупка не собирается: нет плательщика, негодная
 	// ссылка потребителя, состав не сходится с итогом или способ оплаты не из
-	// Config.Methods; у Cancel — платежа у провайдера ещё нет. Наружу 400:
-	// главный путь — запрос покупки.
-	ErrInvalidRequest = errs.Kinded(errs.KindIncorrectInput, "payment: purchase request is not sellable as given")
+	// Config.Methods; у Cancel — платежа у провайдера ещё нет.
+	//errs:nokind класс зависит от пути: плательщик и состав — код потребителя (500), способ оплаты — клиент (400), у Cancel — состояние (409)
+	ErrInvalidRequest = errors.New("payment: purchase request is not sellable as given")
 	// ErrInvalidMoney — сумма отрицательна, превышает потолок или пришла в чужой
 	// валюте. Наружу 400: главный путь — запрос покупки и возврата; негодная
 	// книга приходит под ErrUnavailable.

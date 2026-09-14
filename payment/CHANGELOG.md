@@ -23,14 +23,14 @@
   |---|---|---|
   | `ErrIdempotencyKeyInvalid`, `ErrInvalidSignature` | 400 `incorrect-input` | назван в комментарии: ключ и тело вебхука приходят от клиента |
   | `ErrMalformedEvent` | 400 `incorrect-input` | контракт `HandleWebhook`: тело негодно, повтор не поможет |
-  | `ErrInvalidRequest`, `ErrInvalidMoney` | 400 `incorrect-input` | главный путь — запрос покупки и возврата |
+  | `ErrInvalidMoney` | 400 `incorrect-input` | главный путь — запрос покупки и возврата |
   | `ErrUnknownIntent` | 404 `not-found` | запрос по id намерения, которого нет; событие-орфан ошибки не получает |
   | `ErrIdempotencyKeyReused`, `ErrReferenceBusy`, `ErrRefundTooLarge` | 409 `conflict` | назван в комментарии |
   | `ErrIdempotencyRace`, `ErrIntentClosed`, `ErrStatusConflict`, `ErrNotSettled`, `ErrProviderRejected` | 409 `conflict` | не сошлось состояние ключа, попытки, холда или намерения, а не вход |
   | `ErrUnsupported` | 501 `not-implemented` | операции у адаптера нет по конструкции: ретраем не чинится, а 501 клиенты не повторяют |
   | `ErrUnavailable` | 503 `unavailable` | назван в комментарии: решение не принято, повтор осмыслен |
   | `ErrBadStatus`, `ErrBadTransition`, `ErrReceiptRequired`, `ErrNoActor` | нет, `//errs:nokind` | статус из базы, переход, чек и автора задаёт код, а не клиент: негодные — дефект, то есть 500 |
-  | `ErrAmountMismatch`, `ErrReceiptInvalid` | нет, `//errs:nokind` | класс зависит от пути (ADR-0007, «Спорные назначения») |
+  | `ErrAmountMismatch`, `ErrReceiptInvalid`, `ErrInvalidRequest` | нет, `//errs:nokind` | класс зависит от пути (ADR-0007, «Спорные назначения»): у `ErrInvalidRequest` плательщика и состав задаёт код потребителя, способ оплаты — клиент, у `Cancel` это состояние |
   | `prorate.ErrInvalidPeriod`, `prorate.ErrInvalidAmount`, `prorate.ErrInvalidUnit` | нет, `//errs:nokind` | срок, сумму и единицу считает код потребителя из своих данных: негодные — дефект, то есть 500 |
 
 - **`Refund` по негодной книге отвечает 503, а не классом вложенной
@@ -40,6 +40,16 @@
   оплачено», второе — 400 «вы ошиблись» вместо разбора как инцидента. Теперь
   обе под `ErrUnavailable`; `errors.Is` на прежнюю sentinel и `Reason`
   (`not_settled`, `store_error`) не изменились.
+- **Непригодный ответ провайдера на наш вызов отвечает 503, а не 400.** Ответ
+  `Capture`, `Cancel` и сверки про чужой платёж или событие без id приезжал
+  голой `ErrMalformedEvent`, то есть 400 оператору за аномалию провайдера.
+  Теперь он под `ErrUnavailable`, как мусорный ответ `CreatePayment`;
+  `errors.Is` на `ErrMalformedEvent` и `Reason` (`malformed_event`) прежние.
+  Негодное тело вебхука — по-прежнему 400.
+- **Эхо возврата с негодной суммой больше не отвечает 400.** `ErrAmountMismatch`
+  без класса заворачивала ошибку `NewMoney` через `%w`, и сквозь неё проступал
+  класс `ErrInvalidMoney`. Причина теперь только в тексте, и `errors.Is(err,
+  ErrInvalidMoney)` на этом пути — `false`.
 - **Ломающее для кода, который сравнивал тексты sentinel, присваивал их,
   выводил из них тип переменной или звал `SetClock(nil)`.** Замена:
 
