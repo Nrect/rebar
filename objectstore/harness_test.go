@@ -36,7 +36,7 @@ func testUploaderConfig() objectstore.UploaderConfig {
 func newUploader(t *testing.T, cfg objectstore.UploaderConfig) (*objectstore.Uploader, *objectstoretest.MemStore) {
 	t.Helper()
 	store := objectstoretest.NewMemStore()
-	store.Now = func() time.Time { return testNow }
+	store.SetClock(func() time.Time { return testNow })
 	up := objectstore.NewUploader(store, cfg)
 	up.SetIDs(func() uuid.UUID { return fixedID })
 	return up, store

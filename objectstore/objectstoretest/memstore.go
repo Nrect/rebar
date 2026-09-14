@@ -31,24 +31,37 @@ type row struct {
 
 // MemStore — objectstore.Store в памяти: та же проверка ключа, что у
 // адаптеров, перезапись по ключу, идемпотентное удаление и пагинация с
-// курсором. Потокобезопасен; поля-настройки задаются до начала прогона.
+// курсором. Потокобезопасен целиком, включая настройку.
 type MemStore struct {
 	mu   sync.Mutex
 	rows map[string]row
-
-	// Err — ошибка из любого метода: для fail-closed тестов.
-	Err error
-	// Now — часы двойника: ими проставляется Object.ModifiedAt. Тесты ядра
-	// идут на управляемых часах (CONVENTIONS §5).
-	Now func() time.Time
+	err  error
+	now  func() time.Time
 }
 
 // NewMemStore — пустое хранилище на настоящих часах.
 func NewMemStore() *MemStore {
 	return &MemStore{
 		rows: map[string]row{},
-		Now:  func() time.Time { return time.Now().UTC() },
+		now:  func() time.Time { return time.Now().UTC() },
 	}
+}
+
+// SetErr — ошибка из любого метода порта: для fail-closed тестов; nil снимает.
+func (m *MemStore) SetErr(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.err = err
+}
+
+// SetClock — часы двойника: ими проставляется Object.ModifiedAt, тесты ядра
+// идут на управляемых (CONVENTIONS §5). Зовутся под замком двойника, изнутри
+// Put, и трогать двойник не вправе; nil вместо часов — поломка стенда, и Put
+// ответит ErrDoubleBroken.
+func (m *MemStore) SetClock(now func() time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.now = now
 }
 
 // Put кладёт объект, перезаписывая существующий под тем же ключом.
@@ -69,18 +82,18 @@ func (m *MemStore) Put(_ context.Context, req objectstore.PutRequest) (objectsto
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.Err != nil {
-		return objectstore.Object{}, m.Err
+	if m.err != nil {
+		return objectstore.Object{}, m.err
 	}
-	if m.Now == nil {
-		return objectstore.Object{}, fmt.Errorf("%w: MemStore.Now must not be nil", ErrDoubleBroken)
+	if m.now == nil {
+		return objectstore.Object{}, fmt.Errorf("%w: MemStore.SetClock got nil", ErrDoubleBroken)
 	}
 	obj := objectstore.Object{
 		Key:         req.Key,
 		Size:        int64(len(body)),
 		ContentType: req.ContentType,
 		ETag:        etag(body),
-		ModifiedAt:  m.Now().UTC(),
+		ModifiedAt:  m.now().UTC(),
 	}
 	m.rows[req.Key] = row{object: obj, body: bytes.Clone(body)}
 	return obj, nil
@@ -93,8 +106,8 @@ func (m *MemStore) Delete(_ context.Context, key string) error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.Err != nil {
-		return m.Err
+	if m.err != nil {
+		return m.err
 	}
 	delete(m.rows, key)
 	return nil
@@ -106,8 +119,8 @@ func (m *MemStore) Delete(_ context.Context, key string) error {
 func (m *MemStore) List(_ context.Context, prefix, cursor string, limit int) (objectstore.Page, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.Err != nil {
-		return objectstore.Page{}, m.Err
+	if m.err != nil {
+		return objectstore.Page{}, m.err
 	}
 	if limit <= 0 {
 		return objectstore.Page{}, nil
@@ -143,8 +156,8 @@ func (m *MemStore) Presign(_ context.Context, key string, method objectstore.Met
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.Err != nil {
-		return "", m.Err
+	if m.err != nil {
+		return "", m.err
 	}
 	return baseURL + "/" + pathEscapeKey(key) +
 		"?method=" + string(method) +

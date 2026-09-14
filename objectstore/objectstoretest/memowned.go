@@ -8,14 +8,11 @@ import (
 )
 
 // MemOwned — objectstore.Owned в памяти: набор ключей, на которые у
-// потребителя есть строка. Потокобезопасен.
+// потребителя есть строка. Потокобезопасен целиком, включая настройку.
 type MemOwned struct {
 	mu    sync.Mutex
 	owned map[string]bool
-
-	// Err — ошибка IsOwned: ею проверяется, что прогон сборщика ОСТАНАВЛИВАЕТСЯ,
-	// а не считает сиротами всех.
-	Err error
+	err   error
 	// calls — сколько раз спросили; по нему видно, дошёл ли прогон до ключа.
 	calls int
 }
@@ -29,13 +26,21 @@ func NewMemOwned(keys ...string) *MemOwned {
 	return &MemOwned{owned: owned}
 }
 
+// SetErr — ошибка IsOwned: ею проверяется, что прогон сборщика
+// ОСТАНАВЛИВАЕТСЯ, а не считает сиротами всех; nil снимает.
+func (o *MemOwned) SetErr(err error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.err = err
+}
+
 // IsOwned — есть ли у потребителя строка на этот ключ.
 func (o *MemOwned) IsOwned(_ context.Context, key string) (bool, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.calls++
-	if o.Err != nil {
-		return false, o.Err
+	if o.err != nil {
+		return false, o.err
 	}
 	return o.owned[key], nil
 }

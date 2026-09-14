@@ -83,7 +83,7 @@ func TestDoubles_AreRaceFree(t *testing.T) {
 func TestMemStore_OwnErrorIsDistinguishable(t *testing.T) {
 	t.Parallel()
 	store := objectstoretest.NewMemStore()
-	store.Now = nil
+	store.SetClock(nil)
 	body := objectstoretest.PNG(32)
 
 	_, err := store.Put(t.Context(), objectstore.PutRequest{
@@ -94,12 +94,12 @@ func TestMemStore_OwnErrorIsDistinguishable(t *testing.T) {
 	assert.NotErrorIs(t, err, objectstore.ErrUnavailable, "поломка стенда не должна выглядеть сбоем хранилища")
 }
 
-// Инъекция отказа — полем, а не подменой метода.
-func TestMemStore_ErrFieldFailsEveryMethod(t *testing.T) {
+// Инъекция отказа — методом SetErr, а не подменой метода.
+func TestMemStore_SetErrFailsEveryMethod(t *testing.T) {
 	t.Parallel()
 	store := objectstoretest.NewMemStore()
 	boom := errors.New("хранилище недоступно")
-	store.Err = boom
+	store.SetErr(boom)
 	body := objectstoretest.PNG(32)
 
 	_, putErr := store.Put(t.Context(), objectstore.PutRequest{
@@ -120,7 +120,7 @@ func TestMemStore_UsesInjectedClock(t *testing.T) {
 	t.Parallel()
 	moment := time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)
 	store := objectstoretest.NewMemStore()
-	store.Now = func() time.Time { return moment }
+	store.SetClock(func() time.Time { return moment })
 	body := objectstoretest.PNG(32)
 
 	obj, err := store.Put(t.Context(), objectstore.PutRequest{
