@@ -21,8 +21,8 @@ import (
 var ErrIDReused = errors.New("mailtest: envelope id is already stored under a different dedup key")
 
 // MemStore — mail.Store в памяти: настоящая уникальность DedupKey, аренда и
-// SKIP-LOCKED-семантика, стирание тела в терминальном статусе. Потокобезопасен
-// целиком, включая настройку.
+// SKIP-LOCKED-семантика, стирание тела в терминальном статусе, моменты как в
+// timestamptz. Потокобезопасен целиком, включая настройку.
 type MemStore struct {
 	mu   sync.Mutex
 	rows map[uuid.UUID]mail.Envelope
@@ -65,7 +65,7 @@ func (m *MemStore) Enqueue(_ context.Context, env mail.Envelope) (mail.EnqueueRe
 	if _, taken := m.rows[env.ID]; taken {
 		return mail.EnqueueResult{}, fmt.Errorf("%w: %s", ErrIDReused, env.ID)
 	}
-	row := copyEnvelope(env)
+	row := asStored(env)
 	row.Status, row.Reclaimed = mail.StatusPending, false
 	m.rows[env.ID] = row
 	m.keys[env.DedupKey] = env.ID
@@ -93,9 +93,9 @@ func (m *MemStore) Claim(_ context.Context, now time.Time, lease time.Duration, 
 	for _, id := range due {
 		row := m.rows[id]
 		reclaimed := row.Status == mail.StatusSending
-		lockedUntil := now.Add(lease)
+		lockedUntil := dbMoment(now.Add(lease))
 		row.Status, row.Attempts = mail.StatusSending, row.Attempts+1
-		row.LockedUntil, row.UpdatedAt = &lockedUntil, now
+		row.LockedUntil, row.UpdatedAt = &lockedUntil, dbMoment(now)
 		m.rows[id] = row
 
 		out := copyEnvelope(row)
@@ -105,11 +105,14 @@ func (m *MemStore) Claim(_ context.Context, now time.Time, lease time.Duration, 
 	return claimed, nil
 }
 
-// dueIDs — кандидаты к отправке в порядке (NextAttemptAt, ID).
+// dueIDs — кандидаты к отправке в порядке (NextAttemptAt, ID). now усечён, как
+// его усечёт драйвер: аренда, истекающая в ту же микросекунду, для timestamptz
+// ещё жива.
 func (m *MemStore) dueIDs(now time.Time) []uuid.UUID {
+	at := dbMoment(now)
 	due := make([]uuid.UUID, 0, len(m.rows))
 	for id, row := range m.rows {
-		if claimable(row, now) {
+		if claimable(row, at) {
 			due = append(due, id)
 		}
 	}
@@ -150,10 +153,10 @@ func (m *MemStore) Finish(_ context.Context, req mail.FinishRequest) error {
 	if !ok || row.Status != mail.StatusSending {
 		return fmt.Errorf("%w: mailtest: row %s is not in sending", mail.ErrUnavailable, req.ID)
 	}
-	row.LastError, row.Transport, row.UpdatedAt = req.Error, req.Transport, req.Now
+	row.LastError, row.Transport, row.UpdatedAt = req.Error, req.Transport, dbMoment(req.Now)
 	row.LockedUntil = nil
 	if req.Outcome == mail.FinishRetry {
-		row.Status, row.NextAttemptAt = mail.StatusPending, req.NextAttemptAt
+		row.Status, row.NextAttemptAt = mail.StatusPending, dbMoment(req.NextAttemptAt)
 		m.rows[req.ID] = row
 		return nil
 	}
@@ -174,7 +177,7 @@ func finishTerminal(row mail.Envelope, status mail.Status, req mail.FinishReques
 		row.FailReason = req.FailReason
 	}
 	if status == mail.StatusSent {
-		sentAt := req.Now
+		sentAt := dbMoment(req.Now)
 		row.SentAt = &sentAt
 	}
 	row.Subject, row.Text, row.HTML, row.Headers = "", "", "", nil
@@ -235,9 +238,11 @@ func (m *MemStore) Purge(_ context.Context, before time.Time, limit int) (int, e
 	if limit <= 0 {
 		return 0, nil
 	}
+	// Отметка усечена, как её усечёт драйвер: строгое «раньше» — на микросекундах.
+	cutoff := dbMoment(before)
 	stale := make([]uuid.UUID, 0, len(m.rows))
 	for id, row := range m.rows {
-		if row.Status.Terminal() && row.UpdatedAt.Before(before) {
+		if row.Status.Terminal() && row.UpdatedAt.Before(cutoff) {
 			stale = append(stale, id)
 		}
 	}
@@ -295,6 +300,31 @@ func copyEnvelope(env mail.Envelope) mail.Envelope {
 	out.NotAfter = copyTime(env.NotAfter)
 	out.SentAt = copyTime(env.SentAt)
 	return out
+}
+
+// asStored — копия строки с моментами так, как их хранит timestamptz.
+func asStored(env mail.Envelope) mail.Envelope {
+	row := copyEnvelope(env)
+	row.NextAttemptAt = dbMoment(row.NextAttemptAt)
+	row.CreatedAt = dbMoment(row.CreatedAt)
+	row.UpdatedAt = dbMoment(row.UpdatedAt)
+	row.LockedUntil = dbMomentPtr(row.LockedUntil)
+	row.NotAfter = dbMomentPtr(row.NotAfter)
+	row.SentAt = dbMomentPtr(row.SentAt)
+	return row
+}
+
+// dbMoment — момент так, как его вернёт круг через timestamptz: UTC и
+// микросекунды. Двойник, хранящий наносекунды и зону, зеленит у потребителя
+// сравнение меток, которое на базе красное.
+func dbMoment(t time.Time) time.Time { return t.Truncate(time.Microsecond).UTC() }
+
+func dbMomentPtr(t *time.Time) *time.Time {
+	if t == nil {
+		return nil
+	}
+	moment := dbMoment(*t)
+	return &moment
 }
 
 func copyTime(t *time.Time) *time.Time {

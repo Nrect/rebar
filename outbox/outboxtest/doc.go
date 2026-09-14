@@ -9,9 +9,9 @@
 //
 //   - MemStore — outbox.Store в памяти: уникальность (Kind, DedupKey), аренда
 //     со SKIP-LOCKED-семантикой и Reclaimed, fencing по claim_token,
-//     сохранение payload в failed; SetErr и SetFinishErr для fail-closed
-//     тестов, SetAfterHandle для имитации убитого процесса, Rows и Get для
-//     проверок.
+//     сохранение payload в failed, моменты как в timestamptz (UTC,
+//     микросекунды); SetErr и SetFinishErr для fail-closed тестов,
+//     SetAfterHandle для имитации убитого процесса, Rows и Get для проверок.
 //   - RecordingHandler — записывающий outbox.Handler: FailFor (временный
 //     сбой), PermanentFor, ThrottleFor, SkipFor, PanicFor по AggregateID или
 //     Kind, SetHook для таймаутов, Handled для «ровно один раз». Если

@@ -64,6 +64,10 @@ var storeScenarios = []storeScenario{
 	{name: "Redrive только из failed", run: suiteRedrive},
 	{name: "возраст считается по готовым строкам", run: suiteStats},
 	{name: "ListFailed отдаёт dead-letter с payload", run: suiteListFailed},
+	{name: "моменты возвращаются как из timestamptz: UTC и микросекунды", run: suiteMomentsAsStored},
+	{name: "моменты исходов и Redrive хранятся как в timestamptz", run: suiteOutcomeMomentsAsStored},
+	{name: "аренда истекает по микросекундам timestamptz", run: suiteLeaseInMicroseconds},
+	{name: "Purge сравнивает по микросекундам timestamptz", run: suitePurgeInMicroseconds},
 }
 
 func suiteDuplicate(t *testing.T, store outbox.Store) {
