@@ -9,8 +9,10 @@ import (
 
 var (
 	// ErrAttemptsExhausted — попытки кончились; последняя причина обёрнута %w.
+	//errs:nokind класс у обёрнутой причины: на обёртке он перекрыл бы её класс в errs.KindOf
 	ErrAttemptsExhausted = errors.New("retry: attempts exhausted")
 	// ErrRetryAfterTooLong — провайдер просит ждать дольше Policy.MaxRetryAfter.
+	//errs:nokind класс у обёрнутой причины: на обёртке он перекрыл бы её класс в errs.KindOf
 	ErrRetryAfterTooLong = errors.New("retry: Retry-After exceeds policy limit")
 )
 

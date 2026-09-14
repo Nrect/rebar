@@ -9,6 +9,8 @@ import (
 
 // ErrEmptyKey — ключ не вычислен. Отдельная ошибка, потому что это дефект
 // вызывающего, а не превышение лимита.
+//
+//errs:nokind дефект вызывающего — это 500, то есть отсутствие класса
 var ErrEmptyKey = errors.New("ratelimit: key must not be empty")
 
 // Limiter — token bucket на ключ в памяти процесса. Потокобезопасен.

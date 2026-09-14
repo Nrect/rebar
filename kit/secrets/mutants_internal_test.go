@@ -9,11 +9,11 @@ import (
 // Разбор выживших мутантов (gremlins, CONVENTIONS §5). Убитых тестом нет:
 // всё, что осталось, — артефакты покрытия, а не дыры.
 //
-//   - cipher.go:28 `headerSize = 1 + 2 + nonceSize`: объявление константы,
+//   - cipher.go:30 `headerSize = 1 + 2 + nonceSize`: объявление константы,
 //     покрытие его не видит, поэтому мутанты помечены «not covered». Сама
 //     арифметика проверяется TestBlobLayoutMatchesGCM и любым roundtrip:
 //     сдвиг заголовка на байт ломает и Seal, и Open.
-//   - cipher.go:52 и 56 `panic("secrets.NewCipher: " + err.Error())`:
+//   - cipher.go:54 и 58 `panic("secrets.NewCipher: " + err.Error())`:
 //     недостижимый код. Кольцо пропускает только ключи ровно по 32 байта, а
 //     aes.NewCipher и cipher.NewGCM на таком ключе не ошибаются; тест на эту
 //     панику потребовал бы обхода конструктора кольца.

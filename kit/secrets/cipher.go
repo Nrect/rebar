@@ -14,9 +14,11 @@ import (
 var (
 	// ErrMalformed — блоб повреждён, подделан или зашифрован под другой AAD.
 	// Причины не различаются нарочно: для клиента это один ответ.
+	//errs:nokind класс зависит от источника блоба: из куки клиента — 400, из нашей таблицы — 500
 	ErrMalformed = errors.New("secrets: blob is malformed")
 	// ErrUnknownKey — ключа из заголовка нет в кольце. Не атака, а сигнал
 	// «ключ убрали до того, как Reseal прошёл по таблице».
+	//errs:nokind класс зависит от источника блоба, как у ErrMalformed: таблица — наш сбой ротации, кука — устаревший блоб
 	ErrUnknownKey = errors.New("secrets: blob is sealed with a key outside the keyring")
 )
 
