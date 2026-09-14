@@ -40,8 +40,10 @@ var (
 	// он нужен точным: подпись считается по телу, и тело, соврав о размере,
 	// разошлось бы с подписью. Наружу 400: размер приходит с запросом.
 	ErrSizeUnknown = errs.Kinded(errs.KindIncorrectInput, "objectstore: object size is unknown or does not match the body")
-	// ErrNotFound — объекта нет там, где он нужен.
-	//errs:nokind в модуле её отдаёт только s3 на ответ 404, а у Put, Delete и List это нет бакета — дефект конфигурации, то есть 500
+	// ErrNotFound — провайдер ответил 404. На операциях порта это НЕ отсутствие
+	// объекта: Delete отсутствие ошибкой не считает, Presign существования не
+	// проверяет, и 404 на Put, Delete и List означает, что нет бакета.
+	//errs:nokind в модуле её отдаёт только s3 на ответ 404, а на операциях порта это нет бакета — дефект конфигурации, то есть 500
 	ErrNotFound = errors.New("objectstore: object is not found")
 	// ErrUnavailable — сбой хранилища: повтор осмыслен, объект не тронут.
 	// Наружу 503.
