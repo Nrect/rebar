@@ -27,6 +27,56 @@
   `MemTokens` и `MemAttempts` больше не поле: он встроен скрыто, `CallCount`,
   `Snapshot` и `Reset` остались на двойнике. Генератор идентификаторов зовётся
   под замком двойника, изнутри `Create` и `Put`, и трогать двойник не вправе.
+- **Класс ошибки у sentinel ([ADR-0007](../docs/adr/0007-error-kind.md)).**
+  Потребителю больше не нужна таблица перевода ошибок `auth`: `errs.KindOf` и
+  `httperr` находят класс на самой sentinel. Страж
+  `errstest.EveryErrorHasKind` стоит в корне модуля (`sentinels_test.go`) и
+  обходит все подпакеты; двойники `authtest` из него исключены — их ошибки
+  только причины, класс несёт обёртка ядра `session`, и это держит
+  `session.TestPortFailuresReachCallerAsUnavailable`.
+
+  | Sentinel | Класс | Почему |
+  |---|---|---|
+  | `ErrUnavailable` | 503 `unavailable` | сбой источника личностей, повтор осмыслен |
+  | `ErrLoginTaken` | 409 `conflict` | единственный выход наружу — `session.ConfirmEmailChange`: ссылку открыл владелец нового адреса (ADR-0007, «Спорные назначения») |
+  | `session.ErrInvalidCredentials`, `session.ErrNoSession` | 401 `unauthenticated` | вход не состоялся либо живой сессии нет |
+  | `session.ErrNotVerified`, `authhttp.ErrCSRF` | 403 `forbidden` | личность известна, но операция ей не положена: адрес не подтверждён, запрос отправил не сам клиент |
+  | `session.ErrTooManyAttempts`, `password.ErrBusy` | 429 `too-many-requests` | исчерпан счётчик попыток или занят потолок хеширований; `Retry-After` класс не добавляет — `httperr` берёт его только из `RetryAfter()` |
+  | `session.ErrTokenInvalid`, `loginid.ErrInvalid`, `password.ErrTooShort`, `ErrTooLong`, `ErrTooWeak` | 400 `incorrect-input` | токен, логин и пароль присылает клиент; три причины `Policy` делят один класс, а различать ли их слагом — словарь потребителя |
+  | `ErrInvalidRealm`, `token.ErrSecretTooShort` | нет, `//errs:nokind` | реалм и секрет задаёт конфигурация сборки: негодные — дефект, то есть 500 |
+  | `ErrIdentityNotFound` | нет, `//errs:nokind` | сигнал порта `Identities`: `session` сворачивает её на всех путях, а готовый 404 на входе или сбросе — перебор адресов (ADR-0007, «Спорные назначения») |
+  | `password.ErrHashInvalid` | нет, `//errs:nokind` | строку хэша пишет хранилище потребителя: битая колонка — инцидент, то есть 500 |
+
+- **Ломающее для кода, который сравнивал тексты sentinel или присваивал их.**
+  Замена:
+
+  | Было | Стало |
+  |---|---|
+  | тип sentinel с классом — `error` | `errs.KindError`; `errors.Is` и `==` работают как прежде |
+  | `realm is invalid`, `identity not found`, `login is already taken`, `identity store is unavailable` | тот же текст с префиксом `auth: ` |
+  | `invalid credentials`, `too many attempts`, `identity is not verified`, `no live session`, `one-time token is invalid` | тот же текст с префиксом `session: ` |
+  | `password hashing is at capacity`, `password hash is malformed or out of bounds`, `password is shorter than the minimum length`, `password exceeds the maximum length`, `password is too easy to guess` | тот же текст с префиксом `password: ` |
+  | `login is invalid` | `loginid: login is invalid` |
+  | `realm secret is shorter than the minimum length` | `token: realm secret is shorter than the minimum length` |
+  | паника `token.MustSecret: realm secret is shorter …` | `token.MustSecret: token: realm secret is shorter …` |
+  | `csrf token mismatch` | `authhttp: csrf token mismatch` |
+
+  Обёртки вокруг `auth.ErrUnavailable` (`session`, `authpg`,
+  `authtest.ErrSessionExists`) начинаются с нового текста. Префикс не
+  косметика: `KindError` равны по классу и тексту, и без него sentinel разных
+  модулей с одним классом совпадали бы через `errors.Is`. Модуль требует
+  `github.com/nrect/rebar/kit v0.2.0` — в корне и в каталогах `session`,
+  `password`, `loginid`, `authhttp`.
+
+### Fixed
+- **Комментарии объявляли инвариант безопасности без исключения, которое в
+  коде есть.** `errors.go` («`ErrLoginTaken` наружу не выходит») и пункт 2
+  «Безопасности» в `doc.go` («ЗАНЯТЫЙ ЛОГИН НЕ ВИДЕН СНАРУЖИ») обещали
+  абсолют, а `session.ConfirmEmailChange` отдаёт `auth.ErrLoginTaken`
+  осознанно: ссылку открыл владелец нового адреса, и «занят» он узнал бы и
+  восстановлением пароля. Потребитель, читающий список «Безопасность», верил
+  бы в неправду. Оба комментария называют единственный законный выход и
+  довод; поведение не менялось.
 
 ## [0.1.0] — 2026-09-10
 

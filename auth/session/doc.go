@@ -13,8 +13,8 @@
 // Ни JWT, ни refresh-токенов: у сессии в куке роль refresh играет скользящее
 // продление, а плата за JWT — невозможность мгновенного отзыва.
 //
-// Ядро — stdlib плюс github.com/google/uuid. Проект и причины —
-// docs/adr/0003-auth-authz-entitlement.md.
+// Ядро — stdlib, github.com/google/uuid и kit/errs ради класса у sentinel
+// (ADR-0007). Проект и причины — docs/adr/0003-auth-authz-entitlement.md.
 //
 // # Порт Tokens пишет потребитель
 //

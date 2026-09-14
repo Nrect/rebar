@@ -15,7 +15,9 @@ import (
 const MinSecretLen = 32
 
 // ErrSecretTooShort — секрет короче MinSecretLen. Самого секрета в тексте нет.
-var ErrSecretTooShort = errors.New("realm secret is shorter than the minimum length")
+//
+//errs:nokind секрет реалма приходит из конфигурации и отвергается на старте: дефект сборки, то есть 500
+var ErrSecretTooShort = errors.New("token: realm secret is shorter than the minimum length")
 
 // Secret — секрет реалма для HMAC токенов.
 //

@@ -23,15 +23,19 @@ import (
 // это граница безопасности, а пять её копий в пяти адаптерах — пять шансов
 // разойтись там, где расхождение стоит утечки строки. Ядру она запрещена
 // по-прежнему: SQL там нет и не должно быть.
+//
+// github.com/nrect/rebar/kit — класс у sentinel (errs.Kinded, ADR-0007), и
+// только в каталогах, которые его объявляют; зависимость на kit разрешена
+// отовсюду (ADR-0005, «Межмодульные зависимости»).
 var allowedByDir = map[string][]string{
-	".":        {"github.com/google/uuid"},
-	"loginid":  {"golang.org/x/text"},
-	"password": {"golang.org/x/crypto"},
+	".":        {"github.com/google/uuid", "github.com/nrect/rebar/kit"},
+	"loginid":  {"golang.org/x/text", "github.com/nrect/rebar/kit"},
+	"password": {"golang.org/x/crypto", "github.com/nrect/rebar/kit"},
 	"token":    {},
 	"pwzxcvbn": {"github.com/trustelem/zxcvbn"},
-	"session":  {"github.com/google/uuid"},
+	"session":  {"github.com/google/uuid", "github.com/nrect/rebar/kit"},
 	"authpg":   {"github.com/google/uuid", "github.com/jackc/pgx/v5", "github.com/nrect/rebar/postgres"},
-	"authhttp": {},
+	"authhttp": {"github.com/nrect/rebar/kit"},
 	"authtest": {"github.com/google/uuid"},
 }
 

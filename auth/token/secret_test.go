@@ -55,7 +55,7 @@ func TestHash_PanicsOnUnconfiguredSecret(t *testing.T) {
 		token.Hash("raw", token.Secret{})
 	})
 	assert.PanicsWithValue(t, "token.MustSecret: "+
-		"realm secret is shorter than the minimum length: 3 bytes, minimum is 32", func() {
+		"token: realm secret is shorter than the minimum length: 3 bytes, minimum is 32", func() {
 		token.MustSecret([]byte("abc"))
 	})
 }

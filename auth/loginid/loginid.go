@@ -1,13 +1,14 @@
 package loginid
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 
 	"golang.org/x/text/unicode/norm"
+
+	"github.com/nrect/rebar/kit/errs"
 )
 
 // MaxLen — потолок длины логина: 64 + '@' + 255, граница RFC 5321.
@@ -15,8 +16,8 @@ const MaxLen = 320
 
 // ErrInvalid — логин пуст, длиннее MaxLen, не UTF-8 или содержит управляющий
 // либо невидимый символ. Самого логина в тексте ошибки нет: он персональные
-// данные, а текст ошибки доезжает до лога.
-var ErrInvalid = errors.New("login is invalid")
+// данные, а текст ошибки доезжает до лога. Класс 400: логин присылает клиент.
+var ErrInvalid = errs.Kinded(errs.KindIncorrectInput, "loginid: login is invalid")
 
 // Normalize — ЕДИНСТВЕННАЯ ТОЧКА НОРМАЛИЗАЦИИ ЛОГИНА в тулките.
 //
