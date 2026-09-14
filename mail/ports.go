@@ -99,7 +99,7 @@ type Store interface {
 	Stats(ctx context.Context, now time.Time) (Stats, error)
 
 	// Purge удаляет терминальные строки с updated_at < before, не больше limit
-	// за вызов; возвращает число удалённых.
+	// за вызов, в порядке (updated_at, id); возвращает число удалённых.
 	Purge(ctx context.Context, before time.Time, limit int) (int, error)
 }
 

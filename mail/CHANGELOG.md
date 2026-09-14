@@ -99,6 +99,13 @@
   `SetSendHook`. Флаги и окружение `cmd/sesfake` не менялись.
 
 ### Fixed
+- `mailpg.Purge` сортировал удаляемые строки только по `updated_at`: при равных
+  моментах и лимите меньше группы база удаляла произвольные из равных, а
+  `mailtest.MemStore` — первые по `id`. Теперь `ORDER BY updated_at, id`, как в
+  `mailpg` `Claim` и у `outboxpg`; схема и индекс не меняются. Держит сценарий
+  «Purge при равных updated_at удаляет первые по id» в `mailtest.RunStoreSuite`,
+  он гоняется и по двойнику, и по `mailpg.Store`. Порядок записан в контракте
+  `mail.Store.Purge`.
 - `mailtest.MemStore.Stats` отдавал отрицательный `OldestPendingAge`, когда часы
   потребителя позади `created_at`, а `mailpg` в том же случае отдаёт ноль —
   двойник был мягче базы по знаку. Теперь ноль и у двойника; держит сценарий

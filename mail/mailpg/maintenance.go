@@ -31,10 +31,12 @@ func (s *Store) Stats(ctx context.Context, now time.Time) (mail.Stats, error) {
 	return stats, nil
 }
 
+// id — второй ключ сортировки: при равных updated_at и лимите меньше группы
+// удаление иначе произвольно и расходится с двойником (контракт Store.Purge).
 const purgeSQL = `DELETE FROM email_outbox WHERE id IN (
 	SELECT id FROM email_outbox
 	WHERE status IN ('sent','failed','expired','suppressed') AND updated_at < $1
-	ORDER BY updated_at
+	ORDER BY updated_at, id
 	LIMIT $2
 )`
 
