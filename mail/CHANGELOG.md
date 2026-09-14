@@ -5,6 +5,35 @@
 
 ## Unreleased
 
+### Changed
+- **API двойников меняется ломающе: настройка `mailtest.Transport` и
+  `mailtest.SESServer` — методы, а не публичные поля.** Двойники читали поля
+  под своим мьютексом, а тест писал их мимо него. Пока поле ставится до первого
+  вызова, гонки нет; но тест потребителя через живой HTTP-сервер пишет поле,
+  пока ручка сервера его читает, — и `-race` краснеет у потребителя. `FailFor`
+  и `ThrottleFor` двойники к тому же сами декрементируют под замком, и запись
+  мимо замка роняет процесс `fatal error: concurrent map writes` — упавший
+  прогон, а не красный тест. Теперь настройка правится под тем же замком, хуки
+  зовутся вне его и вправе звать сам двойник
+  ([CONVENTIONS §3](../CONVENTIONS.md#3-двойники)). Замена:
+
+  | Было | Стало |
+  |---|---|
+  | `tr.RejectFor[email] = code` | `tr.RejectFor(email, code)` |
+  | `tr.FailFor[email] = n` | `tr.FailFor(email, n)` |
+  | `tr.SendHook = hook` | `tr.SetSendHook(hook)` |
+  | `srv.RejectFor[email] = code` | `srv.RejectFor(email, code)` |
+  | `srv.ThrottleFor[email] = n` | `srv.ThrottleFor(email, n)` |
+  | `srv.Secret = secret` | `srv.SetSecret(secret)` |
+  | `srv.Region = region` | `srv.SetRegion(region)` |
+  | `srv.StoreLimit = n` | `srv.SetStoreLimit(n)` |
+  | `srv.Name = name` | `srv.SetName(name)` |
+  | `srv.OnAccepted = hook` | `srv.SetOnAccepted(hook)` |
+
+  Счётчики снимаются нулём, хуки — `nil`. Замены `delete` по карте `RejectFor`
+  нет: у транспорта поведение, меняющееся по ходу теста, задаётся
+  `SetSendHook`. Флаги и окружение `cmd/sesfake` не менялись.
+
 ## [0.2.0] — 2026-09-10
 
 Минорный, а не патч: у модуля появилась зависимость на

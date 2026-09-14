@@ -213,10 +213,10 @@ func TestMemStore_SnapshotsAreCopies(t *testing.T) {
 func TestRecordingHandler_AnswersByAggregateThenKind(t *testing.T) {
 	t.Parallel()
 	h := outboxtest.NewRecordingHandler()
-	h.PermanentFor["A-1"] = true
-	h.FailFor["order.paid"] = 1
-	h.SkipFor["A-2"] = true
-	h.ThrottleFor["A-3"] = time.Minute
+	h.PermanentFor("A-1")
+	h.FailFor("order.paid", 1)
+	h.SkipFor("A-2")
+	h.ThrottleFor("A-3", time.Minute)
 	ctx := context.Background()
 
 	require.True(t, outbox.IsPermanent(h.Handle(ctx, outbox.Delivery{Kind: "order.paid", AggregateID: "A-1"})))
@@ -236,7 +236,7 @@ func TestRecordingHandler_AnswersByAggregateThenKind(t *testing.T) {
 func TestRecordingHandler_PanicsOnDemand(t *testing.T) {
 	t.Parallel()
 	h := outboxtest.NewRecordingHandler()
-	h.PanicFor["A-1"] = 1
+	h.PanicFor("A-1", 1)
 	d := outbox.Delivery{Kind: "order.paid", AggregateID: "A-1"}
 
 	assert.Panics(t, func() { _ = h.Handle(context.Background(), d) })

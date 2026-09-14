@@ -91,8 +91,8 @@ func TestStats_CountsPendingSendingAndFailed(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), stats.Pending, "строка в sending всё ещё в очереди")
 
-	h.tr.RejectFor["teacher@school.ru"] = "MessageRejected"
-	h.tr.RejectFor["second@school.ru"] = "MessageRejected"
+	h.tr.RejectFor("teacher@school.ru", "MessageRejected")
+	h.tr.RejectFor("second@school.ru", "MessageRejected")
 	h.clock.advance(h.cfg.Lease + time.Second)
 	require.Equal(t, 2, h.deliver(t))
 

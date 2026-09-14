@@ -43,9 +43,9 @@ func TestTransport_RejectAndFailAreDistinct(t *testing.T) {
 	t.Parallel()
 	transport := mailtest.NewTransport()
 	rejected := envelope("verify:a", storeBase)
-	transport.RejectFor[rejected.To.Email] = "MessageRejected"
+	transport.RejectFor(rejected.To.Email, "MessageRejected")
 	flaky := envelope("verify:b", storeBase)
-	transport.FailFor[flaky.To.Email] = 2
+	transport.FailFor(flaky.To.Email, 2)
 
 	_, err := transport.Send(context.Background(), rejected)
 	require.Error(t, err)
@@ -65,11 +65,11 @@ func TestTransport_SendHookOverrides(t *testing.T) {
 	t.Parallel()
 	transport := mailtest.NewTransport()
 	env := envelope("verify:a", storeBase)
-	transport.RejectFor[env.To.Email] = "MessageRejected"
-	transport.SendHook = func(ctx context.Context, _ mail.Envelope) (mail.SendResult, error) {
+	transport.RejectFor(env.To.Email, "MessageRejected")
+	transport.SetSendHook(func(ctx context.Context, _ mail.Envelope) (mail.SendResult, error) {
 		<-ctx.Done()
 		return mail.SendResult{}, ctx.Err()
-	}
+	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()

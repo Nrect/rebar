@@ -5,6 +5,31 @@
 
 ## Unreleased
 
+### Changed
+- **API двойника меняется ломающе: настройка `outboxtest.RecordingHandler` —
+  методы, а не публичные поля.** `Handle` читал карты под своим мьютексом, а
+  тест писал их мимо него. Пока поле ставится до первого вызова, гонки нет; но
+  тест потребителя, у которого хендлер зовёт воркер в другой горутине (или
+  ручка живого HTTP-сервера), пишет поле, пока двойник его читает, — и `-race`
+  краснеет у потребителя. `FailFor` и `PanicFor` двойник к тому же сам
+  декрементирует под замком, и запись мимо замка роняет процесс
+  `fatal error: concurrent map writes` — упавший прогон, а не красный тест.
+  Теперь настройка правится под тем же замком, хук зовётся вне его и вправе
+  звать сам двойник ([CONVENTIONS §3](../CONVENTIONS.md#3-двойники)). Замена:
+
+  | Было | Стало |
+  |---|---|
+  | `h.FailFor[key] = n` | `h.FailFor(key, n)` |
+  | `h.PermanentFor[key] = true` | `h.PermanentFor(key)` |
+  | `h.ThrottleFor[key] = after` | `h.ThrottleFor(key, after)` |
+  | `h.SkipFor[key] = true` | `h.SkipFor(key)` |
+  | `h.PanicFor[key] = n` | `h.PanicFor(key, n)` |
+  | `h.Hook = hook` | `h.SetHook(hook)` |
+
+  Счётчики снимаются нулём, хук — `nil`. Замены `delete` по картам
+  `PermanentFor`, `ThrottleFor` и `SkipFor` нет: поведение, меняющееся по ходу
+  теста, задаётся хуком.
+
 ## [0.1.0] — 2026-09-10
 
 ### Added

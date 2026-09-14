@@ -16,50 +16,78 @@ import (
 var ErrHandlerFailed = errors.New("outboxtest: handler is temporarily unavailable")
 
 // RecordingHandler — записывающий outbox.Handler: доставки складываются,
-// поведение задаётся картами. Потокобезопасен.
+// поведение задаётся методами. Потокобезопасен целиком, включая настройку.
 //
-// Ключ карт — AggregateID доставки, а если он пуст — Kind: тест либо ломает
-// один заказ, либо весь тип сообщений, и обоим нужен один синтаксис.
+// Ключ настройки — AggregateID доставки, а если он пуст — Kind: тест либо
+// ломает один заказ, либо весь тип сообщений, и обоим нужен один синтаксис.
+//
+// Публичных полей нет: Handle читает настройку под замком, а тест потребителя
+// правит её, пока воркер в другой горутине зовёт хендлер (CONVENTIONS §3).
 type RecordingHandler struct {
 	mu       sync.Mutex
 	handled  []outbox.Delivery
 	panicked map[string]int
 
-	// FailFor — ключ → сколько ближайших вызовов провалить временным сбоем.
-	FailFor map[string]int
-	// PermanentFor — ключ → постоянный отказ: failed(permanent) без ретраев.
-	PermanentFor map[string]bool
-	// ThrottleFor — ключ → «приходи не раньше»: повтор в названный срок.
-	ThrottleFor map[string]time.Duration
-	// SkipFor — ключ → предикат не подтвердился (check-at-send): done(skipped).
-	SkipFor map[string]bool
-	// PanicFor — ключ → сколько ближайших вызовов уронить паникой.
-	PanicFor map[string]int
-	// Hook — если задан, отвечает вместо всего остального: так тест проверяет
-	// таймаут (подождать ctx.Done) или порядок вызовов.
-	Hook func(ctx context.Context, d outbox.Delivery) error
+	failFor      map[string]int
+	permanentFor map[string]bool
+	throttleFor  map[string]time.Duration
+	skipFor      map[string]bool
+	panicFor     map[string]int
+	hook         func(ctx context.Context, d outbox.Delivery) error
 }
 
 // NewRecordingHandler — двойник без отказов.
 func NewRecordingHandler() *RecordingHandler {
 	return &RecordingHandler{
 		panicked:     map[string]int{},
-		FailFor:      map[string]int{},
-		PermanentFor: map[string]bool{},
-		ThrottleFor:  map[string]time.Duration{},
-		SkipFor:      map[string]bool{},
-		PanicFor:     map[string]int{},
+		failFor:      map[string]int{},
+		permanentFor: map[string]bool{},
+		throttleFor:  map[string]time.Duration{},
+		skipFor:      map[string]bool{},
+		panicFor:     map[string]int{},
 	}
 }
 
-// Handle записывает доставку и отвечает по настройкам. Доставка пишется до
+// FailFor — ближайшие times вызовов по ключу k провалить временным сбоем.
+// Заменяет прежний счётчик; ноль снимает.
+func (h *RecordingHandler) FailFor(k string, times int) { h.set(func() { h.failFor[k] = times }) }
+
+// PermanentFor — постоянный отказ по ключу k: failed(permanent) без ретраев.
+func (h *RecordingHandler) PermanentFor(k string) { h.set(func() { h.permanentFor[k] = true }) }
+
+// ThrottleFor — «приходи не раньше after» по ключу k: повтор в названный срок.
+func (h *RecordingHandler) ThrottleFor(k string, after time.Duration) {
+	h.set(func() { h.throttleFor[k] = after })
+}
+
+// SkipFor — предикат по ключу k не подтвердился (check-at-send): done(skipped).
+func (h *RecordingHandler) SkipFor(k string) { h.set(func() { h.skipFor[k] = true }) }
+
+// PanicFor — ближайшие times вызовов по ключу k уронить паникой; ноль снимает.
+func (h *RecordingHandler) PanicFor(k string, times int) { h.set(func() { h.panicFor[k] = times }) }
+
+// SetHook — если задан, отвечает вместо настройки: так тест проверяет таймаут
+// (подождать ctx.Done) или порядок вызовов; nil снимает. Зовётся вне замка и
+// вправе звать сам двойник.
+func (h *RecordingHandler) SetHook(hook func(ctx context.Context, d outbox.Delivery) error) {
+	h.set(func() { h.hook = hook })
+}
+
+// set — правка настройки под тем же замком, под которым её читает Handle.
+func (h *RecordingHandler) set(mutate func()) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	mutate()
+}
+
+// Handle записывает доставку и отвечает по настройке. Доставка пишется до
 // отказа: тест на «ровно один раз» считает попытки, а не успехи.
 func (h *RecordingHandler) Handle(ctx context.Context, d outbox.Delivery) error {
 	h.mu.Lock()
-	hook := h.Hook
+	hook := h.hook
 	h.handled = append(h.handled, copyDelivery(d))
 	h.mu.Unlock()
-	// Хук зовётся без замка: он вправе ждать ctx.Done, а двойник — отвечать другим.
+	// Хук зовётся без замка: он вправе ждать ctx.Done и звать сам двойник.
 	if hook != nil {
 		return hook(ctx, d)
 	}
@@ -69,24 +97,24 @@ func (h *RecordingHandler) Handle(ctx context.Context, d outbox.Delivery) error 
 	return h.answer(key(d))
 }
 
-// answer — ответ по настройкам; порядок повторяет классификацию Drain.
+// answer — ответ по настройке; порядок повторяет классификацию Drain.
 func (h *RecordingHandler) answer(k string) error {
-	if left := h.PanicFor[k]; left > 0 {
-		h.PanicFor[k] = left - 1
+	if left := h.panicFor[k]; left > 0 {
+		h.panicFor[k] = left - 1
 		h.panicked[k]++
 		panic("outboxtest: handler panicked for " + k)
 	}
-	if h.SkipFor[k] {
+	if h.skipFor[k] {
 		return outbox.ErrSkip
 	}
-	if h.PermanentFor[k] {
+	if h.permanentFor[k] {
 		return outbox.Permanent(ErrHandlerFailed)
 	}
-	if after, throttled := h.ThrottleFor[k]; throttled {
+	if after, throttled := h.throttleFor[k]; throttled {
 		return outbox.Throttled(ErrHandlerFailed, after)
 	}
-	if left := h.FailFor[k]; left > 0 {
-		h.FailFor[k] = left - 1
+	if left := h.failFor[k]; left > 0 {
+		h.failFor[k] = left - 1
 		return ErrHandlerFailed
 	}
 	return nil

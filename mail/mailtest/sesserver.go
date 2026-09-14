@@ -12,8 +12,9 @@ type SentEmail = sesfake.SentEmail
 
 // SESServer — httptest-фейк SES v2 (POST /v2/email/outbound-emails; тот же API
 // у Postbox и AWS SES) поверх общего обработчика internal/sesfake: форма SigV4
-// проверяется всегда, подпись — при заданном Secret. Поля обработчика
-// (RejectFor, ThrottleFor, Secret, Region) задаются до первого запроса.
+// проверяется всегда, подпись — при заданном SetSecret. Настройка обработчика
+// (RejectFor, ThrottleFor, SetSecret, SetRegion) — методами под его замком:
+// звать их можно и во время запросов.
 type SESServer struct {
 	*sesfake.Handler
 	srv *httptest.Server
@@ -23,7 +24,7 @@ type SESServer struct {
 func NewSESServer(tb testing.TB) *SESServer {
 	tb.Helper()
 	s := &SESServer{Handler: sesfake.NewHandler()}
-	s.Name = "mailtest.SESServer" // тексты RejectFor/ThrottleFor видит адаптер
+	s.SetName("mailtest.SESServer") // тексты RejectFor/ThrottleFor видит адаптер
 	s.srv = httptest.NewServer(s.Handler)
 	tb.Cleanup(s.srv.Close)
 	return s

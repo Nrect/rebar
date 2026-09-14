@@ -58,37 +58,67 @@ type SentEmail struct {
 
 // Handler — http.Handler SES v2-совместимого API (POST /v2/email/outbound-emails;
 // тот же API у Postbox и AWS SES): форма SigV4 проверяется всегда, подпись — при
-// заданном Secret. Поля-настройки задаются до первого запроса.
+// заданном секрете. Потокобезопасен целиком, включая настройку.
+//
+// Публичных полей нет: ручка сервера читает настройку под замком, а тест правит
+// её из своей горутины во время запросов (CONVENTIONS §3).
 type Handler struct {
 	mu   sync.Mutex
 	sent []SentEmail
 
-	// RejectFor — email получателя (нижний регистр, без имени) → код ошибки 400.
-	RejectFor map[string]string
-	// ThrottleFor — email → сколько ближайших запросов ответить 429.
-	ThrottleFor map[string]int
-	// Secret — ключ для пересчёта подписи; пустой — проверяется только форма.
-	Secret string
-	// Region — если непусто, Credential обязан быть в этом регионе.
-	Region string
-	// StoreLimit — сколько последних писем хранить; 0 — без лимита.
-	StoreLimit int
-	// Name — имя двойника в текстах ошибок RejectFor/ThrottleFor.
-	Name string
-	// OnAccepted — вызывается после ответа 200; здесь висит релей стенда.
-	OnAccepted func(SentEmail)
+	rejectFor   map[string]string
+	throttleFor map[string]int
+	secret      string
+	region      string
+	storeLimit  int
+	name        string
+	onAccepted  func(SentEmail)
 }
 
-// DefaultName — имя двойника в текстах ошибок, если Name не задан.
+// DefaultName — имя двойника в текстах отказов, если SetName не звали.
 const DefaultName = "sesfake"
 
-// NewHandler — обработчик с инициализированными картами.
+// NewHandler — обработчик без отказов, с именем DefaultName.
 func NewHandler() *Handler {
-	return &Handler{
-		RejectFor:   map[string]string{},
-		ThrottleFor: map[string]int{},
-		Name:        DefaultName,
+	return &Handler{rejectFor: map[string]string{}, throttleFor: map[string]int{}, name: DefaultName}
+}
+
+// RejectFor — ответ 400 с кодом code на письма адресату email (нижний регистр,
+// без имени).
+func (h *Handler) RejectFor(email, code string) { h.set(func() { h.rejectFor[email] = code }) }
+
+// ThrottleFor — ближайшие times запросов на email ответить 429. Заменяет
+// прежний счётчик; ноль снимает.
+func (h *Handler) ThrottleFor(email string, times int) {
+	h.set(func() { h.throttleFor[email] = times })
+}
+
+// SetSecret — ключ для пересчёта подписи; пустой — проверяется только форма.
+func (h *Handler) SetSecret(secret string) { h.set(func() { h.secret = secret }) }
+
+// SetRegion — если непусто, Credential обязан быть в этом регионе.
+func (h *Handler) SetRegion(region string) { h.set(func() { h.region = region }) }
+
+// SetStoreLimit — сколько последних писем хранить; 0 — без лимита.
+func (h *Handler) SetStoreLimit(n int) { h.set(func() { h.storeLimit = n }) }
+
+// SetName — имя двойника в текстах отказов; пустое — DefaultName.
+func (h *Handler) SetName(name string) {
+	if name == "" {
+		name = DefaultName
 	}
+	h.set(func() { h.name = name })
+}
+
+// SetOnAccepted — хук после ответа 200; здесь висит релей стенда. Зовётся вне
+// замка и вправе звать сам обработчик.
+func (h *Handler) SetOnAccepted(hook func(SentEmail)) { h.set(func() { h.onAccepted = hook }) }
+
+// set — правка настройки под тем же замком, под которым её читает ручка.
+func (h *Handler) set(mutate func()) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	mutate()
 }
 
 // Sent — копия принятых писем в порядке приёма.
@@ -132,43 +162,35 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, fail)
 		return
 	}
-	accepted, fail := h.accept(email, recipient)
+	accepted, onAccepted, fail := h.accept(email, recipient)
 	if fail != nil {
 		writeError(w, fail)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"MessageId": accepted.MessageID})
-	if h.OnAccepted != nil {
-		h.OnAccepted(accepted)
+	if onAccepted != nil {
+		onAccepted(accepted)
 	}
 }
 
-// accept — решение по письму и запись в хранилище под мьютексом. Ответ пишется
-// снаружи: OnAccepted не должен видеть заблокированный Handler.
-func (h *Handler) accept(email SentEmail, recipient string) (SentEmail, *apiError) {
+// accept — решение по письму и запись в хранилище под мьютексом. Хук берётся
+// под тем же замком, а зовётся снаружи: он вправе звать сам обработчик.
+func (h *Handler) accept(email SentEmail, recipient string) (SentEmail, func(SentEmail), *apiError) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if code, ok := h.RejectFor[recipient]; ok {
-		return SentEmail{}, &apiError{http.StatusBadRequest, code, "rejected by " + h.name() + " for " + recipient}
+	if code, ok := h.rejectFor[recipient]; ok {
+		return SentEmail{}, nil, &apiError{http.StatusBadRequest, code, "rejected by " + h.name + " for " + recipient}
 	}
-	if left := h.ThrottleFor[recipient]; left > 0 {
-		h.ThrottleFor[recipient] = left - 1
-		return SentEmail{}, &apiError{http.StatusTooManyRequests, codeTooManyRequests, "throttled by " + h.name() + " for " + recipient}
+	if left := h.throttleFor[recipient]; left > 0 {
+		h.throttleFor[recipient] = left - 1
+		return SentEmail{}, nil, &apiError{http.StatusTooManyRequests, codeTooManyRequests, "throttled by " + h.name + " for " + recipient}
 	}
 	email.MessageID = uuid.NewString()
 	h.sent = append(h.sent, email)
-	if h.StoreLimit > 0 && len(h.sent) > h.StoreLimit {
-		h.sent = slices.Delete(h.sent, 0, len(h.sent)-h.StoreLimit)
+	if h.storeLimit > 0 && len(h.sent) > h.storeLimit {
+		h.sent = slices.Delete(h.sent, 0, len(h.sent)-h.storeLimit)
 	}
-	return email, nil
-}
-
-// name — вызывается под мьютексом.
-func (h *Handler) name() string {
-	if h.Name == "" {
-		return DefaultName
-	}
-	return h.Name
+	return email, h.onAccepted, nil
 }
 
 // sendEmailRequest — подмножество тела SendEmail; Raw и Template ловятся,

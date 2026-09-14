@@ -15,7 +15,7 @@ import (
 
 // Обработчик SES v2 и его поведение проверяются в internal/sesfake, а сквозной
 // путь «адаптер → двойник» — в sesv2_test.go. Здесь только то, что добавляет
-// обёртка: живой httptest, проброс полей и методов, своё имя в отказах.
+// обёртка: живой httptest, проброс методов, своё имя в отказах.
 
 const sendPath = "/v2/email/outbound-emails"
 
@@ -66,13 +66,13 @@ func TestSESServer_ServesHandlerOverHTTP(t *testing.T) {
 	assert.Empty(t, srv.Sent())
 }
 
-// Поля-настройки доходят до обработчика через встраивание, а имя двойника в
-// отказах — своё: на текст «mailtest.SESServer» смотрит sesv2_test.go.
+// Настройка доходит до обработчика методами через встраивание, а имя двойника
+// в отказах — своё: на текст «mailtest.SESServer» смотрит sesv2_test.go.
 func TestSESServer_ForwardsSettingsAndNamesItself(t *testing.T) {
 	t.Parallel()
 
 	rejecting := mailtest.NewSESServer(t)
-	rejecting.RejectFor["teacher@school.ru"] = "MessageRejected"
+	rejecting.RejectFor("teacher@school.ru", "MessageRejected")
 	status, code, raw := post(t, rejecting.URL())
 	assert.Equal(t, http.StatusBadRequest, status)
 	assert.Equal(t, "MessageRejected", code)
@@ -80,7 +80,7 @@ func TestSESServer_ForwardsSettingsAndNamesItself(t *testing.T) {
 	assert.Empty(t, rejecting.Sent())
 
 	regional := mailtest.NewSESServer(t)
-	regional.Region = "us-east-1"
+	regional.SetRegion("us-east-1")
 	status, code, _ = post(t, regional.URL())
 	assert.Equal(t, http.StatusForbidden, status, "Credential в ru-central1 при Region=us-east-1")
 	assert.Equal(t, "InvalidSignatureException", code)

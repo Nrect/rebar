@@ -96,7 +96,7 @@ func TestMux_RelaysAcceptedEmail(t *testing.T) {
 	smtpSrv := startFakeSMTP(t, scenario{})
 	relay := newRelayer(smtpSrv.addr, newDiscardLogger())
 	handler := sesfake.NewHandler()
-	handler.OnAccepted = relay.enqueue
+	handler.SetOnAccepted(relay.enqueue)
 	srv := httptest.NewServer(newMux(handler))
 	t.Cleanup(srv.Close)
 

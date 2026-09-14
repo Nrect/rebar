@@ -151,7 +151,7 @@ func TestHandler_RequiresSignatureForm(t *testing.T) {
 func TestHandler_ChecksRegionWhenSet(t *testing.T) {
 	t.Parallel()
 	h, url := newServer(t)
-	h.Region = "us-east-1"
+	h.SetRegion("us-east-1")
 	status, code, _ := post(t, url, simpleBody("teacher@school.ru", nil), "", nil)
 	assert.Equal(t, http.StatusForbidden, status)
 	assert.Equal(t, codeInvalidSignature, code)
@@ -163,7 +163,7 @@ func TestHandler_ChecksRegionWhenSet(t *testing.T) {
 func TestHandler_VerifiesSignatureWithSecret(t *testing.T) {
 	t.Parallel()
 	h, url := newServer(t)
-	h.Secret = "correct-secret"
+	h.SetSecret("correct-secret")
 	body := simpleBody("teacher@school.ru", nil)
 
 	status, _, raw := post(t, url, body, "correct-secret", nil)
@@ -246,12 +246,12 @@ func TestHandler_UnknownRouteIs404(t *testing.T) {
 }
 
 // RejectFor и ThrottleFor ключуются по email в нижнем регистре, даже если адрес
-// пришёл с именем и в другом регистре; Name попадает в текст ошибки.
+// пришёл с именем и в другом регистре; имя двойника попадает в текст ошибки.
 func TestHandler_RejectAndThrottleKeyByBareEmail(t *testing.T) {
 	t.Parallel()
 	h, url := newServer(t)
-	h.RejectFor["teacher@school.ru"] = "MailFromDomainNotVerifiedException"
-	h.ThrottleFor["other@school.ru"] = 2
+	h.RejectFor("teacher@school.ru", "MailFromDomainNotVerifiedException")
+	h.ThrottleFor("other@school.ru", 2)
 
 	status, code, raw := post(t, url, simpleBody("Учитель <Teacher@School.RU>", nil), "", nil)
 	assert.Equal(t, http.StatusBadRequest, status)
@@ -275,11 +275,11 @@ func TestHandler_RejectAndThrottleKeyByBareEmail(t *testing.T) {
 	assert.Equal(t, "Текст", sent[0].Text)
 }
 
-// StoreLimit держит последние N: старые письма вытесняются, порядок сохраняется.
+// SetStoreLimit держит последние N: старые письма вытесняются, порядок сохраняется.
 func TestHandler_StoreLimitKeepsLast(t *testing.T) {
 	t.Parallel()
 	h, url := newServer(t)
-	h.StoreLimit = 3
+	h.SetStoreLimit(3)
 
 	ids := make([]string, 0, 5)
 	for range 5 {

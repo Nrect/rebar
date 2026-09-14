@@ -47,7 +47,7 @@ func (h *Handler) authenticate(r *http.Request, body []byte) *apiError {
 	}
 
 	h.mu.Lock()
-	secret, region := h.Secret, h.Region
+	secret, region := h.secret, h.region
 	h.mu.Unlock()
 	switch {
 	case !strings.HasPrefix(amzDate, auth.date):
