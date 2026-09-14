@@ -1,26 +1,42 @@
 package mail
 
-import "errors"
+import (
+	"errors"
 
-// Sentinel-ошибки. Вызывающий ветвится через errors.Is; текст тела письма не
-// содержит.
+	"github.com/nrect/rebar/kit/errs"
+)
+
+// Sentinel-ошибки. Вызывающий ветвится через errors.Is; класс для HTTP-статуса
+// несёт сама sentinel (ADR-0007), текст тела письма не содержит. Префикс
+// «mail:» в тексте обязателен: KindError равны по классу и тексту, и без него
+// mail.ErrKeyReused совпала бы через errors.Is с outbox.ErrKeyReused.
 var (
-	// ErrInvalidMessage — письмо не прошло Prepare: адрес, тема, заголовки, размер.
-	ErrInvalidMessage = errors.New("message is invalid")
+	// ErrInvalidMessage — письмо не прошло Prepare: адрес, тема, заголовки,
+	// размер. Наружу 400: адрес и имя получателя приходят от клиента, а CR/LF в
+	// них — попытка подмешать заголовок (ADR-0001, «Fail-closed»).
+	ErrInvalidMessage = errs.Kinded(errs.KindIncorrectInput, "mail: message is invalid")
 	// ErrBadKind — тип письма не объявлен в Config.Kinds (закрытый набор: метка метрики).
-	ErrBadKind = errors.New("unknown message kind")
+	//errs:nokind тип выбирает код потребителя, а не клиент: необъявленный — дефект сборки, то есть 500
+	ErrBadKind = errors.New("mail: unknown message kind")
 	// ErrKeyInvalid — ключ дедупа пуст, слишком длинный или непечатный.
-	ErrKeyInvalid = errors.New("dedup key is empty, too long or not printable")
+	//errs:nokind ключ дедупа строит код потребителя из факта: негодный — дефект вызывающего, то есть 500
+	ErrKeyInvalid = errors.New("mail: dedup key is empty, too long or not printable")
 	// ErrKeyReused — тот же ключ на другое письмо; см. «Безопасность», п. 4.
-	ErrKeyReused = errors.New("dedup key was used for a different message")
-	// ErrSuppressed — адрес в стоп-листе: решение, а не сбой.
-	ErrSuppressed = errors.New("recipient is suppressed")
+	// Наружу 409, как payment.ErrIdempotencyKeyReused: тихий no-op скрыл бы, что
+	// второе письмо не ушло.
+	ErrKeyReused = errs.Kinded(errs.KindConflict, "mail: dedup key was used for a different message")
+	// ErrSuppressed — адрес в стоп-листе: решение, а не сбой. Наружу 409:
+	// состояние получателя не допускает отправку.
+	ErrSuppressed = errs.Kinded(errs.KindConflict, "mail: recipient is suppressed")
 	// ErrUnavailable — сбой хранилища или стоп-листа; письмо остаётся в очереди.
-	ErrUnavailable = errors.New("mail operation could not be completed")
+	// Наружу 503: повтор осмыслен.
+	ErrUnavailable = errs.Kinded(errs.KindUnavailable, "mail: operation could not be completed")
 	// ErrNoSuppressor — Suppress без порта стоп-листа: сервис собран с nil Suppressor.
-	ErrNoSuppressor = errors.New("mail suppressor is not configured")
-	// ErrTransportUnconfigured — Send у Unconfigured: провайдера нет, письмо ждёт в очереди.
-	ErrTransportUnconfigured = errors.New("mail transport is not configured")
+	//errs:nokind сервис собран без стоп-листа: дефект сборки у потребителя, то есть 500
+	ErrNoSuppressor = errors.New("mail: suppressor is not configured")
+	// ErrTransportUnconfigured — Send у Unconfigured: провайдера нет, письмо ждёт
+	// в очереди. Наружу 503: временный сбой (ADR-0001, «Транспорты»).
+	ErrTransportUnconfigured = errs.Kinded(errs.KindUnavailable, "mail: transport is not configured")
 )
 
 // RejectedError — постоянный отказ провайдера: повтор бессмысленен и вреден,

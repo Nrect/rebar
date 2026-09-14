@@ -50,6 +50,8 @@ type Config struct {
 }
 
 // ErrInvalidConfig — New отказал конфигу; причина в тексте ошибки.
+//
+//errs:nokind отказ конфигу на старте, до запроса клиента не доходит: дефект сборки, то есть 500
 var ErrInvalidConfig = errors.New("smtp: invalid config")
 
 // normalized — самые строгие умолчания, затем проверка.

@@ -6,6 +6,36 @@
 ## Unreleased
 
 ### Changed
+- **Класс ошибки у sentinel ([ADR-0007](../docs/adr/0007-error-kind.md)).**
+  Потребителю больше не нужна таблица перевода ошибок `outbox`: `errs.KindOf`
+  и `httperr` находят класс на самой sentinel. Страж
+  `errstest.EveryErrorHasKind` стоит в корне модуля (`sentinels_test.go`);
+  двойники `outboxtest` из него исключены — их ошибки только причины, класс
+  несёт обёртка ядра, и это держит `TestPortFailuresReachCallerAsUnavailable`.
+  Вставку ядро не делает: её зовёт потребитель адаптером в своей транзакции, и
+  у ошибки адаптера класса нет (ADR-0007, «Чего НЕТ»).
+
+  | Sentinel | Класс | Почему |
+  |---|---|---|
+  | `ErrKeyReused` | 409 `conflict` | тот же `(Kind, DedupKey)` на другое сообщение |
+  | `ErrClaimLost` | 409 `conflict` | строку держит другой токен аренды, состояние не менялось |
+  | `ErrUnavailable` | 503 `unavailable` | сбой хранилища, повтор осмыслен |
+  | `ErrInvalidMessage`, `ErrBadKind`, `ErrKeyInvalid` | нет, `//errs:nokind` | сообщение, тип и ключ строит код потребителя из факта: негодные — дефект, то есть 500 |
+  | `ErrSkip` | нет, `//errs:nokind` | не отказ, а сигнал хендлера воркеру: строка закрывается как done |
+
+- **Ломающее для кода, который сравнивал тексты sentinel, присваивал их или
+  звал `SetClock(nil)`.** Замена:
+
+  | Было | Стало |
+  |---|---|
+  | тип sentinel с классом — `error` | `errs.KindError`; `errors.Is` и `==` работают как прежде |
+  | `message is invalid`, `unknown message kind`, `dedup key …`, `claim was lost: …` | тот же текст с префиксом `outbox: ` |
+  | `outbox operation could not be completed` | `outbox: operation could not be completed` |
+  | `Producer.SetClock(nil)`, `Worker.SetClock(nil)` принимались и падали разыменованием при первом обращении к часам | паника `outbox.Producer.SetClock: now must not be nil` и `outbox.Worker.SetClock: now must not be nil` |
+
+  Префикс не косметика: `KindError` равны по классу и тексту, и без него
+  `outbox.ErrKeyReused` совпала бы через `errors.Is` с `mail.ErrKeyReused`.
+  Модуль требует `github.com/nrect/rebar/kit v0.2.0`.
 - **API двойников меняется ломающе: настройка `outboxtest.RecordingHandler` и
   `outboxtest.MemStore` — методы, а не публичные поля.** Двойники читали поля
   под своим мьютексом, а тест писал их мимо него. Пока поле ставится до первого

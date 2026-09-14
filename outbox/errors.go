@@ -4,29 +4,40 @@ import (
 	"errors"
 	"time"
 	"unicode/utf8"
+
+	"github.com/nrect/rebar/kit/errs"
 )
 
-// Sentinel-ошибки. Вызывающий ветвится через errors.Is; payload они не
-// содержат.
+// Sentinel-ошибки. Вызывающий ветвится через errors.Is; класс для HTTP-статуса
+// несёт сама sentinel (ADR-0007), payload они не содержат. Префикс «outbox:» в
+// тексте обязателен: KindError равны по классу и тексту, и без него
+// outbox.ErrKeyReused совпала бы через errors.Is с mail.ErrKeyReused.
 var (
 	// ErrInvalidMessage — сообщение не прошло Prepare: payload, заголовки,
 	// агрегат, версия схемы.
-	ErrInvalidMessage = errors.New("message is invalid")
+	//errs:nokind сообщение строит код потребителя из бизнес-факта: негодное — дефект вызывающего, то есть 500
+	ErrInvalidMessage = errors.New("outbox: message is invalid")
 	// ErrBadKind — тип не объявлен в Config.Kinds (закрытый набор: метка метрики).
-	ErrBadKind = errors.New("unknown message kind")
+	//errs:nokind тип выбирает код потребителя, а не клиент: необъявленный — дефект сборки, то есть 500
+	ErrBadKind = errors.New("outbox: unknown message kind")
 	// ErrKeyInvalid — ключ дедупа слишком длинный или непечатный.
-	ErrKeyInvalid = errors.New("dedup key is empty, too long or not printable")
+	//errs:nokind ключ дедупа выводит из факта код потребителя: негодный — дефект вызывающего, то есть 500
+	ErrKeyInvalid = errors.New("outbox: dedup key is empty, too long or not printable")
 	// ErrKeyReused — тот же (Kind, DedupKey) на другое сообщение; см.
-	// «Безопасность», п. 5.
-	ErrKeyReused = errors.New("dedup key was used for a different message")
+	// «Безопасность», п. 5. Наружу 409: тихий no-op превратил бы «начислить 100»
+	// под ключом «начислить 500» в «уже сделано».
+	ErrKeyReused = errs.Kinded(errs.KindConflict, "outbox: dedup key was used for a different message")
 	// ErrClaimLost — Finish не нашёл строку со своим токеном аренды: её уже
-	// переписал другой воркер. Состояние не менялось; см. п. 3.
-	ErrClaimLost = errors.New("claim was lost: row is not held by this token")
-	// ErrUnavailable — сбой хранилища; строка остаётся в очереди.
-	ErrUnavailable = errors.New("outbox operation could not be completed")
+	// переписал другой воркер. Состояние не менялось; см. п. 3. Класс 409:
+	// состояние строки не допускает запись исхода этим токеном.
+	ErrClaimLost = errs.Kinded(errs.KindConflict, "outbox: claim was lost: row is not held by this token")
+	// ErrUnavailable — сбой хранилища; строка остаётся в очереди. Наружу 503:
+	// повтор осмыслен.
+	ErrUnavailable = errs.Kinded(errs.KindUnavailable, "outbox: operation could not be completed")
 	// ErrSkip — хендлер перепроверил предикат в момент выполнения
 	// (check-at-send) и эффекта нет: напоминание об уже оплаченном счёте.
 	// Строка закрывается как done, а не как отказ.
+	//errs:nokind не отказ, а сигнал воркеру от хендлера: строка закрывается как done и до клиента не доходит
 	ErrSkip = errors.New("outbox: delivery skipped")
 )
 

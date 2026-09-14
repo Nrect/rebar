@@ -214,7 +214,7 @@ func TestNewService_PanicsOnBadConfig(t *testing.T) {
 	}{
 		"пустой From": {
 			func(c *mail.Config) { c.From.Email = "" },
-			"Config.From.Email must be a valid address: message is invalid: address is empty",
+			"Config.From.Email must be a valid address: mail: message is invalid: address is empty",
 		},
 		"CRLF в имени From": {
 			func(c *mail.Config) { c.From.Name = "Пример\r\nBcc: x@y.ru" },

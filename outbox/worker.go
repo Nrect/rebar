@@ -55,7 +55,14 @@ func NewWorker(store Store, reg *Registry, cfg Config) (*Worker, error) {
 }
 
 // SetClock подменяет источник времени; только для тестов, до начала работы.
-func (w *Worker) SetClock(now func() time.Time) { w.now = now }
+// nil — паника здесь, на настройке, а не разыменование nil в чужом стеке при
+// первом обращении к часам.
+func (w *Worker) SetClock(now func() time.Time) {
+	if now == nil {
+		panic("outbox.Worker.SetClock: now must not be nil")
+	}
+	w.now = now
+}
 
 // Kinds — типы, которые умеет этот воркер (снимок реестра).
 func (w *Worker) Kinds() []Kind { return append([]Kind(nil), w.kinds...) }

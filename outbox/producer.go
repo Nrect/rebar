@@ -42,7 +42,14 @@ func NewProducer(store Store, cfg Config) *Producer {
 }
 
 // SetClock подменяет источник времени; только для тестов, до начала работы.
-func (p *Producer) SetClock(now func() time.Time) { p.now = now }
+// nil — паника здесь, на настройке, а не разыменование nil в чужом стеке при
+// первом обращении к часам.
+func (p *Producer) SetClock(now func() time.Time) {
+	if now == nil {
+		panic("outbox.Producer.SetClock: now must not be nil")
+	}
+	p.now = now
+}
 
 // Prepare — чистая половина вставки: валидация, нормализация ключа, отпечаток,
 // идентификатор, времена. Ни хранилища, ни сети — именно поэтому потребитель
