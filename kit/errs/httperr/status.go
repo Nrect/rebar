@@ -7,7 +7,7 @@ import (
 	"github.com/nrect/rebar/kit/errs"
 )
 
-// DefaultInternalSlug — слаг ответа на всё, что не errs.SlugError.
+// DefaultInternalSlug — слаг ответа на ошибку без годного слага и без класса.
 const DefaultInternalSlug = "internal-server-error"
 
 // statusByKind — единственная таблица «класс → статус». Полноту держит
