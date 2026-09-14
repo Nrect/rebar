@@ -9,10 +9,10 @@ import (
 // Sentinel-ошибки. Вызывающий ветвится через errors.Is; класс для HTTP-статуса
 // несёт сама sentinel (ADR-0007), текст тела письма не содержит. Префикс
 // «mail:» в тексте обязателен: KindError равны по классу и тексту, и без него
-// mail.ErrKeyReused совпала бы через errors.Is с outbox.ErrKeyReused.
+// mail.ErrUnavailable совпала бы через errors.Is с outbox.ErrUnavailable.
 var (
 	// ErrInvalidMessage — письмо не прошло Prepare: адрес, тема, заголовки, размер.
-	//errs:nokind Prepare зовёт код потребителя, и модуль не знает, пришёл адрес из формы или из шаблона: класс ставит Translate потребителя
+	//errs:nokind адрес и заголовки собирает код потребителя; открытую форму адреса потребитель переводит своим правилом
 	ErrInvalidMessage = errors.New("mail: message is invalid")
 	// ErrBadKind — тип письма не объявлен в Config.Kinds (закрытый набор: метка метрики).
 	//errs:nokind тип выбирает код потребителя, а не клиент: необъявленный — дефект сборки, то есть 500
@@ -20,10 +20,10 @@ var (
 	// ErrKeyInvalid — ключ дедупа пуст, слишком длинный или непечатный.
 	//errs:nokind ключ дедупа строит код потребителя из факта: негодный — дефект вызывающего, то есть 500
 	ErrKeyInvalid = errors.New("mail: dedup key is empty, too long or not printable")
-	// ErrKeyReused — тот же ключ на другое письмо; см. «Безопасность», п. 4.
-	// Наружу 409, как payment.ErrIdempotencyKeyReused: тихий no-op скрыл бы, что
-	// второе письмо не ушло.
-	ErrKeyReused = errs.Kinded(errs.KindConflict, "mail: dedup key was used for a different message")
+	// ErrKeyReused — тот же ключ на другое письмо: громко, а не тихий no-op,
+	// который скрыл бы, что второе письмо не ушло; см. «Безопасность», п. 4.
+	//errs:nokind тот же ключ дедупа на другое сообщение — ошибка ключа в коде потребителя, 500
+	ErrKeyReused = errors.New("mail: dedup key was used for a different message")
 	// ErrUnavailable — сбой хранилища или стоп-листа; письмо остаётся в очереди.
 	// Наружу 503: повтор осмыслен.
 	ErrUnavailable = errs.Kinded(errs.KindUnavailable, "mail: operation could not be completed")

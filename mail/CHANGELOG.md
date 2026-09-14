@@ -36,10 +36,10 @@
 
   | Sentinel | Класс | Почему |
   |---|---|---|
-  | `ErrKeyReused` | 409 `conflict` | тот же ключ на другое письмо, как `payment.ErrIdempotencyKeyReused` |
   | `ErrUnavailable` | 503 `unavailable` | сбой хранилища или стоп-листа, повтор осмыслен |
   | `ErrTransportUnconfigured` | 503 `unavailable` | временный сбой (ADR-0001, «Транспорты») |
-  | `ErrInvalidMessage` | нет, `//errs:nokind` | `Prepare` зовёт код потребителя, и модуль не знает, пришёл адрес из формы или из шаблона; потребитель с открытой формой адреса ставит класс одним правилом `Translate` (ADR-0007, «Спорные назначения») |
+  | `ErrInvalidMessage` | нет, `//errs:nokind` | адрес и заголовки собирает код потребителя: модуль не знает, пришёл адрес из формы или из шаблона; потребитель с открытой формой адреса ставит класс одним правилом `Translate` (ADR-0007, «Спорные назначения») |
+  | `ErrKeyReused` | нет, `//errs:nokind` | ключ дедупа строит код потребителя (`"verify:<id>"`), поэтому тот же ключ на другое письмо — ошибка ключа в коде, а не конфликт для клиента; у `payment.ErrIdempotencyKeyReused` ключ присылает клиент, отсюда её 409 |
   | `ErrBadKind`, `ErrKeyInvalid`, `ErrNoSuppressor`, `smtp.ErrInvalidConfig` | нет, `//errs:nokind` | тип, ключ и сборку задаёт код потребителя: негодные — дефект, то есть 500 |
 
 - **Ломающее для кода, который сравнивал тексты sentinel, присваивал их,
@@ -59,7 +59,7 @@
   | `Service.SetClock(nil)` принимался и падал разыменованием при первом обращении к часам | паника `mail.Service.SetClock: now must not be nil` |
 
   Префикс не косметика: `KindError` равны по классу и тексту, и без него
-  `mail.ErrKeyReused` совпала бы через `errors.Is` с `outbox.ErrKeyReused`.
+  `mail.ErrUnavailable` совпала бы через `errors.Is` с `outbox.ErrUnavailable`.
   Модуль требует `github.com/nrect/rebar/kit v0.2.0`.
 - `Backoff` берётся из `kit/retry`: копия экспоненты с джиттером удалена.
   Поведение то же — сверено построчно: тело и структура копии совпадали с

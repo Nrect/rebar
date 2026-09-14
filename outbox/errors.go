@@ -11,7 +11,7 @@ import (
 // Sentinel-ошибки. Вызывающий ветвится через errors.Is; класс для HTTP-статуса
 // несёт сама sentinel (ADR-0007), payload они не содержат. Префикс «outbox:» в
 // тексте обязателен: KindError равны по классу и тексту, и без него
-// outbox.ErrKeyReused совпала бы через errors.Is с mail.ErrKeyReused.
+// outbox.ErrUnavailable совпала бы через errors.Is с mail.ErrUnavailable.
 var (
 	// ErrInvalidMessage — сообщение не прошло Prepare: payload, заголовки,
 	// агрегат, версия схемы.
@@ -23,10 +23,11 @@ var (
 	// ErrKeyInvalid — ключ дедупа слишком длинный или непечатный.
 	//errs:nokind ключ дедупа выводит из факта код потребителя: негодный — дефект вызывающего, то есть 500
 	ErrKeyInvalid = errors.New("outbox: dedup key is empty, too long or not printable")
-	// ErrKeyReused — тот же (Kind, DedupKey) на другое сообщение; см.
-	// «Безопасность», п. 5. Наружу 409: тихий no-op превратил бы «начислить 100»
-	// под ключом «начислить 500» в «уже сделано».
-	ErrKeyReused = errs.Kinded(errs.KindConflict, "outbox: dedup key was used for a different message")
+	// ErrKeyReused — тот же (Kind, DedupKey) на другое сообщение: громко, а не
+	// тихий no-op, который превратил бы «начислить 100» под ключом «начислить
+	// 500» в «уже сделано»; см. «Безопасность», п. 5.
+	//errs:nokind тот же ключ дедупа на другое сообщение — ошибка ключа в коде потребителя, 500
+	ErrKeyReused = errors.New("outbox: dedup key was used for a different message")
 	// ErrClaimLost — Finish не нашёл строку со своим токеном аренды: её уже
 	// переписал другой воркер. Состояние не менялось; см. п. 3. Класс 409:
 	// состояние строки не допускает запись исхода этим токеном.

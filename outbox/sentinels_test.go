@@ -35,7 +35,7 @@ func TestSentinelKinds(t *testing.T) {
 		{"ErrInvalidMessage", outbox.ErrInvalidMessage, errs.KindUnknown},
 		{"ErrBadKind", outbox.ErrBadKind, errs.KindUnknown},
 		{"ErrKeyInvalid", outbox.ErrKeyInvalid, errs.KindUnknown},
-		{"ErrKeyReused", outbox.ErrKeyReused, errs.KindConflict},
+		{"ErrKeyReused", outbox.ErrKeyReused, errs.KindUnknown},
 		{"ErrClaimLost", outbox.ErrClaimLost, errs.KindConflict},
 		{"ErrUnavailable", outbox.ErrUnavailable, errs.KindUnavailable},
 		{"ErrSkip", outbox.ErrSkip, errs.KindUnknown},
@@ -47,8 +47,8 @@ func TestSentinelKinds(t *testing.T) {
 
 // Прогон и операторские методы воркера отдают сбой хранилища с классом 503, а
 // не голой причиной двойника. Вставку ядро не делает: её зовёт потребитель
-// адаптером в своей транзакции, и класс ошибки адаптера — его решение
-// (ADR-0007, «Чего НЕТ»).
+// адаптером в своей транзакции, и класс ошибки на этом пути принадлежит ему
+// (doc.go).
 func TestPortFailuresReachCallerAsUnavailable(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t, nil)

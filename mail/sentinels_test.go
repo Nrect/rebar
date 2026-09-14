@@ -37,7 +37,7 @@ func TestSentinelKinds(t *testing.T) {
 		{"ErrInvalidMessage", mail.ErrInvalidMessage, errs.KindUnknown, "mail: "},
 		{"ErrBadKind", mail.ErrBadKind, errs.KindUnknown, "mail: "},
 		{"ErrKeyInvalid", mail.ErrKeyInvalid, errs.KindUnknown, "mail: "},
-		{"ErrKeyReused", mail.ErrKeyReused, errs.KindConflict, "mail: "},
+		{"ErrKeyReused", mail.ErrKeyReused, errs.KindUnknown, "mail: "},
 		{"ErrUnavailable", mail.ErrUnavailable, errs.KindUnavailable, "mail: "},
 		{"ErrNoSuppressor", mail.ErrNoSuppressor, errs.KindUnknown, "mail: "},
 		{"ErrTransportUnconfigured", mail.ErrTransportUnconfigured, errs.KindUnavailable, "mail: "},
