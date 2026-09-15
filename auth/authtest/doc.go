@@ -22,7 +22,11 @@
 // session.Attempts. Оба гоняются тем же контрактным набором, что и адаптер:
 // RunSessionsSuite и RunAttemptsSuite живут здесь, пишутся на голом testing и
 // зовутся и из authtest, и из authpg — расхождение двойника с базой обязано
-// быть видно сразу, а не у потребителя (CONVENTIONS §5).
+// быть видно сразу, а не у потребителя (CONVENTIONS §5). Сбой хранилища у
+// обоих — SetErr, SetTouchErr, SetRecordErr — приходит в auth.ErrUnavailable,
+// как у authpg: errors.Is находит и её, и причину. Отказы портов, которые
+// пишет потребитель (Identities, Tokens, Notifier, Auditor), приходят голыми:
+// класс их сбоя даёт обёртка session (ADR-0007, «Двойники»).
 //
 // MemTokens — двойник порта session.Tokens, единственного, который в проде
 // пишет потребитель. Он СВЯЗАН С MemIdentities и честно применяет эффект

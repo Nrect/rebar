@@ -21,6 +21,13 @@ import (
 // Самого хэша в тексте нет: он ключ строки сессии.
 var ErrSessionExists = fmt.Errorf("%w: authtest: session already exists", auth.ErrUnavailable)
 
+// storeError — заданный сбой так, как его отдаёт authpg: в auth.ErrUnavailable
+// с причиной в цепочке. Голая причина дала бы потребителю, зовущему хранилище
+// мимо сервиса, 500 там, где прод отвечает 503 (ADR-0007, «Двойники»).
+func storeError(op string, err error) error {
+	return fmt.Errorf("%w: authtest: %s: %w", auth.ErrUnavailable, op, err)
+}
+
 // MemSessions — двойник порта session.Sessions.
 //
 // МОДЕЛИРУЕТ ИНВАРИАНТЫ, А НЕ ЗАПОМИНАЕТ ВЫЗОВЫ: хэш уникален, реалм входит в
@@ -37,6 +44,7 @@ type MemSessions struct {
 }
 
 // SetErr — отказ любого метода порта, память не трогается; nil снимает.
+// Приходит в auth.ErrUnavailable, как у authpg.
 func (m *MemSessions) SetErr(err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -45,7 +53,8 @@ func (m *MemSessions) SetErr(err error) {
 
 // SetTouchErr — отказ ТОЛЬКО на продлении: чтение при этом работает. Отдельной
 // ручкой, потому что «сессия читается, но не продлевается» — самостоятельный
-// отказ, и разбор куки обязан на него закрыться; nil снимает.
+// отказ, и разбор куки обязан на него закрыться; nil снимает. Приходит так же,
+// как SetErr.
 func (m *MemSessions) SetTouchErr(err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -75,7 +84,7 @@ func (m *MemSessions) Insert(_ context.Context, s session.Session) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
-		return m.err
+		return storeError("insert session", m.err)
 	}
 	key := sessionKey{realm: s.Realm, hash: s.TokenHash}
 	if _, ok := m.rows[key]; ok {
@@ -94,7 +103,7 @@ func (m *MemSessions) ByHash(_ context.Context, realm auth.Realm, hash string) (
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
-		return session.Session{}, m.err
+		return session.Session{}, storeError("select session", m.err)
 	}
 	s, ok := m.rows[sessionKey{realm: realm, hash: hash}]
 	if !ok {
@@ -112,10 +121,10 @@ func (m *MemSessions) Touch(_ context.Context, realm auth.Realm, hash string,
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
-		return m.err
+		return storeError("touch session", m.err)
 	}
 	if m.touchErr != nil {
-		return m.touchErr
+		return storeError("touch session", m.touchErr)
 	}
 	key := sessionKey{realm: realm, hash: hash}
 	s, ok := m.rows[key]
@@ -133,7 +142,7 @@ func (m *MemSessions) Delete(_ context.Context, realm auth.Realm, hash string) e
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
-		return m.err
+		return storeError("delete session", m.err)
 	}
 	delete(m.rows, sessionKey{realm: realm, hash: hash})
 	return nil
@@ -142,7 +151,7 @@ func (m *MemSessions) Delete(_ context.Context, realm auth.Realm, hash string) e
 // DeleteOfSubject гасит все сессии субъекта в реалме.
 func (m *MemSessions) DeleteOfSubject(_ context.Context, realm auth.Realm, subjectID uuid.UUID) (int, error) {
 	m.Hit("DeleteOfSubject")
-	return m.deleteWhere(func(s session.Session) bool {
+	return m.deleteWhere("delete sessions of subject", func(s session.Session) bool {
 		return s.Realm == realm && s.SubjectID == subjectID
 	})
 }
@@ -150,16 +159,16 @@ func (m *MemSessions) DeleteOfSubject(_ context.Context, realm auth.Realm, subje
 // DeleteExpired убирает истёкшие ПО ЛЮБОМУ из двух сроков.
 func (m *MemSessions) DeleteExpired(_ context.Context, realm auth.Realm, now time.Time) (int, error) {
 	m.Hit("DeleteExpired")
-	return m.deleteWhere(func(s session.Session) bool {
+	return m.deleteWhere("delete expired sessions", func(s session.Session) bool {
 		return s.Realm == realm && (!now.Before(s.ExpiresAt) || !now.Before(s.IdleExpiresAt))
 	})
 }
 
-func (m *MemSessions) deleteWhere(match func(session.Session) bool) (int, error) {
+func (m *MemSessions) deleteWhere(op string, match func(session.Session) bool) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
-		return 0, m.err
+		return 0, storeError(op, m.err)
 	}
 	var doomed []sessionKey
 	for key, s := range m.rows {
