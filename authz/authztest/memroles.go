@@ -2,6 +2,7 @@ package authztest
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"sync"
 
@@ -54,8 +55,8 @@ func (m *MemRoles) Remove(s authz.Subject, role authz.Role) {
 }
 
 // SetErr — отказ из RolesOf: им проверяется, что сбой источника даёт
-// недоступность, а не отказ в правах. Ошибка теста, а не домена: authz
-// завернёт её в свою ErrUnavailable.
+// недоступность, а не отказ в правах. Приходит в authz.ErrUnavailable уже от
+// двойника, как от authzpg на прямом вызове.
 //
 // Метод, а не поле: двойник дёргают параллельные горутины теста на гонку, и
 // публичное поле читалось бы под мьютексом, а писалось мимо него — то есть
@@ -68,15 +69,26 @@ func (m *MemRoles) SetErr(err error) {
 
 // RolesOf — роли субъекта КОПИЕЙ: правка возвращённого среза не должна менять
 // содержимое хранилища. Неизвестный субъект — пустой список и nil: это отказ
-// по правилу, а не сбой.
+// по правилу, а не сбой. Аноним — nil до всех проверок, как у authzpg: за ним
+// в хранилище не ходят, и отказать там нечему.
 func (m *MemRoles) RolesOf(ctx context.Context, s authz.Subject) ([]authz.Role, error) {
+	if s.Anonymous() {
+		return nil, nil
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, storeError(err)
 	}
 	if m.err != nil {
-		return nil, m.err
+		return nil, storeError(m.err)
 	}
 	return slices.Clone(m.roles[s]), nil
+}
+
+// storeError — сбой так, как его отдаёт authzpg: в authz.ErrUnavailable с
+// причиной в цепочке. Голая причина дала бы потребителю, зовущему источник
+// мимо Authorizer, 500 там, где прод отвечает 503 (ADR-0007, «Двойники»).
+func storeError(err error) error {
+	return fmt.Errorf("%w: authztest: roles of: %w", authz.ErrUnavailable, err)
 }
