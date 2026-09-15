@@ -158,6 +158,16 @@ type Notifier interface {
 	Notify(ctx context.Context, n Notification) error
 }
 
+// Recipients — годен ли логин получателем уведомлений. Правило канала (почта,
+// SMS) знает только потребитель: loginid адрес не проверяет. Без ctx намеренно —
+// правило синтаксическое, база и сеть сюда не ходят.
+//
+// ТЕКСТ ОШИБКИ Check УХОДИТ В ОШИБКУ Register И В ЛОГ: логина в нём быть не
+// должно.
+type Recipients interface {
+	Check(login string) error
+}
+
 // Event — запись аудита потребителя. Ни пароля, ни сырого токена, ни логина в
 // ней нет: логин это персональные данные, а журнал живёт дольше всего.
 type Event struct {

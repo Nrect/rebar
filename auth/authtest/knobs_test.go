@@ -28,6 +28,7 @@ func TestDoubles_HaveNoExportedFields(t *testing.T) {
 		reflect.TypeFor[authtest.MemAttempts](),
 		reflect.TypeFor[authtest.RecordingNotifier](),
 		reflect.TypeFor[authtest.RecordingAuditor](),
+		reflect.TypeFor[authtest.MemRecipients](),
 		reflect.TypeFor[authtest.Strength](),
 		reflect.TypeFor[authtest.Calls](),
 		reflect.TypeFor[authtest.Clock](),
@@ -139,6 +140,22 @@ func TestRecorders_KnobsAreSafeWhileServing(t *testing.T) {
 		func(i int) { notifier.SetErr(flip(i)) },
 		func(i int) { auditor.SetErr(flip(i)) },
 		func(int) { _, _ = notifier.Notifications(), auditor.Events() },
+	)
+}
+
+// Отказ проверки получателя правится на ходу, пока ручка регистрации в другой
+// горутине спрашивает получателя.
+func TestMemRecipients_KnobsAreSafeWhileServing(t *testing.T) {
+	t.Parallel()
+
+	recipients := authtest.NewMemRecipients()
+	whileServing(
+		func() { // ручка регистрации: Check читает err
+			for range 300 {
+				_ = recipients.Check("a@example.org")
+			}
+		},
+		func(i int) { recipients.SetErr(flip(i)) },
 	)
 }
 

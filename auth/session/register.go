@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/google/uuid"
 
@@ -20,6 +21,15 @@ type RegisterRequest struct {
 	UserAgent string
 }
 
+// checkRecipient — годен ли логин получателем уведомлений. Отказ —
+// loginid.ErrInvalid с причиной порта: класс 400 берёт внешняя ошибка.
+func (s *Service) checkRecipient(login string) error {
+	if err := s.deps.Recipients.Check(login); err != nil {
+		return fmt.Errorf("%w: recipient: %w", loginid.ErrInvalid, err)
+	}
+	return nil
+}
+
 // Register заводит личность и отправляет ссылку подтверждения.
 //
 // СЕМАНТИКА «ПРИНЯТО», А НЕ «СОЗДАНО». На занятый адрес ответ тот же самый:
@@ -30,12 +40,19 @@ type RegisterRequest struct {
 // Обе ветки стоят одного argon2id: хэш считается ДО Create, поэтому по времени
 // ответа занятый адрес от свободного не отличить.
 //
+// ПОЛУЧАТЕЛЬ ПРОВЕРЯЕТСЯ ДО Create: логин, на который письмо не соберётся,
+// оставил бы личность без письма, а повтор ответил бы «принято».
+//
 // Ошибки: password.ErrTooShort, ErrTooLong, ErrTooWeak (о присланном пароле,
-// а не об адресе), loginid.ErrInvalid, ErrTooManyAttempts, auth.ErrUnavailable.
+// а не об адресе), loginid.ErrInvalid (и на отказ Recipients),
+// ErrTooManyAttempts, auth.ErrUnavailable.
 func (s *Service) Register(ctx context.Context, req RegisterRequest) error {
 	login, err := loginid.Normalize(req.Login)
 	if err != nil {
 		return err
+	}
+	if recipientErr := s.checkRecipient(login); recipientErr != nil {
+		return recipientErr
 	}
 	if policyErr := s.deps.Policy.Check(req.Password, login); policyErr != nil {
 		return policyErr

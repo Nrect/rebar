@@ -11,7 +11,6 @@ import (
 	"github.com/nrect/rebar/kit/errs"
 	"github.com/nrect/rebar/kit/errs/httperr"
 	"github.com/nrect/rebar/kit/reqid"
-	"github.com/nrect/rebar/mail"
 	"github.com/nrect/rebar/objectstore"
 	"github.com/nrect/rebar/payment"
 )
@@ -92,15 +91,11 @@ func rules() []rule {
 
 // authRules — вход, регистрация и права.
 func authRules() []rule {
-	loginInvalid := errs.IncorrectInput("login-invalid")
 	return []rule{
 		{session.ErrInvalidCredentials, errs.Unauthenticated("invalid-credentials")},
 		{session.ErrNotVerified, errs.Forbidden("email-not-verified")},
 		{session.ErrTokenInvalid, errs.IncorrectInput("token-invalid")},
-		{loginid.ErrInvalid, loginInvalid},
-		// Адрес письма — логин из формы регистрации: mail решила отказом, потому
-		// что адрес обычно строит код, а здесь его прислал клиент (ADR-0007).
-		{mail.ErrInvalidMessage, loginInvalid},
+		{loginid.ErrInvalid, errs.IncorrectInput("login-invalid")},
 		{password.ErrTooShort, errs.IncorrectInput("password-too-short")},
 		{password.ErrTooLong, errs.IncorrectInput("password-too-long")},
 		{password.ErrTooWeak, errs.IncorrectInput("password-too-weak")},
@@ -133,9 +128,8 @@ func uploadRules() []rule {
 
 // allSlugs — реестр слагов ответа, БЕЗ ПОВТОРОВ.
 //
-// Повторы законны и намеренны: негодный логин и негодный по нему адрес письма
-// — клиенту один ответ, SVG и чужой тип — тоже. Реестр же — это множество
-// РАЗНЫХ ответов, и его держит errstest.CheckSlugRegistry.
+// Повторы законны и намеренны: SVG и чужой тип — клиенту один ответ. Реестр же
+// — это множество РАЗНЫХ ответов, и его держит errstest.CheckSlugRegistry.
 func allSlugs() []string {
 	seen := make(map[string]bool, 32)
 	out := make([]string, 0, 32)

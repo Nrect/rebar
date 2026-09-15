@@ -92,17 +92,18 @@ func (c *countingIdentities) SetPasswordHash(ctx context.Context, id uuid.UUID, 
 // stand — сервис на двойниках плюс сами двойники: тест смотрит на исход И на
 // состояние хранилищ.
 type stand struct {
-	svc      *session.Service
-	ids      *countingIdentities
-	sessions *authtest.MemSessions
-	attempts *authtest.MemAttempts
-	tokens   *authtest.MemTokens
-	notes    *authtest.RecordingNotifier
-	journal  *authtest.RecordingAuditor
-	strength *authtest.Strength
-	clock    *authtest.Clock
-	hasher   *password.Hasher
-	cfg      session.Config
+	svc        *session.Service
+	ids        *countingIdentities
+	sessions   *authtest.MemSessions
+	attempts   *authtest.MemAttempts
+	tokens     *authtest.MemTokens
+	notes      *authtest.RecordingNotifier
+	recipients *authtest.MemRecipients
+	journal    *authtest.RecordingAuditor
+	strength   *authtest.Strength
+	clock      *authtest.Clock
+	hasher     *password.Hasher
+	cfg        session.Config
 }
 
 // newStand собирает стенд; mods правят его ДО создания сервиса — иначе правка
@@ -111,16 +112,17 @@ func newStand(t *testing.T, mods ...func(*stand)) *stand {
 	t.Helper()
 	mem := authtest.NewMemIdentities()
 	st := &stand{
-		ids:      &countingIdentities{MemIdentities: mem},
-		sessions: authtest.NewMemSessions(),
-		attempts: authtest.NewMemAttempts(),
-		tokens:   authtest.NewMemTokens(mem),
-		notes:    authtest.NewRecordingNotifier(),
-		journal:  authtest.NewRecordingAuditor(),
-		strength: authtest.NewStrength(password.ScoreMax),
-		clock:    authtest.NewClock(testNow()),
-		hasher:   password.NewHasher(testHasherConfig()),
-		cfg:      session.DefaultConfig(testRealm, testSecret()),
+		ids:        &countingIdentities{MemIdentities: mem},
+		sessions:   authtest.NewMemSessions(),
+		attempts:   authtest.NewMemAttempts(),
+		tokens:     authtest.NewMemTokens(mem),
+		notes:      authtest.NewRecordingNotifier(),
+		recipients: authtest.NewMemRecipients(),
+		journal:    authtest.NewRecordingAuditor(),
+		strength:   authtest.NewStrength(password.ScoreMax),
+		clock:      authtest.NewClock(testNow()),
+		hasher:     password.NewHasher(testHasherConfig()),
+		cfg:        session.DefaultConfig(testRealm, testSecret()),
 	}
 	for _, mod := range mods {
 		mod(st)
@@ -144,6 +146,7 @@ func (s *stand) deps() session.Deps {
 		Hasher:     s.hasher,
 		Policy:     password.NewPolicy(s.strength, password.DefaultPolicyConfig()),
 		Notifier:   s.notes,
+		Recipients: s.recipients,
 		Auditor:    s.journal,
 	}
 }

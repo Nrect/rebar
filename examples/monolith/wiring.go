@@ -118,6 +118,16 @@ func (n notifier) Notify(ctx context.Context, note session.Notification) error {
 	return err
 }
 
+// recipients — session.Recipients: логин годен получателем, если mail примет его
+// адресом, — то же правило, по которому письмо и собирается.
+type recipients struct{}
+
+// Check — синтаксис адреса по mail.NormalizeAddress; логина в тексте ошибки нет.
+func (recipients) Check(login string) error {
+	_, err := mail.NormalizeAddress(login)
+	return err
+}
+
 // auditActions — закрытый реестр действий журнала. Значение уезжает в метку
 // метрики и в чужие алерты, поэтому набор объявлен, а не выведен из строк.
 func auditActions() []audit.Action {

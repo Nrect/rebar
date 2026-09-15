@@ -111,8 +111,8 @@ func plain(kind mail.Kind, to mail.Address, subject, text string) mail.Message {
 //
 // ЛОГИН В КЛЮЧ НЕ ИДЁТ: loginid пускает логин до 320 байт, и ключ из него
 // переполнял MaxKeyLen — личность заводилась, а письмо подтверждения не
-// собиралось. Хэш токена нового не раскрывает: сырой токен и так лежит в
-// тексте письма в той же строке очереди.
+// собиралось. Хэш токена не обращается: у токена 32 случайных байта
+// (token.Bytes), а session хранит у себя его HMAC.
 func digest(s string) string {
 	sum := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(sum[:])
