@@ -6,7 +6,7 @@
 //
 //	svc := session.New(session.Deps{
 //		Identities: myUsers, Sessions: store, Attempts: store, Tokens: myTokens,
-//		Hasher: hasher, Policy: policy, Notifier: myMailer,
+//		Hasher: hasher, Policy: policy, Notifier: myMailer, Recipients: myAddresses,
 //	}, session.DefaultConfig("shop", token.MustSecret(key)))
 //
 // Сессии непрозрачные: в базе лежит HMAC, у человека — сырой токен в куке.
@@ -88,6 +88,10 @@
 //     сырой токен не попадают ни в текст ошибки, ни в Event: журнал
 //     безопасности живёт дольше всего, а причина неудачного входа в нём —
 //     та же проверялка существования, только для читающего журнал.
+//  11. ПОЛУЧАТЕЛЬ ПРОВЕРЯЕТСЯ ДО ЛИЧНОСТИ. Register и RequestEmailChange
+//     спрашивают порт Recipients раньше Create и первого похода в базу: логин,
+//     на который письмо не соберётся, оставил бы личность без письма и
+//     «принято» на повторе. Правило канала — у потребителя.
 //
 // Чего в пакете нет (решения, не пробелы): таблицы пользователей — она у
 // потребителя за портом auth.Identities; реализации Tokens — эффект токена

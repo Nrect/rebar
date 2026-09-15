@@ -27,6 +27,7 @@ func TestNew_PanicsOnMissingPort(t *testing.T) {
 		"Hasher":     func(d *session.Deps) { d.Hasher = nil },
 		"Policy":     func(d *session.Deps) { d.Policy = nil },
 		"Notifier":   func(d *session.Deps) { d.Notifier = nil },
+		"Recipients": func(d *session.Deps) { d.Recipients = nil },
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

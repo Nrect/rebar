@@ -23,6 +23,8 @@ type Deps struct {
 	Hasher     *password.Hasher
 	Policy     *password.Policy
 	Notifier   Notifier
+	// Recipients — годен ли логин получателем; спрашивается до Create.
+	Recipients Recipients
 	// Auditor — nil допустим.
 	Auditor Auditor
 }
@@ -49,6 +51,7 @@ func (d Deps) mustBeComplete() {
 	for name, port := range map[string]any{
 		"Identities": d.Identities, "Sessions": d.Sessions, "Attempts": d.Attempts,
 		"Tokens": d.Tokens, "Hasher": d.Hasher, "Policy": d.Policy, "Notifier": d.Notifier,
+		"Recipients": d.Recipients,
 	} {
 		if isNil(port) {
 			panic("session.New: Deps." + name + " must not be nil")

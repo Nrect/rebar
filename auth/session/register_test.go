@@ -142,6 +142,45 @@ func TestService_Register_FailsClosedOnStoreError(t *testing.T) {
 	assert.Empty(t, st.tokens.Issued())
 }
 
+// ПОЛУЧАТЕЛЬ ДО ЛИЧНОСТИ. Логин, который Recipients не принял, отвергается до
+// хэша и Create: иначе личность осталась бы без письма, а повтор ответил бы
+// «принято». Класс — loginid.ErrInvalid, причина порта в цепочке, логина в
+// тексте нет.
+func TestService_Register_RejectsUndeliverableLoginBeforeCreate(t *testing.T) {
+	t.Parallel()
+
+	st := newStand(t)
+	st.recipients.SetErr(authtest.ErrInjected)
+
+	err := st.register(t, knownLogin, goodPassword)
+
+	require.ErrorIs(t, err, loginid.ErrInvalid)
+	require.ErrorIs(t, err, authtest.ErrInjected, "причина порта не потеряна")
+	assert.NotContains(t, err.Error(), knownLogin)
+	assert.Zero(t, st.ids.CallCount("Create"), "до хранилища личностей не дошли")
+	assert.Zero(t, st.ids.Len())
+	assert.Empty(t, st.tokens.Issued(), "письма нет")
+}
+
+// Новый адрес проверяется получателем до первого похода в базу: ссылка уходит
+// на него, и негодный адрес — отказ ввода, а не 503 от несобранного письма.
+func TestService_RequestEmailChange_RejectsUndeliverableLogin(t *testing.T) {
+	t.Parallel()
+
+	st := newStand(t)
+	id := st.seed(t, knownLogin)
+	st.resetCalls()
+	st.recipients.SetErr(authtest.ErrInjected)
+
+	err := st.svc.RequestEmailChange(t.Context(), session.EmailChangeRequest{
+		SubjectID: id.ID, NewLogin: "alice.new@example.invalid", Password: goodPassword,
+	})
+
+	require.ErrorIs(t, err, loginid.ErrInvalid)
+	assert.Zero(t, st.ids.CallCount("ByID"), "до хранилища личностей не дошли")
+	assert.Empty(t, st.tokens.Issued())
+}
+
 func (s *stand) register(t *testing.T, login, pw string) error {
 	t.Helper()
 	return s.svc.Register(t.Context(), session.RegisterRequest{

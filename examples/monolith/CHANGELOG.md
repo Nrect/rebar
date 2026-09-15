@@ -8,6 +8,14 @@
 
 ### Changed
 
+- Регистрация проверяет получателя портом `session.Recipients` до записи
+  личности (Д4, правка в `auth`): у монолита правило — `mail.NormalizeAddress`,
+  то же, по которому собирается письмо. Негодный адрес отвечает 400
+  `login-invalid`, и повтор — снова 400, а не «принято» с личностью без письма.
+  Правило `mail.ErrInvalidMessage → login-invalid` снято: из `/register` она
+  больше не выходит. Совпадение правила с письмом держат
+  `TestRecipients_MatchLetter` и `FuzzRecipients_MatchLetter`, отсутствие логина
+  в тексте отказа — `TestRegister_RejectionTextHasNoLogin`.
 - Вебхук отвечает ответчиком классом, без `Translate`: провайдеру слаги
   продукта не нужны, а правило, совпавшее с ошибкой хука глубоко под
   `payment.ErrUnavailable`, превратило бы 503 в 4xx. Держат

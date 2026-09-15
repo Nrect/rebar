@@ -181,4 +181,9 @@
 //     именем подсистемы». Осталось 14 — где слаг меняет действие клиента или
 //     адрес пришёл из формы; лишнюю и мёртвую строку роняют
 //     TestTranslate_NoRedundantRule и TestTranslate_EveryRuleReachable.
+//  10. SESSION ЗАВОДИЛ ЛИЧНОСТЬ ДО СБОРКИ ПИСЬМА. Логин, на который письмо не
+//     собиралось, оставлял личность без письма, а повтор отвечал «принято».
+//     Порт session.Recipients проверяет получателя до Create; здесь он —
+//     mail.NormalizeAddress, совпадение с письмом держат
+//     TestRecipients_MatchLetter и FuzzRecipients_MatchLetter.
 package monolith

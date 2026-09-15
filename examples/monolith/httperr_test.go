@@ -83,22 +83,24 @@ func TestErrorBody_LeaksNothing(t *testing.T) {
 }
 
 // TestRegister_BadAddressIsInput — негодный адрес из формы регистрации отвечает
-// 400 login-invalid, а не 503.
+// 400 login-invalid ДО записи личности, и повтор — снова 400, а не «принято».
 //
-// Адрес письма здесь — логин, который прислал клиент. mail.ErrInvalidMessage
-// класса не несёт (ADR-0007), а session заворачивает сбой выдачи токена в
-// auth.ErrUnavailable: без правила «исправьте адрес» звучало бы как «повторите
-// позже».
+// Адрес письма здесь — логин, который прислал клиент. session проверяет
+// получателя портом Recipients (у монолита — mail.NormalizeAddress) до Create;
+// раньше личность заводилась, письмо не собиралось, а повтор отвечал 202.
 func TestRegister_BadAddressIsInput(t *testing.T) {
 	s := newStand(t)
 	const notAnAddress = "buyer.example.test"
 
-	status, body := s.postJSON(t, "/register", map[string]string{
-		"Login": notAnAddress, "Password": testPassword,
-	})
-	require.Equal(t, http.StatusBadRequest, status, "адрес из формы — ввод: %s", raw(body))
-	require.Equal(t, "login-invalid", body["slug"])
-	require.NotContains(t, raw(body), notAnAddress)
+	for attempt := range 2 {
+		status, body := s.postJSON(t, "/register", map[string]string{
+			"Login": notAnAddress, "Password": testPassword,
+		})
+		require.Equal(t, http.StatusBadRequest, status, "попытка %d, адрес из формы — ввод: %s", attempt, raw(body))
+		require.Equal(t, "login-invalid", body["slug"], "попытка %d", attempt)
+		require.NotContains(t, raw(body), notAnAddress)
+	}
+	requireCount(t, s, 0, "SELECT count(*) FROM shop_users")
 }
 
 // requireNoLeaks — в теле нет ничего из того, что наружу не выходит.

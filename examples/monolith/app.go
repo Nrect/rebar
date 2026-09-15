@@ -187,20 +187,7 @@ func (a *App) startQueues() error {
 	if err != nil {
 		return err
 	}
-	a.letters = mail.NewService(mailpg.New(a.db.Pool), transport, nil, mail.Config{
-		From:            mail.Address{Email: a.cfg.MailFrom, Name: "Магазин"},
-		Kinds:           mailKinds(),
-		MessageIDDomain: a.cfg.MailDomain,
-		MaxAttempts:     5,
-		Backoff:         mail.Backoff{Base: time.Second, Max: time.Minute},
-		Lease:           30 * time.Second,
-		SendTimeout:     10 * time.Second,
-		BatchSize:       20,
-		MinSendGap:      time.Millisecond,
-		Retention:       7 * 24 * time.Hour,
-		MaxBodyBytes:    64 * 1024,
-		Uncertain:       mail.UncertainRetry,
-	})
+	a.letters = mail.NewService(mailpg.New(a.db.Pool), transport, nil, mailConfig(a.cfg))
 
 	queue := outboxpg.New(a.db.Pool)
 	cfg := outbox.Config{
@@ -223,6 +210,25 @@ func (a *App) startQueues() error {
 	return nil
 }
 
+// mailConfig — политика почты сборки; её же берёт тест совпадения Recipients с
+// письмом.
+func mailConfig(cfg Config) mail.Config {
+	return mail.Config{
+		From:            mail.Address{Email: cfg.MailFrom, Name: "Магазин"},
+		Kinds:           mailKinds(),
+		MessageIDDomain: cfg.MailDomain,
+		MaxAttempts:     5,
+		Backoff:         mail.Backoff{Base: time.Second, Max: time.Minute},
+		Lease:           30 * time.Second,
+		SendTimeout:     10 * time.Second,
+		BatchSize:       20,
+		MinSendGap:      time.Millisecond,
+		Retention:       7 * 24 * time.Hour,
+		MaxBodyBytes:    64 * 1024,
+		Uncertain:       mail.UncertainRetry,
+	}
+}
+
 // startIdentity — auth, authz, entitlement и журнал.
 func (a *App) startIdentity() {
 	store := authpg.New(a.db.Pool)
@@ -240,6 +246,7 @@ func (a *App) startIdentity() {
 		Hasher:     newHasher(),
 		Policy:     newPolicy(),
 		Notifier:   notifier{svc: a.letters, build: lt.message},
+		Recipients: recipients{},
 		Auditor:    auditor{rec: a.journal},
 	}, sessionConfig(a.cfg))
 

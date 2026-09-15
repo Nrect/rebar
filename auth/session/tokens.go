@@ -60,6 +60,10 @@ func (s *Service) RequestEmailChange(ctx context.Context, req EmailChangeRequest
 	if err != nil {
 		return err
 	}
+	// Получатель — до первого похода в базу: ссылка уходит на НОВЫЙ адрес.
+	if recipientErr := s.checkRecipient(newLogin); recipientErr != nil {
+		return recipientErr
+	}
 	id, err := s.authenticate(ctx, req.SubjectID, req.Password)
 	if err != nil {
 		return err
