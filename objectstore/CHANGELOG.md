@@ -24,9 +24,11 @@
   `errstest.EveryErrorHasKind` стоит в корне модуля (`sentinels_test.go`);
   двойники `objectstoretest` из него исключены — своего класса у их sentinel
   нет: сбой хранилища двойник заворачивает в `ErrUnavailable` сам, как `s3` и
-  `fs` (ниже), а сбой `MemOwned` отдаёт голым, и класс ему даёт обёртка
-  ядра — это держит `TestPortFailuresReachCallerAsUnavailable` на путях
-  `IsOwned` и `Delete` у `Collector.Run`.
+  `fs` (ниже), а сбой `MemOwned` отдаёт голым. Ядро на всех четырёх путях
+  (`Uploader.Upload` и `Put`, `Collector.Run` и `List`, `IsOwned`, `Delete`)
+  отдаёт свою `ErrUnavailable` вместо причины, поэтому
+  `TestPortFailuresReachCallerAsUnavailable` держит его обёртку и с
+  заворачивающим двойником.
 
   | Sentinel | Класс | Почему |
   |---|---|---|
