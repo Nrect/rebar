@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -18,8 +19,8 @@ import (
 )
 
 // Каждая экспортируемая sentinel модуля несёт класс или отказ от него с доводом
-// (ADR-0007). Двойники в allow: их ошибки — инъекция причины, класс несёт
-// обёртка ядра (TestPortFailuresReachCallerAsUnavailable).
+// (ADR-0007). Двойники в allow: своего класса у их sentinel нет — класс
+// приходит обёрткой (ADR-0007, «Двойники»).
 func TestEverySentinelHasKindOrRefusal(t *testing.T) {
 	t.Parallel()
 
@@ -69,45 +70,50 @@ func TestSentinelKinds(t *testing.T) {
 }
 
 // Сбой порта на путях из запроса, вебхука и планировщика доходит до вызывающего
-// с классом 503, а не голой причиной двойника: класс несёт обёртка ядра. Хук
-// потребителя — тот же путь: его зовёт стор внутри ApplyEvent и ApplyRefund, а
-// их — только сервис.
+// с классом 503: класс несёт обёртка ядра. Хранилище в подтесте store — голая
+// заглушка: paymenttest.MemStore заворачивает сбой сам, как paymentpg, и
+// снятой обёртки ядра страж бы не увидел. Сбой провайдера и хука двойники
+// отдают голым. Хук потребителя — тот же путь: его зовёт стор внутри
+// ApplyEvent и ApplyRefund, а их — только сервис.
 func TestPortFailuresReachCallerAsUnavailable(t *testing.T) {
 	t.Parallel()
 
+	// Состояние готовит стенд на двойнике; падающие вызовы идут в сервис над
+	// заглушкой с тем же провайдером и наблюдателем.
 	t.Run("store", func(t *testing.T) {
 		t.Parallel()
 		h := newHarness(t)
 		in := h.start(t, startReq())
 		h.prov.Push(h.event(in, payment.EventSucceeded, in.AmountMinor))
-		h.store.SetErr(errors.New("connection refused"))
+		svc := payment.NewService(bareStore{err: errors.New("connection refused")}, h.prov, h.obs, h.cfg)
+		svc.SetClock(h.clock.Now)
 		ctx := context.Background()
 
-		_, _, err := h.svc.Start(ctx, startReq())
+		_, _, err := svc.Start(ctx, startReq())
 		assert.Equal(t, errs.KindUnavailable, errs.KindOf(err), "Start")
-		_, _, err = h.svc.HandleWebhook(ctx, webhook())
+		_, _, err = svc.HandleWebhook(ctx, webhook())
 		assert.Equal(t, errs.KindUnavailable, errs.KindOf(err), "HandleWebhook")
-		_, _, err = h.svc.Capture(ctx, in.ID, in.AmountMinor, receiptFor(testAmount), "cap-1")
+		_, _, err = svc.Capture(ctx, in.ID, in.AmountMinor, receiptFor(testAmount), "cap-1")
 		assert.Equal(t, errs.KindUnavailable, errs.KindOf(err), "Capture")
-		_, _, err = h.svc.Cancel(ctx, in.ID, "cancel-1")
+		_, _, err = svc.Cancel(ctx, in.ID, "cancel-1")
 		assert.Equal(t, errs.KindUnavailable, errs.KindOf(err), "Cancel")
-		_, _, err = h.svc.Refund(ctx, refundReq(in, 100, "ref-1"))
+		_, _, err = svc.Refund(ctx, refundReq(in, 100, "ref-1"))
 		assert.Equal(t, errs.KindUnavailable, errs.KindOf(err), "Refund")
-		_, err = h.svc.Reconcile(ctx, in.ID)
+		_, err = svc.Reconcile(ctx, in.ID)
 		assert.Equal(t, errs.KindUnavailable, errs.KindOf(err), "Reconcile")
-		_, err = h.svc.StalePending(ctx, payment.IntentCursor{}, 10)
+		_, err = svc.StalePending(ctx, payment.IntentCursor{}, 10)
 		assert.Equal(t, errs.KindUnavailable, errs.KindOf(err), "StalePending")
-		_, err = h.svc.CountStuckPending(ctx)
+		_, err = svc.CountStuckPending(ctx)
 		assert.Equal(t, errs.KindUnavailable, errs.KindOf(err), "CountStuckPending")
-		_, err = h.svc.Drift(ctx, 10)
+		_, err = svc.Drift(ctx, 10)
 		assert.Equal(t, errs.KindUnavailable, errs.KindOf(err), "Drift")
-		_, _, err = h.svc.IntentByID(ctx, in.ID)
+		_, _, err = svc.IntentByID(ctx, in.ID)
 		assert.Equal(t, errs.KindUnavailable, errs.KindOf(err), "IntentByID")
-		_, _, err = h.svc.IntentByKey(ctx, in.PayerID, "buy-1")
+		_, _, err = svc.IntentByKey(ctx, in.PayerID, "buy-1")
 		assert.Equal(t, errs.KindUnavailable, errs.KindOf(err), "IntentByKey")
-		_, err = h.svc.Ledger(ctx, in.ID)
+		_, err = svc.Ledger(ctx, in.ID)
 		assert.Equal(t, errs.KindUnavailable, errs.KindOf(err), "Ledger")
-		_, err = payment.NewReconciler(h.svc, 10).Run(ctx)
+		_, err = payment.NewReconciler(svc, 10).Run(ctx)
 		assert.Equal(t, errs.KindUnavailable, errs.KindOf(err), "Reconciler.Run")
 	})
 
@@ -147,6 +153,45 @@ func TestPortFailuresReachCallerAsUnavailable(t *testing.T) {
 		_, _, err = h.svc.Refund(ctx, refundReq(sold, 100, "ref-1"))
 		assert.Equal(t, errs.KindUnavailable, errs.KindOf(err), "OnRefunded из Refund")
 	})
+}
+
+// bareStore — payment.Store, отдающий сбой голым на каждом методе.
+type bareStore struct{ err error }
+
+func (s bareStore) CreateIntent(context.Context, payment.Intent) error { return s.err }
+
+func (s bareStore) IntentByKey(context.Context, uuid.UUID, string) (payment.Intent, bool, error) {
+	return payment.Intent{}, false, s.err
+}
+
+func (s bareStore) IntentByID(context.Context, uuid.UUID) (payment.Intent, bool, error) {
+	return payment.Intent{}, false, s.err
+}
+
+func (s bareStore) Transition(context.Context, payment.TransitionRequest) (payment.TransitionResult, error) {
+	return payment.TransitionResult{}, s.err
+}
+
+func (s bareStore) ApplyEvent(context.Context, payment.ApplyEventRequest) (payment.ApplyEventResult, error) {
+	return payment.ApplyEventResult{}, s.err
+}
+
+func (s bareStore) ApplyRefund(context.Context, payment.ApplyRefundRequest) (payment.ApplyRefundResult, error) {
+	return payment.ApplyRefundResult{}, s.err
+}
+
+func (s bareStore) Ledger(context.Context, uuid.UUID) ([]payment.LedgerEntry, error) {
+	return nil, s.err
+}
+
+func (s bareStore) StalePending(context.Context, time.Time, payment.IntentCursor, int) ([]payment.Intent, error) {
+	return nil, s.err
+}
+
+func (s bareStore) CountStuckPending(context.Context, time.Time) (int64, error) { return 0, s.err }
+
+func (s bareStore) Drift(context.Context, time.Time, int) ([]payment.DriftRecord, error) {
+	return nil, s.err
 }
 
 // Возврат по негодной книге — инцидент, а не «не оплачено» и не «вы ошиблись»:
