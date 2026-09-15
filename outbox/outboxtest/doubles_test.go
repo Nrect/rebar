@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/nrect/rebar/kit/errs"
 	"github.com/nrect/rebar/outbox"
 	"github.com/nrect/rebar/outbox/outboxtest"
 )
@@ -65,7 +66,7 @@ func TestMemStore_DedupIsPerKindAndKey(t *testing.T) {
 	assert.Equal(t, outbox.OutcomeInserted, noKeyAgain.Outcome, "пустой ключ дедупу не подлежит")
 
 	_, err = store.Enqueue(ctx, row(first.Envelope.ID, "receipt.send", "other"))
-	require.ErrorIs(t, err, outboxtest.ErrIDReused, "ошибка двойника отличима от доменной")
+	requireUnavailable(t, err, outboxtest.ErrIDReused, "Enqueue того же ID, как первичный ключ outboxpg")
 }
 
 // Живая аренда — строка занята; истёкшая — возвращается с Reclaimed.
@@ -167,6 +168,7 @@ func TestMemStore_ReleasedGivesTheAttemptBack(t *testing.T) {
 
 // Отменённый контекст двойник замечает: иначе он зеленил бы код, который
 // записывает исход «после остановки», а настоящий драйвер этого не сделает.
+// Приходит отмена так же, как у outboxpg: в outbox.ErrUnavailable.
 func TestMemStore_RespectsCancelledContext(t *testing.T) {
 	t.Parallel()
 	store := outboxtest.NewMemStore()
@@ -174,18 +176,66 @@ func TestMemStore_RespectsCancelledContext(t *testing.T) {
 	cancel()
 
 	_, err := store.Enqueue(ctx, row(uuid.New(), "order.paid", "k"))
-	require.ErrorIs(t, err, context.Canceled)
+	requireUnavailable(t, err, context.Canceled, "Enqueue")
 	_, err = store.Claim(ctx, outbox.ClaimRequest{Now: at, Lease: time.Minute, Limit: 1, Kinds: []outbox.Kind{"order.paid"}, Token: uuid.New()})
-	require.ErrorIs(t, err, context.Canceled)
-	require.ErrorIs(t, store.Finish(ctx, outbox.FinishRequest{}), context.Canceled)
+	requireUnavailable(t, err, context.Canceled, "Claim")
+	requireUnavailable(t, store.Finish(ctx, outbox.FinishRequest{}), context.Canceled, "Finish")
 	_, err = store.Stats(ctx, at, nil)
-	require.ErrorIs(t, err, context.Canceled)
+	requireUnavailable(t, err, context.Canceled, "Stats")
 	_, err = store.Purge(ctx, at, 1)
-	require.ErrorIs(t, err, context.Canceled)
+	requireUnavailable(t, err, context.Canceled, "Purge")
 	_, err = store.ListFailed(ctx, 1)
-	require.ErrorIs(t, err, context.Canceled)
+	requireUnavailable(t, err, context.Canceled, "ListFailed")
 	_, err = store.Redrive(ctx, uuid.New(), at)
-	require.ErrorIs(t, err, context.Canceled)
+	requireUnavailable(t, err, context.Canceled, "Redrive")
+}
+
+// Заданный сбой приходит из каждого метода так, как его отдаёт outboxpg: класс
+// 503, outbox.ErrUnavailable и причина в одной цепочке. Голая причина давала бы
+// потребителю, вставляющему в своей транзакции, 500 там, где прод отвечает 503.
+func TestMemStore_InjectedErrorIsUnavailable(t *testing.T) {
+	t.Parallel()
+	store := outboxtest.NewMemStore()
+	store.SetErr(errDown)
+	ctx := context.Background()
+
+	_, err := store.Enqueue(ctx, row(uuid.New(), "order.paid", "k"))
+	requireUnavailable(t, err, errDown, "Enqueue")
+	_, err = store.Claim(ctx, outbox.ClaimRequest{Now: at, Lease: time.Minute, Limit: 1, Kinds: []outbox.Kind{"order.paid"}, Token: uuid.New()})
+	requireUnavailable(t, err, errDown, "Claim")
+	requireUnavailable(t, store.Finish(ctx, outbox.FinishRequest{}), errDown, "Finish")
+	_, err = store.Stats(ctx, at, nil)
+	requireUnavailable(t, err, errDown, "Stats")
+	_, err = store.ListFailed(ctx, 1)
+	requireUnavailable(t, err, errDown, "ListFailed")
+	_, err = store.Redrive(ctx, uuid.New(), at)
+	requireUnavailable(t, err, errDown, "Redrive")
+	_, err = store.Purge(ctx, at, 1)
+	requireUnavailable(t, err, errDown, "Purge")
+
+	store.SetErr(nil)
+	store.SetFinishErr(errDown)
+	requireUnavailable(t, store.Finish(ctx, outbox.FinishRequest{}), errDown, "Finish по SetFinishErr")
+}
+
+// Двойник композиции отдаёт сбой вставки так же, как outboxpg.Enqueue: обёртку
+// ставит хранилище, композиция пропускает её как есть.
+func TestEnqueue_StoreFailureIsUnavailable(t *testing.T) {
+	t.Parallel()
+	store := outboxtest.NewMemStore()
+	store.SetErr(errDown)
+
+	_, err := outboxtest.Enqueue(context.Background(), store, row(uuid.New(), "order.paid", "k"))
+	requireUnavailable(t, err, errDown, "outboxtest.Enqueue")
+}
+
+// requireUnavailable — все три стороны сразу: класс, sentinel модуля и
+// причина. Проверка одной чинила бы её ценой другой.
+func requireUnavailable(t *testing.T, err, cause error, site string) {
+	t.Helper()
+	assert.Equalf(t, errs.KindUnavailable, errs.KindOf(err), "класс ошибки на %s: %v", site, err)
+	require.ErrorIsf(t, err, outbox.ErrUnavailable, "outbox.ErrUnavailable на %s", site)
+	require.ErrorIsf(t, err, cause, "причина на %s", site)
 }
 
 // Снимки отдаются копиями: тест не должен править внутренности хранилища.
