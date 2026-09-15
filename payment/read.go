@@ -17,12 +17,12 @@ func (s *Service) IntentByID(ctx context.Context, id uuid.UUID) (Intent, bool, e
 	return in, found, nil
 }
 
-// IntentByKey — намерение по ключу идемпотентности плательщика; тот же вопрос,
-// который Start задаёт себе перед созданием.
+// IntentByKey — намерение по ключу идемпотентности плательщика. Это чтение, а не
+// проверка повтора: повтор ключа разбирает Start, найденное здесь успехом не отдавать.
 //
 // КЛЮЧ НОРМАЛИЗУЕТСЯ ЗДЕСЬ, как и в Start. Две точки нормализации — это два
 // ключа: вызывающий, забывший нормализовать, получил бы «намерения нет» на
-// существующем и завёл бы вторым вызовом вторую строку заказа.
+// существующем.
 func (s *Service) IntentByKey(ctx context.Context, payerID uuid.UUID, key string) (Intent, bool, error) {
 	normalized, err := NormalizeKey(key)
 	if err != nil {

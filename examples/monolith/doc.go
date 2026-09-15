@@ -152,7 +152,8 @@
 //     (shoppg/tokens.go).
 //  2. У PAYMENT.SERVICE НЕ БЫЛО ЧИТАЮЩИХ МЕТОДОВ — 461bb65. IntentByID,
 //     IntentByKey и Ledger на Service; чтение мимо домена снято, поле
-//     payStore у App исчезло. IntentByKey нормализует ключ сам, как и Start.
+//     payStore у App исчезло. IntentByKey нормализует ключ сам, как и Start;
+//     пробу им до Start пример потом снял — повтор ключа разбирает Start.
 //  3. У AUTHZ НЕ БЫЛО ОШИБКИ ОТКАЗА — 40ea4b7. authz.ErrDenied и
 //     Authorizer.Require; свой ErrAccessDenied снят.
 //  4. У ENTITLEMENT.STORE.GRANT НЕ БЫЛО ВРЕМЕНИ — f67c46b, ЛОМАЮЩЕЕ.

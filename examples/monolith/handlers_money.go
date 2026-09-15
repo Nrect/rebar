@@ -18,6 +18,10 @@ import (
 	"github.com/nrect/rebar/examples/monolith/shoppg"
 )
 
+// orderIDSpace — пространство id заказов. МЕНЯТЬ НЕЛЬЗЯ: повтор ключа после
+// выката пришёл бы другим заказом, и Start ответил бы 409 на законный повтор.
+var orderIDSpace = uuid.MustParse("6f1d2c4e-8a53-4b7e-9d0f-2e7c5a1b3f60")
+
 // checkout — заказ и намерение оплаты.
 //
 // ЦЕНУ СЧИТАЕТ СЕРВЕР. Клиент присылает код товара и ключ идемпотентности;
@@ -55,29 +59,26 @@ func (a *App) checkout(w http.ResponseWriter, r *http.Request) {
 
 // startPayment заводит заказ и просит у провайдера платёж.
 //
-// ЗАКАЗ ЗАВОДИТСЯ ДО НАМЕРЕНИЯ и под тем же ключом идемпотентности: повтор с
-// тем же ключом обязан вернуть ТО ЖЕ намерение, а не завести второй заказ.
-// Строку заказа при повторе находит уже существующее намерение.
+// ПОВТОР КЛЮЧА РАЗБИРАЕТ Start, А НЕ ПРОБА ДО НЕГО: Start сверяет отпечаток
+// запроса и отдаёт отказ закрытой попытки, а найденное намерение, отданное
+// успехом, обошло бы и то и другое. Поэтому повтор обязан прийти в Start тем же
+// запросом: id заказа выводится из плательщика и ключа, и заказ повтора — тот же
+// заказ, а не сирота.
 func (a *App) startPayment(r *http.Request, subject uuid.UUID, product Product,
-	key string,
+	rawKey string,
 ) (payment.StartResult, payment.Reason, error) {
 	ctx := r.Context()
-	// ПОВТОР ПОД ТЕМ ЖЕ КЛЮЧОМ НЕ ЗАВОДИТ ВТОРОЙ ЗАКАЗ: без этой пробы
-	// повтор из другой вкладки создал бы вторую строку заказа, а Start вернул
-	// бы прежнее намерение с прежним Reference — заказ-сирота навсегда.
-	//
-	// Ключ нормализует сам IntentByKey, как и Start: две точки нормализации —
-	// это два ключа, и забывший нормализовать получил бы «намерения нет» на
-	// живом намерении.
-	if in, found, err := a.pay.IntentByKey(ctx, subject, key); err == nil && found {
-		return payment.StartResult{Intent: in}, "", nil
+	// Ключ проверяется ДО заказа: негодный иначе оставил бы заказ без намерения.
+	key, err := payment.NormalizeKey(rawKey)
+	if err != nil {
+		return payment.StartResult{}, payment.ReasonKeyInvalid, err
 	}
 	order := shoppg.Order{
-		ID: uuid.New(), SubjectID: subject, ProductCode: product.Code,
+		ID: orderIDOf(subject, key), SubjectID: subject, ProductCode: product.Code,
 		AmountMinor: product.AmountMinor, Currency: currency,
 	}
-	if err := a.orders.Create(ctx, order, time.Now()); err != nil {
-		return payment.StartResult{}, "", err
+	if createErr := a.orders.Create(ctx, order, time.Now()); createErr != nil {
+		return payment.StartResult{}, "", createErr
 	}
 	return a.pay.Start(ctx, payment.StartRequest{
 		PayerID:        subject,
@@ -90,6 +91,11 @@ func (a *App) startPayment(r *http.Request, subject uuid.UUID, product Product,
 		ReturnURL:      a.cfg.BaseURL + "/orders/" + order.ID.String(),
 		Description:    product.Title,
 	})
+}
+
+// orderIDOf — id заказа из плательщика и нормализованного ключа.
+func orderIDOf(subject uuid.UUID, key string) uuid.UUID {
+	return uuid.NewSHA1(orderIDSpace, []byte(subject.String()+"\x00"+key))
 }
 
 // webhook — уведомление провайдера.
