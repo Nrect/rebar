@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/nrect/rebar/kit/errs"
@@ -53,10 +54,12 @@ func TestSentinelKinds(t *testing.T) {
 }
 
 // Сбой порта на путях ядра — загрузка и прогон сборщика — доходит до
-// вызывающего с классом 503, а не голой причиной двойника: класс несёт обёртка
-// ядра. Прямые вызовы Store потребителем (Presign, Delete, List) ядро не
-// заворачивает: там класс даёт обёртка адаптера, а двойник отдаёт причину
-// голой (ADR-0007, «Двойники»).
+// вызывающего с классом 503: класс несёт обёртка ядра. Хранилище — голая
+// заглушка: objectstoretest.MemStore заворачивает сбой сам, как s3 и fs, и
+// страж держался бы лишь на том, что ядро отдаёт свою ErrUnavailable без
+// причины. Источник владения пишет потребитель — его двойник голый. Прямые
+// вызовы Store (Presign, Delete, List) ядро не заворачивает: класс там даёт
+// адаптер.
 func TestPortFailuresReachCallerAsUnavailable(t *testing.T) {
 	t.Parallel()
 	down := errors.New("connection refused")
@@ -66,15 +69,20 @@ func TestPortFailuresReachCallerAsUnavailable(t *testing.T) {
 		_, err := c.Run(t.Context())
 		assert.Equal(t, errs.KindUnavailable, errs.KindOf(err), what)
 	}
+	collector := func(store objectstore.Store, owned objectstore.Owned) *objectstore.Collector {
+		c := objectstore.NewCollector(store, owned, testCollectorConfig(objectstore.CollectDelete))
+		c.SetClock(func() time.Time { return testNow })
+		return c
+	}
 
-	up, upStore := newUploader(t, testUploaderConfig())
-	upStore.SetErr(down)
+	putting := &failingStore{MemStore: objectstoretest.NewMemStore(), putErr: down}
+	up := objectstore.NewUploader(putting, testUploaderConfig())
+	up.SetIDs(func() uuid.UUID { return fixedID })
 	_, err := up.Upload(t.Context(), objectstore.UploadRequest{Body: bytes.NewReader(objectstoretest.PNG(128)), Size: -1})
 	assert.Equal(t, errs.KindUnavailable, errs.KindOf(err), "Upload: Put")
 
-	listing, listStore := newCollector(t, objectstore.CollectDelete, objectstoretest.NewMemOwned())
-	listStore.SetErr(down)
-	run("Run: List", listing)
+	listing := &failingStore{MemStore: objectstoretest.NewMemStore(), listErr: down}
+	run("Run: List", collector(listing, objectstoretest.NewMemOwned()))
 
 	owned := objectstoretest.NewMemOwned()
 	owned.SetErr(down)
@@ -82,18 +90,36 @@ func TestPortFailuresReachCallerAsUnavailable(t *testing.T) {
 	askStore.Seed(testPrefix+"/orphan.png", []byte("body"), orphanAge)
 	run("Run: IsOwned", asking)
 
-	store := &deleteFails{MemStore: objectstoretest.NewMemStore(), err: down}
-	store.Seed(testPrefix+"/orphan.png", []byte("body"), orphanAge)
-	deleting := objectstore.NewCollector(store, objectstoretest.NewMemOwned(), testCollectorConfig(objectstore.CollectDelete))
-	deleting.SetClock(func() time.Time { return testNow })
-	run("Run: Delete", deleting)
+	deleting := &failingStore{MemStore: objectstoretest.NewMemStore(), deleteErr: down}
+	deleting.Seed(testPrefix+"/orphan.png", []byte("body"), orphanAge)
+	run("Run: Delete", collector(deleting, objectstoretest.NewMemOwned()))
 }
 
-// deleteFails — хранилище, у которого отказывает только Delete: до удаления
-// прогон доходит лишь через успешные List и IsOwned.
-type deleteFails struct {
+// failingStore — хранилище, у которого отказывают названные методы: сбой
+// приходит голым. Остальное идёт в двойник: до Delete прогон доходит через
+// успешные List и IsOwned.
+type failingStore struct {
 	*objectstoretest.MemStore
-	err error
+	putErr, listErr, deleteErr error
 }
 
-func (s *deleteFails) Delete(context.Context, string) error { return s.err }
+func (s *failingStore) Put(ctx context.Context, req objectstore.PutRequest) (objectstore.Object, error) {
+	if s.putErr != nil {
+		return objectstore.Object{}, s.putErr
+	}
+	return s.MemStore.Put(ctx, req)
+}
+
+func (s *failingStore) List(ctx context.Context, prefix, cursor string, limit int) (objectstore.Page, error) {
+	if s.listErr != nil {
+		return objectstore.Page{}, s.listErr
+	}
+	return s.MemStore.List(ctx, prefix, cursor, limit)
+}
+
+func (s *failingStore) Delete(ctx context.Context, key string) error {
+	if s.deleteErr != nil {
+		return s.deleteErr
+	}
+	return s.MemStore.Delete(ctx, key)
+}
