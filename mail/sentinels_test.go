@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 
@@ -15,8 +16,8 @@ import (
 )
 
 // Каждая экспортируемая sentinel модуля несёт класс или отказ от него с доводом
-// (ADR-0007). Двойники в allow: их ошибки — инъекция причины, класс несёт
-// обёртка ядра (TestPortFailuresReachCallerAsUnavailable).
+// (ADR-0007). Двойники в allow: своего класса у их sentinel нет — класс
+// приходит обёрткой (ADR-0007, «Двойники»).
 func TestEverySentinelHasKindOrRefusal(t *testing.T) {
 	t.Parallel()
 
@@ -49,22 +50,43 @@ func TestSentinelKinds(t *testing.T) {
 }
 
 // Сбой порта на путях из запроса и из планировщика доходит до вызывающего с
-// классом 503, а не голой причиной двойника: класс несёт обёртка ядра.
+// классом 503: класс несёт обёртка ядра. Хранилище здесь — голая заглушка:
+// mailtest.MemStore заворачивает сбой сам, как mailpg, и снятой обёртки ядра
+// страж бы не увидел. Стоп-лист пишет потребитель, его двойник отдаёт сбой
+// голым.
 func TestPortFailuresReachCallerAsUnavailable(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t, true, nil)
-	h.store.SetErr(errors.New("connection refused"))
 	h.supp.SetErr(errors.New("suppression store is down"))
+	svc := mail.NewService(bareStore{err: errors.New("connection refused")}, h.tr, h.supp, h.cfg)
+	svc.SetClock(h.clock.now)
 	ctx := context.Background()
 
-	_, err := h.svc.Enqueue(ctx, validMessage())
+	_, err := svc.Enqueue(ctx, validMessage())
 	assert.Equal(t, errs.KindUnavailable, errs.KindOf(err), "Enqueue")
-	err = h.svc.Suppress(ctx, mail.Suppression{Email: "teacher@school.ru", Reason: mail.SuppressManual})
+	err = svc.Suppress(ctx, mail.Suppression{Email: "teacher@school.ru", Reason: mail.SuppressManual})
 	assert.Equal(t, errs.KindUnavailable, errs.KindOf(err), "Suppress")
-	_, err = h.svc.Deliver(ctx)
+	_, err = svc.Deliver(ctx)
 	assert.Equal(t, errs.KindUnavailable, errs.KindOf(err), "Deliver")
-	_, err = h.svc.Purge(ctx)
+	_, err = svc.Purge(ctx)
 	assert.Equal(t, errs.KindUnavailable, errs.KindOf(err), "Purge")
-	_, err = h.svc.Stats(ctx)
+	_, err = svc.Stats(ctx)
 	assert.Equal(t, errs.KindUnavailable, errs.KindOf(err), "Stats")
 }
+
+// bareStore — mail.Store, отдающий сбой голым на каждом методе.
+type bareStore struct{ err error }
+
+func (s bareStore) Enqueue(context.Context, mail.Envelope) (mail.EnqueueResult, error) {
+	return mail.EnqueueResult{}, s.err
+}
+
+func (s bareStore) Claim(context.Context, time.Time, time.Duration, int) ([]mail.Envelope, error) {
+	return nil, s.err
+}
+
+func (s bareStore) Finish(context.Context, mail.FinishRequest) error { return s.err }
+
+func (s bareStore) Stats(context.Context, time.Time) (mail.Stats, error) { return mail.Stats{}, s.err }
+
+func (s bareStore) Purge(context.Context, time.Time, int) (int, error) { return 0, s.err }
