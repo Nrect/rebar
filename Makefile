@@ -73,13 +73,16 @@ chip-check:
 	@cd $(MODULE) && GOWORK=off go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 	@echo "chip-check passed: $(MODULE)"
 
-# Мутационное тестирование ядра модуля — локально, не в CI: медленно.
+# Мутационное тестирование — только на мощном ПК: не в CI (медленно) и не на
+# ноутбуке — там прогон вытесняет остальную работу и врёт таймаутами
+# (docs/CHIP.md, «Порог»). HEAVY_PC=1 — подтверждение, что машина та.
 # GOWORK=off обязателен: пока модуль не внесён в go.work, прогон падает на
 # «directory prefix . does not contain modules listed in go.work», а go.work
 # правит арбитр уже при слиянии — то есть у чипа его нет по построению.
 # Коэффициент таймаута 20 обязателен: на меньшем прогон врёт зелёным, объявляя
 # выживших мутантов «не покрытыми», потому что тест не успел за окно.
 mutants:
-	@test -n "$(MODULE)" || { echo "нужен MODULE=<каталог>, например: make mutants MODULE=mail"; exit 1; }
+	@test -n "$(HEAVY_PC)" || { echo "мутанты гоняются только на мощном ПК (docs/CHIP.md, «Порог»); там: make mutants HEAVY_PC=1 MODULE=<каталог>"; exit 1; }
+	@test -n "$(MODULE)" || { echo "нужен MODULE=<каталог>, например: make mutants HEAVY_PC=1 MODULE=mail"; exit 1; }
 	@test -f "$(MODULE)/go.mod" || { echo "$(MODULE)/go.mod не найден"; exit 1; }
 	cd $(MODULE) && GOWORK=off gremlins unleash --timeout-coefficient 20 --workers 4 $(MUTANTS_EXCLUDE)
