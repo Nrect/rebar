@@ -11,9 +11,12 @@ import (
 )
 
 const (
+	// Повтор id ничего не меняет: id выводится из ключа идемпотентности, и
+	// повтор ключа приходит тем же заказом.
 	insertOrderSQL = `INSERT INTO shop_orders
 (id, subject_id, product_code, amount_minor, currency, created_at)
-VALUES ($1, $2, $3, $4, $5, $6)`
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (id) DO NOTHING`
 
 	selectOrderSQL = `SELECT id, subject_id, product_code, amount_minor, currency, paid_at
 FROM shop_orders WHERE id = $1`
@@ -55,7 +58,7 @@ func (s *Orders) WithTx(tx pgx.Tx) *Orders {
 	return &Orders{db: tx}
 }
 
-// Create заводит заказ.
+// Create заводит заказ; заказ с тем же id уже есть — ничего не меняет.
 func (s *Orders) Create(ctx context.Context, o Order, at time.Time) error {
 	_, err := s.db.Exec(ctx, insertOrderSQL, o.ID, o.SubjectID, o.ProductCode,
 		o.AmountMinor, o.Currency, utc(at))

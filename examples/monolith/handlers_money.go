@@ -11,11 +11,16 @@ import (
 	"github.com/nrect/rebar/auth/session"
 	"github.com/nrect/rebar/authz"
 	"github.com/nrect/rebar/kit/errs"
+	"github.com/nrect/rebar/kit/errs/httperr"
 	"github.com/nrect/rebar/objectstore"
 	"github.com/nrect/rebar/payment"
 
 	"github.com/nrect/rebar/examples/monolith/shoppg"
 )
+
+// orderIDSpace — пространство id заказов. МЕНЯТЬ НЕЛЬЗЯ: повтор ключа после
+// выката пришёл бы другим заказом, и Start ответил бы 409 на законный повтор.
+var orderIDSpace = uuid.MustParse("6f1d2c4e-8a53-4b7e-9d0f-2e7c5a1b3f60")
 
 // checkout — заказ и намерение оплаты.
 //
@@ -26,7 +31,7 @@ func (a *App) checkout(w http.ResponseWriter, r *http.Request) {
 		Product        string `json:"product"`
 		IdempotencyKey string `json:"idempotency_key"`
 	}
-	if !a.decode(w, r, &req) {
+	if !decodeJSON(a.respond, w, r, &req) {
 		return
 	}
 	subject, ok := a.allowed(w, r, permBuy, authz.Resource{})
@@ -54,29 +59,26 @@ func (a *App) checkout(w http.ResponseWriter, r *http.Request) {
 
 // startPayment заводит заказ и просит у провайдера платёж.
 //
-// ЗАКАЗ ЗАВОДИТСЯ ДО НАМЕРЕНИЯ и под тем же ключом идемпотентности: повтор с
-// тем же ключом обязан вернуть ТО ЖЕ намерение, а не завести второй заказ.
-// Строку заказа при повторе находит уже существующее намерение.
+// ПОВТОР КЛЮЧА РАЗБИРАЕТ Start, А НЕ ПРОБА ДО НЕГО: Start сверяет отпечаток
+// запроса и отдаёт отказ закрытой попытки, а найденное намерение, отданное
+// успехом, обошло бы и то и другое. Поэтому повтор обязан прийти в Start тем же
+// запросом: id заказа выводится из плательщика и ключа, и заказ повтора — тот же
+// заказ, а не сирота.
 func (a *App) startPayment(r *http.Request, subject uuid.UUID, product Product,
-	key string,
+	rawKey string,
 ) (payment.StartResult, payment.Reason, error) {
 	ctx := r.Context()
-	// ПОВТОР ПОД ТЕМ ЖЕ КЛЮЧОМ НЕ ЗАВОДИТ ВТОРОЙ ЗАКАЗ: без этой пробы
-	// повтор из другой вкладки создал бы вторую строку заказа, а Start вернул
-	// бы прежнее намерение с прежним Reference — заказ-сирота навсегда.
-	//
-	// Ключ нормализует сам IntentByKey, как и Start: две точки нормализации —
-	// это два ключа, и забывший нормализовать получил бы «намерения нет» на
-	// живом намерении.
-	if in, found, err := a.pay.IntentByKey(ctx, subject, key); err == nil && found {
-		return payment.StartResult{Intent: in}, "", nil
+	// Ключ проверяется ДО заказа: негодный иначе оставил бы заказ без намерения.
+	key, err := payment.NormalizeKey(rawKey)
+	if err != nil {
+		return payment.StartResult{}, payment.ReasonKeyInvalid, err
 	}
 	order := shoppg.Order{
-		ID: uuid.New(), SubjectID: subject, ProductCode: product.Code,
+		ID: orderIDOf(subject, key), SubjectID: subject, ProductCode: product.Code,
 		AmountMinor: product.AmountMinor, Currency: currency,
 	}
-	if err := a.orders.Create(ctx, order, time.Now()); err != nil {
-		return payment.StartResult{}, "", err
+	if createErr := a.orders.Create(ctx, order, time.Now()); createErr != nil {
+		return payment.StartResult{}, "", createErr
 	}
 	return a.pay.Start(ctx, payment.StartRequest{
 		PayerID:        subject,
@@ -91,6 +93,11 @@ func (a *App) startPayment(r *http.Request, subject uuid.UUID, product Product,
 	})
 }
 
+// orderIDOf — id заказа из плательщика и нормализованного ключа.
+func orderIDOf(subject uuid.UUID, key string) uuid.UUID {
+	return uuid.NewSHA1(orderIDSpace, []byte(subject.String()+"\x00"+key))
+}
+
 // webhook — уведомление провайдера.
 //
 // ДВОЙНИК ПРОВАЙДЕРА СЫРОЕ ТЕЛО НЕ РАЗБИРАЕТ: paymenttest.MemProvider отдаёт
@@ -100,7 +107,7 @@ func (a *App) startPayment(r *http.Request, subject uuid.UUID, product Product,
 // это решение: он отдельный пакет с ровно одной библиотекой.
 func (a *App) webhook(w http.ResponseWriter, r *http.Request) {
 	var body providerEvent
-	if !a.decode(w, r, &body) {
+	if !decodeJSON(a.respondClass, w, r, &body) {
 		return
 	}
 	a.provider.Push(body.event())
@@ -109,7 +116,10 @@ func (a *App) webhook(w http.ResponseWriter, r *http.Request) {
 		Raw: []byte("{}"), Headers: r.Header, RemoteIP: clientIP(r),
 	})
 	if err != nil {
-		a.respond.Write(r.Context(), w, err)
+		// ПРОВАЙДЕРУ — КЛАСС, БЕЗ СЛОВАРЯ ПРОДУКТА: правило, совпавшее с ошибкой
+		// хука глубоко под ErrUnavailable, превратило бы 503 в 4xx, и оплата
+		// потерялась бы.
+		a.respondClass.Write(r.Context(), w, err)
 		return
 	}
 	a.writeJSON(w, http.StatusOK, map[string]any{"outcome": string(res.Outcome)})
@@ -222,12 +232,13 @@ func (a *App) allowed(w http.ResponseWriter, r *http.Request, p authz.Permission
 	return principal.SubjectID, true
 }
 
-// decode читает тело запроса. Возвращает false, если ответ уже написан.
-func (a *App) decode(w http.ResponseWriter, r *http.Request, dst any) bool {
+// decodeJSON читает тело запроса; ошибку пишет переданный ответчик. Возвращает
+// false, если ответ уже написан.
+func decodeJSON(respond *httperr.Responder, w http.ResponseWriter, r *http.Request, dst any) bool {
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxJSONBytes))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
-		a.respond.Write(r.Context(), w, errs.IncorrectInput("body-invalid").WithCause(err))
+		respond.Write(r.Context(), w, errs.IncorrectInput("body-invalid").WithCause(err))
 		return false
 	}
 	return true

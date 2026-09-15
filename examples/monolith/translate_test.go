@@ -30,23 +30,29 @@ import (
 
 // TestTranslate_SentinelsReachHTTP — итоговые статус и слаг каждой sentinel,
 // которую монолит может отдать наружу: гейт «порты сходятся у потребителя».
+// Ручкам людей отвечает продуктовый ответчик, вебхуку — ответчик классом.
 func TestTranslate_SentinelsReachHTTP(t *testing.T) {
-	respond := newResponder()
-	for _, o := range outcomes() {
-		status, slug := answerOf(t, respond, o.err)
-		assert.Equal(t, o.status, status, "%s: %v", o.route, o.err)
-		assert.Equal(t, o.slug, slug, "%s: %v", o.route, o.err)
+	check := func(respond *httperr.Responder, all []outcome) {
+		for _, o := range all {
+			status, slug := answerOf(t, respond, o.err)
+			assert.Equal(t, o.status, status, "%s: %v", o.route, o.err)
+			assert.Equal(t, o.slug, slug, "%s: %v", o.route, o.err)
+		}
 	}
+	check(newResponder(), outcomes())
+	check(newClassResponder(), machineOutcomes())
 }
 
 // TestTranslate_NoRedundantRule — правило, без которого ответ не хуже, лишнее:
 // таблица не разрастается обратно.
 //
 // Без правила httperr отвечает статусом класса и слагом — именем класса. Тот же
-// ответ — находка всегда; тот же статус оправдан только строкой clientActs.
+// ответ — находка всегда; тот же статус оправдан только строкой clientActs, а
+// понижение класса до 500 — только строкой downgrades.
 func TestTranslate_NoRedundantRule(t *testing.T) {
-	respond, acts := newResponder(), clientActs()
+	respond, acts, down := newResponder(), clientActs(), downgrades()
 	answered := make(map[string]bool, len(acts))
+	lowered := make(map[error]bool, len(down))
 	for _, r := range rules() {
 		status, slug := answerOf(t, respond, r.sentinel)
 		answered[slug] = true
@@ -61,11 +67,22 @@ func TestTranslate_NoRedundantRule(t *testing.T) {
 		case status == classStatus && acts[slug] == "":
 			t.Errorf("правило лишнее: %q отвечает статусом класса %d, а чем слаг %q полезнее %q, в clientActs не сказано",
 				r.sentinel, status, slug, classSlug)
+		case status == http.StatusInternalServerError:
+			lowered[r.sentinel] = true
+			if down[r.sentinel] == "" {
+				t.Errorf("правило понижает %q с %d %s до 500, а почему класс модуля здесь соврал бы, в downgrades не сказано",
+					r.sentinel, classStatus, classSlug)
+			}
 		}
 	}
 	for slug := range acts {
 		if !answered[slug] {
 			t.Errorf("clientActs объясняет слаг %q, которого не отдаёт ни одно правило", slug)
+		}
+	}
+	for sentinel := range down {
+		if !lowered[sentinel] {
+			t.Errorf("downgrades объясняет понижение %q, которого нет в таблице", sentinel)
 		}
 	}
 }
@@ -89,8 +106,17 @@ func clientActs() map[string]string {
 	}
 }
 
+// downgrades — почему класс модуля в этом монолите соврал бы клиенту. Правило,
+// понижающее класс до 500, без строки здесь — находка.
+func downgrades() map[error]string {
+	return map[error]string{
+		payment.ErrInvalidMoney: "сумму и валюту считает сервер из каталога: клиенту чинить нечего, а 400 спрятал бы дефект сборки в Debug-лог",
+	}
+}
+
 // TestTranslate_EveryRuleReachable — правило на sentinel, которую монолит наружу
-// не отдаёт, мёртвое: оно учит клиента ответу, которого не бывает.
+// не отдаёт, мёртвое: оно учит клиента ответу, которого не бывает. Вебхук не
+// в счёт: словаря продукта у него нет.
 func TestTranslate_EveryRuleReachable(t *testing.T) {
 	all := outcomes()
 	for _, r := range rules() {
@@ -101,6 +127,21 @@ func TestTranslate_EveryRuleReachable(t *testing.T) {
 	}
 }
 
+// TestResponders_WebhookSkipsProductRules — у ответчика классом нет словаря:
+// правило item-not-open совпадает с ошибкой хука глубоко под ErrUnavailable, и
+// продуктовый ответчик отдал бы провайдеру 403 вместо 503.
+func TestResponders_WebhookSkipsProductRules(t *testing.T) {
+	hook := itemClosedInHook()
+
+	status, slug := answerOf(t, newResponder(), hook)
+	require.Equal(t, http.StatusForbidden, status, "условие пробы: правило продукта совпадает с ошибкой хука")
+	require.Equal(t, "item-not-open", slug)
+
+	status, slug = answerOf(t, newClassResponder(), hook)
+	require.Equal(t, http.StatusServiceUnavailable, status)
+	require.Equal(t, "unavailable", slug)
+}
+
 // outcome — ошибка в том виде, в каком её отдаёт наружу путь монолита, и ответ.
 type outcome struct {
 	route  string
@@ -109,9 +150,9 @@ type outcome struct {
 	slug   string
 }
 
-// outcomes — всё, что монолит может отдать наружу. Ошибки завёрнуты так, как их
-// заворачивает модуль на этом пути: класс берёт самая внешняя классифицированная
-// ошибка цепочки, и голая sentinel проверяла бы другой ответ.
+// outcomes — всё, что ручки для людей могут отдать наружу. Ошибки завёрнуты так,
+// как их заворачивает модуль на этом пути: класс берёт самая внешняя
+// классифицированная ошибка цепочки, и голая sentinel проверяла бы другой ответ.
 func outcomes() []outcome {
 	down := errors.New("хранилище не отвечает")
 	return []outcome{
@@ -139,19 +180,33 @@ func outcomes() []outcome {
 		{"POST /checkout", fmt.Errorf("create payment: %w", payment.ErrUnsupported), http.StatusNotImplemented, "not-implemented"},
 		{"POST /checkout", fmt.Errorf("%w: create payment: %w", payment.ErrUnavailable, down), http.StatusServiceUnavailable, "unavailable"},
 		// Сумму и состав строит код из каталога: оба отказа — дефект сборки, а не ввод.
-		{"POST /checkout", fmt.Errorf("%w: outside the cap", payment.ErrInvalidMoney), http.StatusBadRequest, "incorrect-input"},
+		{"POST /checkout", fmt.Errorf("%w: outside the cap", payment.ErrInvalidMoney), http.StatusInternalServerError, httperr.DefaultInternalSlug},
 		{"POST /checkout", fmt.Errorf("%w: items add up to less", payment.ErrInvalidRequest), http.StatusInternalServerError, httperr.DefaultInternalSlug},
-		{"POST /webhook", payment.ErrInvalidSignature, http.StatusBadRequest, "incorrect-input"},
-		{"POST /webhook", fmt.Errorf("%w: event has no provider event id", payment.ErrMalformedEvent), http.StatusBadRequest, "incorrect-input"},
-		{"POST /webhook", fmt.Errorf("%w: apply event: %w", payment.ErrUnavailable, shoppg.ErrUnknownOrder), http.StatusServiceUnavailable, "unavailable"},
-		// SlugError хука под недоступностью ядра — 503, а не её 409 (kit v0.3.0).
-		{"POST /webhook", fmt.Errorf("%w: apply event: %w", payment.ErrUnavailable, errs.Conflict("seat-taken")), http.StatusServiceUnavailable, "unavailable"},
 		{"POST /upload", fmt.Errorf("%w: body is over the limit", objectstore.ErrTooLarge), http.StatusRequestEntityTooLarge, "payload-too-large"},
 		{"POST /upload", objectstore.ErrEmptyBody, http.StatusBadRequest, "file-empty"},
 		{"POST /upload", fmt.Errorf("%w: text/plain", objectstore.ErrUnsupportedType), http.StatusBadRequest, "file-type-unsupported"},
 		{"POST /upload", objectstore.ErrSVGRejected, http.StatusBadRequest, "file-type-unsupported"},
 		{"POST /upload", fmt.Errorf("%w: put", objectstore.ErrUnavailable), http.StatusServiceUnavailable, "unavailable"},
 	}
+}
+
+// machineOutcomes — что отдаёт вебхук: ответчик классом, словаря продукта нет.
+func machineOutcomes() []outcome {
+	return []outcome{
+		{"POST /webhook", payment.ErrInvalidSignature, http.StatusBadRequest, "incorrect-input"},
+		{"POST /webhook", fmt.Errorf("%w: event has no provider event id", payment.ErrMalformedEvent), http.StatusBadRequest, "incorrect-input"},
+		{"POST /webhook", fmt.Errorf("%w: apply event: %w", payment.ErrUnavailable, shoppg.ErrUnknownOrder), http.StatusServiceUnavailable, "unavailable"},
+		// SlugError хука под недоступностью ядра — 503, а не её 409 (kit v0.3.0).
+		{"POST /webhook", fmt.Errorf("%w: apply event: %w", payment.ErrUnavailable, errs.Conflict("seat-taken")), http.StatusServiceUnavailable, "unavailable"},
+		// Sentinel с правилом продукта под недоступностью ядра — всё равно 503.
+		{"POST /webhook", itemClosedInHook(), http.StatusServiceUnavailable, "unavailable"},
+	}
+}
+
+// itemClosedInHook — ошибка хука зачисления, с которой совпадает правило item-not-open.
+func itemClosedInHook() error {
+	return fmt.Errorf("%w: apply event: %w", payment.ErrUnavailable,
+		fmt.Errorf("%w: предмет снят с продажи", ErrItemNotOpen))
 }
 
 // sessionFailed — сбой, завёрнутый так же, как его заворачивает session.

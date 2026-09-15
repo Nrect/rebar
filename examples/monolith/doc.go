@@ -39,10 +39,12 @@
 //  1. ДРАЙВЕР ЖИВЁТ В ОДНОМ КАТАЛОГЕ. pgx законен только в shoppg; ядро
 //     примера про него не знает. Держат TestGuard_CoreHasNoDriver и правило
 //     depguard в корне репозитория.
-//  2. ОШИБКИ ПИШЕТ ОДИН ОТВЕТЧИК. Наружу уходит слаг из закрытого набора и
+//  2. ОШИБКИ ПИШЕТ httperr. Наружу уходит слаг из закрытого набора и
 //     request_id; текст доменной ошибки, имя таблицы, SQLSTATE, логин и токен
-//     не уходят никогда. Держат TestGuard_NoDirectHTTPErrors и
-//     TestErrorBody_LeaksNothing.
+//     не уходят никогда. Ручкам людей отвечает ответчик со словарём продукта,
+//     вебхуку — ответчик классом: правило словаря, совпавшее с ошибкой хука,
+//     превратило бы 503 в 4xx. Держат TestGuard_NoDirectHTTPErrors,
+//     TestErrorBody_LeaksNothing и TestWebhook_AnswersClassWithoutTranslate.
 //  3. СБОЙ И ОТКАЗ РАЗЛИЧИМЫ. 503 против 403: «доступа нет» при упавшей базе
 //     учит чинить права вместо базы, и инцидент тонет.
 //  4. ЦЕНУ СЧИТАЕТ СЕРВЕР. Клиент называет товар и ключ идемпотентности;
@@ -150,7 +152,8 @@
 //     (shoppg/tokens.go).
 //  2. У PAYMENT.SERVICE НЕ БЫЛО ЧИТАЮЩИХ МЕТОДОВ — 461bb65. IntentByID,
 //     IntentByKey и Ledger на Service; чтение мимо домена снято, поле
-//     payStore у App исчезло. IntentByKey нормализует ключ сам, как и Start.
+//     payStore у App исчезло. IntentByKey нормализует ключ сам, как и Start;
+//     пробу им до Start пример потом снял — повтор ключа разбирает Start.
 //  3. У AUTHZ НЕ БЫЛО ОШИБКИ ОТКАЗА — 40ea4b7. authz.ErrDenied и
 //     Authorizer.Require; свой ErrAccessDenied снят.
 //  4. У ENTITLEMENT.STORE.GRANT НЕ БЫЛО ВРЕМЕНИ — f67c46b, ЛОМАЮЩЕЕ.

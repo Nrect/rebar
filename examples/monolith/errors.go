@@ -41,9 +41,16 @@ func denialOf(d authz.Decision) error {
 	return fmt.Errorf("%w: %s", authz.ErrDenied, d.Reason)
 }
 
-// newResponder — ответчик ошибок монолита; тот же, что проверяют тесты таблицы.
+// newResponder — ответчик ручек для людей: слаг продукта поверх класса.
 func newResponder() *httperr.Responder {
 	return httperr.New(httperr.Config{RequestID: reqid.From, Translate: translate})
+}
+
+// newClassResponder — ответчик ручек для машины (вебхук): класс без Translate.
+// Машине слаги продукта не нужны, а правило, совпавшее с ошибкой хука глубоко
+// под ErrUnavailable, превратило бы 503 в 4xx, и провайдер перестал бы повторять.
+func newClassResponder() *httperr.Responder {
+	return httperr.New(httperr.Config{RequestID: reqid.From})
 }
 
 // rule — «эта доменная ошибка отвечает этим слагом и этим классом».
@@ -70,9 +77,10 @@ func translate(err error) error {
 // rules — словарь продукта поверх классов модулей.
 //
 // СТРОКА ЕСТЬ, ТОЛЬКО ЕСЛИ БЕЗ НЕЁ ОТВЕТ ХУЖЕ: клиент по слагу поступит иначе,
-// чем по имени класса (довод — clientActs в translate_test.go), либо sentinel
-// решена //errs:nokind, а значение в этом монолите присылает клиент. Лишнюю и
-// мёртвую строку роняют TestTranslate_NoRedundantRule и
+// чем по имени класса (довод — clientActs в translate_test.go); sentinel решена
+// //errs:nokind, а значение в этом монолите присылает клиент; либо класс модуля
+// здесь соврал бы, и правило понижает его до 500 (довод — downgrades). Лишнюю,
+// мёртвую и понижение без довода роняют TestTranslate_NoRedundantRule и
 // TestTranslate_EveryRuleReachable.
 func rules() []rule {
 	out := make([]rule, 0, 16)
@@ -102,11 +110,14 @@ func authRules() []rule {
 	}
 }
 
-// paymentRules — два конца попытки оплаты, после которых клиент поступает по-разному.
+// paymentRules — концы попытки оплаты, по которым клиент поступает по-разному, и
+// сумма из каталога.
 func paymentRules() []rule {
 	return []rule{
 		{payment.ErrIntentClosed, errs.Conflict("payment-closed")},
 		{payment.ErrProviderRejected, errs.Conflict("provider-rejected")},
+		// Сумму и валюту считает сервер: негодная — дефект сборки, а не ввод.
+		{payment.ErrInvalidMoney, errs.Unknown(httperr.DefaultInternalSlug)},
 	}
 }
 

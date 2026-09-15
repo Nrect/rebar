@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -93,6 +94,25 @@ func TestSettlerSlugError_KeepsWebhookRetryable(t *testing.T) {
 	require.Equal(t, http.StatusOK, status, "повтор провайдера: %s", raw(body))
 	require.Equal(t, "applied", body["outcome"])
 	requireCount(t, s, 1, "SELECT count(*) FROM payment_ledger WHERE intent_id = $1", intent)
+}
+
+// TestWebhook_AnswersClassWithoutTranslate — ручка вебхука отвечает классом,
+// мимо словаря продукта: правило item-not-open совпадает с ошибкой хука глубоко
+// под payment.ErrUnavailable, и продуктовый ответчик отдал бы провайдеру 403
+// вместо 503 (условие держит TestResponders_WebhookSkipsProductRules).
+func TestWebhook_AnswersClassWithoutTranslate(t *testing.T) {
+	s := newStand(t)
+	hook := &refusingSettler{err: fmt.Errorf("%w: предмет снят с продажи", monolith.ErrItemNotOpen)}
+	provider := paymenttest.NewMemProvider(monolith.ProviderName)
+	pay := payment.NewService(paymentpg.New(s.pool(t), paymentpg.Options{Settler: hook}),
+		provider, paymenttest.NewObserver(), monolith.PaymentConfig())
+	intent := pendingIntent(t, pay)
+
+	status, body := serveJSON(t, monolith.WebhookHandler(pay, provider), providerBody(intent))
+	require.Equal(t, http.StatusServiceUnavailable, status,
+		"провайдеру — класс, а не слаг продукта: %s", raw(body))
+	require.Equal(t, "unavailable", body["slug"])
+	require.Equal(t, 1, hook.calls, "ответ дал хук, а не шаг до него")
 }
 
 // restoreOrder возвращает удалённый заказ на место.

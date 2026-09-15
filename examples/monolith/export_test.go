@@ -13,9 +13,9 @@ const ProviderName = providerName
 // PaymentConfig — политика оплаты сборки.
 func PaymentConfig() payment.Config { return paymentConfig() }
 
-// WebhookHandler — ручка вебхука с ответчиком монолита поверх чужого
+// WebhookHandler — ручка вебхука с ответчиками монолита поверх чужого
 // payment.Service: тест подключает к paymentpg свой хук, не трогая сборку App.
 func WebhookHandler(pay *payment.Service, provider *paymenttest.MemProvider) http.Handler {
-	a := &App{pay: pay, provider: provider, respond: newResponder()}
+	a := &App{pay: pay, provider: provider, respond: newResponder(), respondClass: newClassResponder()}
 	return http.HandlerFunc(a.webhook)
 }

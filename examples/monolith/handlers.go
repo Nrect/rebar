@@ -52,7 +52,7 @@ func (a *App) authenticated(next http.Handler) http.Handler {
 // без пароля и без счётчика попыток (session/register.go).
 func (a *App) register(w http.ResponseWriter, r *http.Request) {
 	var req struct{ Login, Password string }
-	if !a.decode(w, r, &req) {
+	if !decodeJSON(a.respond, w, r, &req) {
 		return
 	}
 	err := a.sessions.Register(r.Context(), session.RegisterRequest{
@@ -81,7 +81,7 @@ func (a *App) confirm(w http.ResponseWriter, r *http.Request) {
 // только его HMAC, в тело ответа он не попадает.
 func (a *App) signIn(w http.ResponseWriter, r *http.Request) {
 	var req struct{ Login, Password string }
-	if !a.decode(w, r, &req) {
+	if !decodeJSON(a.respond, w, r, &req) {
 		return
 	}
 	res, err := a.sessions.SignIn(r.Context(), session.SignInRequest{
