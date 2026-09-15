@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/nrect/rebar/kit/errs"
 	"github.com/nrect/rebar/mail"
 	"github.com/nrect/rebar/mail/mailtest"
 )
@@ -63,7 +64,9 @@ func TestMemStore_DuplicateKeyReturnsExistingRow(t *testing.T) {
 	assert.Len(t, store.Rows(), 1)
 }
 
-// Тот же ID под другим ключом — оплошность теста, а не домена.
+// Тот же ID под другим ключом — оплошность теста, а не домена. В mailpg это
+// нарушение первичного ключа, то есть mail.ErrUnavailable; оплошность отличает
+// своя sentinel двойника.
 func TestMemStore_SameIDDifferentKeyIsDoubleError(t *testing.T) {
 	t.Parallel()
 	store := mailtest.NewMemStore()
@@ -72,8 +75,7 @@ func TestMemStore_SameIDDifferentKeyIsDoubleError(t *testing.T) {
 	other := envelope("verify:b", storeBase)
 	other.ID = first.ID
 	_, err := store.Enqueue(context.Background(), other)
-	require.ErrorIs(t, err, mailtest.ErrIDReused)
-	assert.NotErrorIs(t, err, mail.ErrUnavailable, "ошибка двойника отличима от доменной")
+	requireUnavailable(t, err, mailtest.ErrIDReused, "Enqueue того же ID")
 }
 
 // Снимки — копии: тест не должен править внутренности хранилища.
@@ -229,21 +231,37 @@ func TestMemStore_FinishRequiresSendingRow(t *testing.T) {
 	assert.Equal(t, mail.StatusSending, mustGet(t, store, env.ID).Status)
 }
 
-func TestMemStore_ErrIsReturnedByEveryMethod(t *testing.T) {
+// Заданный сбой приходит из каждого метода так, как его отдаёт mailpg: класс
+// 503, mail.ErrUnavailable и причина в одной цепочке. Голая причина давала бы
+// потребителю, зовущему стор мимо сервиса, 500 там, где прод отвечает 503.
+func TestMemStore_InjectedErrorIsUnavailable(t *testing.T) {
 	t.Parallel()
 	store := mailtest.NewMemStore()
 	store.SetErr(errUnavailable)
 
 	ctx := context.Background()
 	_, err := store.Enqueue(ctx, envelope("verify:a", storeBase))
-	require.ErrorIs(t, err, errUnavailable)
+	requireUnavailable(t, err, errUnavailable, "Enqueue")
 	_, err = store.Claim(ctx, storeBase, storeLease, 1)
-	require.ErrorIs(t, err, errUnavailable)
-	require.ErrorIs(t, store.Finish(ctx, mail.FinishRequest{ID: uuid.New()}), errUnavailable)
+	requireUnavailable(t, err, errUnavailable, "Claim")
+	requireUnavailable(t, store.Finish(ctx, mail.FinishRequest{ID: uuid.New()}), errUnavailable, "Finish")
 	_, err = store.Stats(ctx, storeBase)
-	require.ErrorIs(t, err, errUnavailable)
+	requireUnavailable(t, err, errUnavailable, "Stats")
 	_, err = store.Purge(ctx, storeBase, 1)
-	require.ErrorIs(t, err, errUnavailable)
+	requireUnavailable(t, err, errUnavailable, "Purge")
+
+	store.SetErr(nil)
+	store.SetFinishErr(errUnavailable)
+	requireUnavailable(t, store.Finish(ctx, mail.FinishRequest{ID: uuid.New()}), errUnavailable, "Finish по SetFinishErr")
+}
+
+// requireUnavailable — все три стороны сразу: класс, sentinel модуля и
+// причина. Проверка одной чинила бы её ценой другой.
+func requireUnavailable(t *testing.T, err, cause error, site string) {
+	t.Helper()
+	assert.Equalf(t, errs.KindUnavailable, errs.KindOf(err), "класс ошибки на %s: %v", site, err)
+	require.ErrorIsf(t, err, mail.ErrUnavailable, "mail.ErrUnavailable на %s", site)
+	require.ErrorIsf(t, err, cause, "причина на %s", site)
 }
 
 func TestMemStore_PurgeRemovesOldTerminalRowsOnly(t *testing.T) {

@@ -31,8 +31,10 @@
   Потребителю больше не нужна таблица перевода ошибок `mail`: `errs.KindOf` и
   `httperr` находят класс на самой sentinel. Страж
   `errstest.EveryErrorHasKind` стоит в корне модуля (`sentinels_test.go`);
-  двойники `mailtest` из него исключены — их ошибки только причины, класс
-  несёт обёртка ядра, и это держит `TestPortFailuresReachCallerAsUnavailable`.
+  двойники `mailtest` из него исключены — своего класса у их sentinel нет:
+  сбой хранилища двойник заворачивает в `ErrUnavailable` сам, как `mailpg`
+  (ниже), а причину стоп-листа отдаёт голой, и класс ей даёт обёртка ядра —
+  это держит `TestPortFailuresReachCallerAsUnavailable` на `Suppress`.
 
   | Sentinel | Класс | Почему |
   |---|---|---|
@@ -97,6 +99,18 @@
   Счётчики снимаются нулём, ошибки и хуки — `nil`. Замены `delete` по карте
   `RejectFor` нет: у транспорта поведение, меняющееся по ходу теста, задаётся
   `SetSendHook`. Флаги и окружение `cmd/sesfake` не менялись.
+- **Сбой хранилища `mailtest.MemStore` приходит в `mail.ErrUnavailable`, как у
+  `mailpg` ([ADR-0007, «Двойники»](../docs/adr/0007-error-kind.md)).** Было:
+  `SetErr` и `SetFinishErr` отдавали причину голой из `Enqueue`, `Claim`,
+  `Finish`, `Stats` и `Purge`, `ErrIDReused` тоже была голой, и потребитель,
+  зовущий стор мимо сервиса (вставка в своей транзакции), видел на двойнике
+  класс 500 там, где прод отвечает 503. Стало: `errs.KindOf` — `unavailable`,
+  а `errors.Is` находит и `mail.ErrUnavailable`, и причину. Ломающее для
+  теста, который ветвился по голой ошибке двойника: `errors.Is` по причине
+  истинен по-прежнему, а `NotErrorIs(err, mail.ErrUnavailable)` и сравнение
+  текста — уже нет. `MemSuppressor` и `Transport` отдают причину голой, как
+  раньше: стоп-лист пишет потребитель, а `smtp` и `sesv2` временный сбой не
+  классифицируют.
 
 ### Fixed
 - `mailpg.Purge` сортировал удаляемые строки только по `updated_at`: при равных

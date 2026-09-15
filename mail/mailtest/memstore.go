@@ -3,7 +3,6 @@ package mailtest
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -16,9 +15,10 @@ import (
 )
 
 // ErrIDReused — ошибка двойника, не домена: строку с этим ID уже клали под
-// другим ключом. Отличима от ошибок mail, чтобы тест не принял свою оплошность
-// за проверяемый инвариант (CONVENTIONS §3).
-var ErrIDReused = errors.New("mailtest: envelope id is already stored under a different dedup key")
+// другим ключом. В mailpg это нарушение первичного ключа, поэтому она
+// завёрнута в mail.ErrUnavailable; оплошность теста отличает своя sentinel
+// (ADR-0007, «Двойники»).
+var ErrIDReused = fmt.Errorf("%w: mailtest: envelope id is already stored under a different dedup key", mail.ErrUnavailable)
 
 // MemStore — mail.Store в памяти: настоящая уникальность DedupKey, аренда и
 // SKIP-LOCKED-семантика, стирание тела в терминальном статусе, моменты как в
@@ -38,10 +38,11 @@ func NewMemStore() *MemStore {
 }
 
 // SetErr — ошибка из любого метода порта: для fail-closed тестов; nil снимает.
+// Приходит в mail.ErrUnavailable, как сбой mailpg (storeError).
 func (m *MemStore) SetErr(err error) { m.set(func() { m.err = err }) }
 
 // SetFinishErr — ошибка только из Finish: после неё остаток пачки не идёт; nil
-// снимает.
+// снимает. Приходит так же, как SetErr.
 func (m *MemStore) SetFinishErr(err error) { m.set(func() { m.finishErr = err }) }
 
 // set — правка настройки под тем же замком, под которым её читают методы порта.
@@ -51,13 +52,20 @@ func (m *MemStore) set(mutate func()) {
 	mutate()
 }
 
+// storeError — заданный сбой так, как его отдаёт mailpg: в mail.ErrUnavailable
+// с причиной в цепочке. Голая причина дала бы потребителю, зовущему стор мимо
+// сервиса, 500 там, где прод отвечает 503 (ADR-0007, «Двойники»).
+func storeError(op string, err error) error {
+	return fmt.Errorf("%w: mailtest: %s: %w", mail.ErrUnavailable, op, err)
+}
+
 // Enqueue вставляет строку в pending; повтор ключа возвращает существующую
 // строку с её отпечатком байт в байт — на нём домен решает, законен ли повтор.
 func (m *MemStore) Enqueue(_ context.Context, env mail.Envelope) (mail.EnqueueResult, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
-		return mail.EnqueueResult{}, m.err
+		return mail.EnqueueResult{}, storeError("enqueue", m.err)
 	}
 	if id, dup := m.keys[env.DedupKey]; dup {
 		return mail.EnqueueResult{Outcome: mail.OutcomeDuplicate, Envelope: copyEnvelope(m.rows[id])}, nil
@@ -80,7 +88,7 @@ func (m *MemStore) Claim(_ context.Context, now time.Time, lease time.Duration, 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
-		return nil, m.err
+		return nil, storeError("claim", m.err)
 	}
 	if limit <= 0 {
 		return []mail.Envelope{}, nil
@@ -144,10 +152,10 @@ func (m *MemStore) Finish(_ context.Context, req mail.FinishRequest) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
-		return m.err
+		return storeError("finish", m.err)
 	}
 	if m.finishErr != nil {
-		return m.finishErr
+		return storeError("finish", m.finishErr)
 	}
 	row, ok := m.rows[req.ID]
 	if !ok || row.Status != mail.StatusSending {
@@ -204,7 +212,7 @@ func (m *MemStore) Stats(_ context.Context, now time.Time) (mail.Stats, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
-		return mail.Stats{}, m.err
+		return mail.Stats{}, storeError("stats", m.err)
 	}
 	var (
 		stats  mail.Stats
@@ -234,7 +242,7 @@ func (m *MemStore) Purge(_ context.Context, before time.Time, limit int) (int, e
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
-		return 0, m.err
+		return 0, storeError("purge", m.err)
 	}
 	if limit <= 0 {
 		return 0, nil

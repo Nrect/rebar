@@ -23,7 +23,8 @@ func NewMemSuppressor() *MemSuppressor {
 }
 
 // SetErr — ошибка обоих методов порта: «стоп-лист недоступен» — письмо не
-// уходит; nil снимает.
+// уходит; nil снимает. Приходит голой: стоп-лист пишет потребитель, класс даёт
+// обёртка сервиса.
 func (s *MemSuppressor) SetErr(err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
