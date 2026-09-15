@@ -129,9 +129,12 @@ type Tokens interface {                                                         
 }
 type Notifier interface { Notify(ctx context.Context, n Notification) error }
 type Auditor  interface { Record(ctx context.Context, ev Event) error }          // nil допустим
+type Recipients interface { Check(login string) error }                         // РЕАЛИЗУЕТ ПОТРЕБИТЕЛЬ
 ```
 
-Сценарии сервиса: `Register` (семантика «принято», а не «создано»), `SignIn`
+Сценарии сервиса: `Register` (семантика «принято», а не «создано»; годен ли
+логин получателем, спрашивает порт `Recipients` до `Create` — правило канала у
+потребителя), `SignIn`
 (`ErrInvalidCredentials | ErrTooManyAttempts | ErrNotVerified`), `Resolve`
 (скользящее продление не чаще `RenewEvery`), `SignOut` и `SignOutAll`,
 `ChangePassword` (с отзывом всех сессий и всех токенов сброса),
@@ -418,7 +421,7 @@ pg-адаптер — `entitlementpg` (2026-09-14; в v0.1 его не было:
 `authtest`: `MemIdentities`, `MemSessions`, `MemAttempts`, `MemTokens`
 (связан с `MemIdentities` и честно применяет эффект назначения токена — иначе
 тест «подтверждение адреса» был бы зелёным при неработающем подтверждении),
-`RecordingNotifier`, `RecordingAuditor`, `Strength`, `FastHasher` (полы OWASP —
+`RecordingNotifier`, `RecordingAuditor`, `MemRecipients`, `Strength`, `FastHasher` (полы OWASP —
 около тридцати миллисекунд на хэш, чтобы тесты шли за секунды), `Clock`.
 
 `authztest`: `MemRoles`, `RequireAllClassified`, `RequireNoDeadRules` (правило
