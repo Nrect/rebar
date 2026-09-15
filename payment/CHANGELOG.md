@@ -14,10 +14,11 @@
   `ErrRefundTooLarge`, `ErrNotSettled` и `ErrStatusConflict` в
   примере-монолите. Страж `errstest.EveryErrorHasKind` стоит в корне модуля
   (`sentinels_test.go`) и обходит заодно `prorate`; двойники `paymenttest` из
-  него исключены — их ошибки только причины, класс несёт обёртка ядра. Это
-  держит `TestPortFailuresReachCallerAsUnavailable`: сбой стора, провайдера и
-  хука `OnSettled`/`OnRefunded` доходит до вызывающего классом 503 на каждой
-  операции сервиса.
+  него исключены — своего класса у их sentinel нет: сбой стора двойник
+  заворачивает в `ErrUnavailable` сам, как `paymentpg` (ниже), а сбой
+  провайдера и хука `OnSettled`/`OnRefunded` отдаёт голым, и класс ему даёт
+  обёртка ядра — это держит `TestPortFailuresReachCallerAsUnavailable` на
+  путях провайдера и хука.
 
   | Sentinel | Класс | Почему |
   |---|---|---|
@@ -67,6 +68,19 @@
   другого модуля с тем же классом и дословно тем же текстом совпала бы с
   нашей через `errors.Is`. Модуль требует `github.com/nrect/rebar/kit v0.2.0`;
   `kit` — в белом списке стража импортов ядра, `prorate` остался на stdlib.
+- **Сбой хранилища `paymenttest.MemStore` приходит в `payment.ErrUnavailable`,
+  как у `paymentpg` ([ADR-0007, «Двойники»](../docs/adr/0007-error-kind.md)).**
+  Было: `SetErr` отдавал причину голой из каждого метода стора, и
+  потребитель, зовущий стор мимо сервиса (`paymentpg.Store.WithTx` в своей
+  транзакции), видел на двойнике класс 500 там, где прод отвечает 503.
+  Стало: `errs.KindOf` — `unavailable`, а `errors.Is` находит и
+  `payment.ErrUnavailable`, и причину (`ErrStore` или заданную ошибку).
+  Ломающее для теста, который ветвился по голой ошибке двойника: `errors.Is`
+  по причине истинен по-прежнему, а `NotErrorIs(err, payment.ErrUnavailable)`
+  и сравнение текста — уже нет. Ошибка хука `OnSettled`/`OnRefunded` и сбои
+  `MemProvider` приходят голыми, как раньше: хук `paymentpg` отдаёт как есть,
+  а адаптера провайдера в модуле нет — контракт `Provider` разрешает
+  неклассифицированную ошибку, и класс ей даёт сервис.
 
 ## [0.2.0] — 2026-09-10
 

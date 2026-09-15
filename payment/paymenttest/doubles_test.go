@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/nrect/rebar/kit/errs"
 	"github.com/nrect/rebar/payment"
 	"github.com/nrect/rebar/payment/paymenttest"
 )
@@ -175,6 +176,48 @@ func TestMemStore_StalePending_OrdersBeforeLimiting(t *testing.T) {
 	count, err := store.CountStuckPending(t.Context(), now.Add(time.Hour))
 	require.NoError(t, err)
 	assert.Equal(t, int64(5), count, "счётчик не упирается в размер пачки")
+}
+
+// Заданный сбой приходит из каждого метода так, как его отдаёт paymentpg:
+// класс 503, payment.ErrUnavailable и причина в одной цепочке. Голая причина
+// давала бы потребителю, зовущему стор мимо сервиса, 500 там, где прод
+// отвечает 503.
+func TestMemStore_InjectedErrorIsUnavailable(t *testing.T) {
+	t.Parallel()
+
+	store := paymenttest.NewMemStore()
+	store.SetErr(paymenttest.ErrStore)
+	ctx := t.Context()
+	in := intent("order:1", "buy-1")
+
+	requireUnavailable(t, store.CreateIntent(ctx, in), "CreateIntent")
+	_, _, err := store.IntentByKey(ctx, in.PayerID, in.IdempotencyKey)
+	requireUnavailable(t, err, "IntentByKey")
+	_, _, err = store.IntentByID(ctx, in.ID)
+	requireUnavailable(t, err, "IntentByID")
+	_, err = store.Transition(ctx, payment.TransitionRequest{IntentID: in.ID, To: payment.StatusPending, Now: now})
+	requireUnavailable(t, err, "Transition")
+	_, err = store.ApplyEvent(ctx, payment.ApplyEventRequest{IntentID: in.ID, Now: now})
+	requireUnavailable(t, err, "ApplyEvent")
+	_, err = store.ApplyRefund(ctx, payment.ApplyRefundRequest{IntentID: in.ID, Now: now})
+	requireUnavailable(t, err, "ApplyRefund")
+	_, err = store.Ledger(ctx, in.ID)
+	requireUnavailable(t, err, "Ledger")
+	_, err = store.StalePending(ctx, now, payment.IntentCursor{}, 10)
+	requireUnavailable(t, err, "StalePending")
+	_, err = store.CountStuckPending(ctx, now)
+	requireUnavailable(t, err, "CountStuckPending")
+	_, err = store.Drift(ctx, now, 10)
+	requireUnavailable(t, err, "Drift")
+}
+
+// requireUnavailable — все три стороны сразу: класс, sentinel модуля и
+// причина. Проверка одной чинила бы её ценой другой.
+func requireUnavailable(t *testing.T, err error, site string) {
+	t.Helper()
+	assert.Equalf(t, errs.KindUnavailable, errs.KindOf(err), "класс ошибки на %s: %v", site, err)
+	require.ErrorIsf(t, err, payment.ErrUnavailable, "payment.ErrUnavailable на %s", site)
+	require.ErrorIsf(t, err, paymenttest.ErrStore, "причина на %s", site)
 }
 
 // Идемпотентность провайдера смоделирована по-настоящему: повтор с тем же
