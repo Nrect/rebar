@@ -4,16 +4,15 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/nrect/rebar/auth"
 	"github.com/nrect/rebar/auth/loginid"
 	"github.com/nrect/rebar/auth/password"
 	"github.com/nrect/rebar/auth/session"
 	"github.com/nrect/rebar/authz"
-	"github.com/nrect/rebar/entitlement"
 	"github.com/nrect/rebar/kit/errs"
+	"github.com/nrect/rebar/kit/errs/httperr"
+	"github.com/nrect/rebar/kit/reqid"
 	"github.com/nrect/rebar/mail"
 	"github.com/nrect/rebar/objectstore"
-	"github.com/nrect/rebar/outbox"
 	"github.com/nrect/rebar/payment"
 )
 
@@ -42,21 +41,23 @@ func denialOf(d authz.Decision) error {
 	return fmt.Errorf("%w: %s", authz.ErrDenied, d.Reason)
 }
 
+// newResponder — ответчик ошибок монолита; тот же, что проверяют тесты таблицы.
+func newResponder() *httperr.Responder {
+	return httperr.New(httperr.Config{RequestID: reqid.From, Translate: translate})
+}
+
 // rule — «эта доменная ошибка отвечает этим слагом и этим классом».
 type rule struct {
 	sentinel error
 	answer   errs.SlugError
 }
 
-// translate — ЕДИНСТВЕННАЯ точка перевода доменной ошибки в ответ.
+// translate — ЕДИНСТВЕННАЯ точка перевода доменной ошибки в слаг продукта.
 //
-// СБОЙ ХРАНИЛИЩА И ОТКАЗ В ПРАВАХ ОБЯЗАНЫ БЫТЬ РАЗЛИЧИМЫ У ПОТРЕБИТЕЛЯ: 503
-// против 403. «Доступа нет» при упавшей базе — ложь клиенту и утопленный
-// инцидент, потому что чинить будут права, а не базу (entitlement/doc.go, п. 2).
-//
-// Текст доменной ошибки в ответ НЕ УХОДИТ: наружу отдаётся только слаг из
-// закрытого набора. В сообщениях Postgres лежат имена таблиц и ограничений, в
-// ошибках auth — то, чего клиенту знать не следует.
+// КЛАСС НЕСЁТ SENTINEL МОДУЛЯ (ADR-0007): без правила httperr отвечает статусом
+// класса и слагом — именем класса, и 503 от упавшей базы не спутать с 403 от
+// правил. Текст доменной ошибки в ответ НЕ УХОДИТ: в нём имена таблиц и то, чего
+// клиенту знать не следует.
 func translate(err error) error {
 	for _, r := range rules() {
 		if errors.Is(err, r.sentinel) {
@@ -66,96 +67,64 @@ func translate(err error) error {
 	return err
 }
 
-// rules — таблица перевода. Порядок ЗНАЧИМ: недоступности стоят первыми,
-// потому что часть отказов обёрнута в них (session.unavailable оборачивает
-// auth.ErrUnavailable вокруг сбоя хранилища).
+// rules — словарь продукта поверх классов модулей.
+//
+// СТРОКА ЕСТЬ, ТОЛЬКО ЕСЛИ БЕЗ НЕЁ ОТВЕТ ХУЖЕ: клиент по слагу поступит иначе,
+// чем по имени класса (довод — clientActs в translate_test.go), либо sentinel
+// решена //errs:nokind, а значение в этом монолите присылает клиент. Лишнюю и
+// мёртвую строку роняют TestTranslate_NoRedundantRule и
+// TestTranslate_EveryRuleReachable.
 func rules() []rule {
-	out := make([]rule, 0, 32)
-	out = append(out, unavailableRules()...)
+	out := make([]rule, 0, 16)
 	out = append(out, authRules()...)
 	out = append(out, paymentRules()...)
 	out = append(out, uploadRules()...)
 	return out
 }
 
-// unavailableRules — всё, что означает «ответа нет». Каждая даёт 503, а не 403
-// и не 401.
-func unavailableRules() []rule {
-	return []rule{
-		{auth.ErrUnavailable, errs.Unavailable("identity-store-unavailable")},
-		{authz.ErrUnavailable, errs.Unavailable("authz-unavailable")},
-		{entitlement.ErrUnavailable, errs.Unavailable("entitlement-unavailable")},
-		{payment.ErrUnavailable, errs.Unavailable("payment-unavailable")},
-		{mail.ErrUnavailable, errs.Unavailable("mail-unavailable")},
-		{outbox.ErrUnavailable, errs.Unavailable("outbox-unavailable")},
-		{objectstore.ErrUnavailable, errs.Unavailable("objectstore-unavailable")},
-	}
-}
-
 // authRules — вход, регистрация и права.
 func authRules() []rule {
+	loginInvalid := errs.IncorrectInput("login-invalid")
 	return []rule{
 		{session.ErrInvalidCredentials, errs.Unauthenticated("invalid-credentials")},
-		{session.ErrNoSession, errs.Unauthenticated("no-session")},
 		{session.ErrNotVerified, errs.Forbidden("email-not-verified")},
-		{session.ErrTooManyAttempts, errs.TooManyRequests("too-many-attempts")},
 		{session.ErrTokenInvalid, errs.IncorrectInput("token-invalid")},
-		{loginid.ErrInvalid, errs.IncorrectInput("login-invalid")},
+		{loginid.ErrInvalid, loginInvalid},
+		// Адрес письма — логин из формы регистрации: mail решила отказом, потому
+		// что адрес обычно строит код, а здесь его прислал клиент (ADR-0007).
+		{mail.ErrInvalidMessage, loginInvalid},
 		{password.ErrTooShort, errs.IncorrectInput("password-too-short")},
 		{password.ErrTooLong, errs.IncorrectInput("password-too-long")},
 		{password.ErrTooWeak, errs.IncorrectInput("password-too-weak")},
-		{password.ErrBusy, errs.TooManyRequests("too-many-attempts")},
-		// 403, а не 404: отказ по правилу — это отказ, и он обязан быть
-		// отличим от «нет такой страницы» и от 503 выше.
-		//
-		// ErrItemNotOpen — наш: он различает ОСЬ отказа, а не факт
-		// (doc.go, «Что не сошлось: обходы постоянные», п. 1).
-		{authz.ErrDenied, errs.Forbidden("access-denied")},
+		// Своя sentinel без класса: различает ось отказа, а не факт (doc.go,
+		// «Что не сошлось: обходы постоянные», п. 1).
 		{ErrItemNotOpen, errs.Forbidden("item-not-open")},
-		{entitlement.ErrDenied, errs.Forbidden("item-not-open")},
-		{auth.ErrLoginTaken, errs.Conflict("login-taken")},
 	}
 }
 
-// paymentRules — оплата. Отказы клиента и конфликты, но не деньги.
+// paymentRules — два конца попытки оплаты, после которых клиент поступает по-разному.
 func paymentRules() []rule {
 	return []rule{
-		{payment.ErrIdempotencyKeyInvalid, errs.IncorrectInput("idempotency-key-invalid")},
-		{payment.ErrIdempotencyKeyReused, errs.Conflict("idempotency-key-reused")},
-		{payment.ErrIdempotencyRace, errs.Conflict("idempotency-race")},
-		{payment.ErrReferenceBusy, errs.Conflict("order-already-paying")},
 		{payment.ErrIntentClosed, errs.Conflict("payment-closed")},
-		{payment.ErrInvalidRequest, errs.IncorrectInput("purchase-invalid")},
-		{payment.ErrInvalidMoney, errs.IncorrectInput("amount-invalid")},
-		{payment.ErrUnknownIntent, errs.NotFound("payment-not-found")},
-		{payment.ErrInvalidSignature, errs.IncorrectInput("webhook-not-authentic")},
-		{payment.ErrMalformedEvent, errs.IncorrectInput("webhook-malformed")},
 		{payment.ErrProviderRejected, errs.Conflict("provider-rejected")},
-		// 501, а не 409 и не 503: «не умеет» ретраем не чинится и не наш баг, а
-		// клиенты не повторяют 501 так, как повторяют 502/503/504. Правило
-		// обязательно: с тех пор как payment не заворачивает окончательный отказ
-		// в ErrUnavailable, без него ErrUnsupported падал бы в 500.
-		{payment.ErrUnsupported, errs.NotImplemented("payment-unsupported")},
 	}
 }
 
 // uploadRules — загрузка файлов.
 func uploadRules() []rule {
+	typeUnsupported := errs.IncorrectInput("file-type-unsupported")
 	return []rule{
-		{objectstore.ErrTooLarge, errs.PayloadTooLarge("file-too-large")},
 		{objectstore.ErrEmptyBody, errs.IncorrectInput("file-empty")},
-		{objectstore.ErrUnsupportedType, errs.IncorrectInput("file-type-unsupported")},
-		{objectstore.ErrSVGRejected, errs.IncorrectInput("file-type-unsupported")},
-		{objectstore.ErrNotFound, errs.NotFound("file-not-found")},
+		{objectstore.ErrUnsupportedType, typeUnsupported},
+		{objectstore.ErrSVGRejected, typeUnsupported},
 	}
 }
 
 // allSlugs — реестр слагов ответа, БЕЗ ПОВТОРОВ.
 //
-// Повторы законны и намеренны: у «пароль занят хешером» и «счётчик попыток
-// исчерпан» один ответ клиенту, потому что различать их снаружи — значит
-// рассказывать про устройство сервиса. Реестр же — это множество РАЗНЫХ
-// ответов, и его держит errstest.CheckSlugRegistry.
+// Повторы законны и намеренны: негодный логин и негодный по нему адрес письма
+// — клиенту один ответ, SVG и чужой тип — тоже. Реестр же — это множество
+// РАЗНЫХ ответов, и его держит errstest.CheckSlugRegistry.
 func allSlugs() []string {
 	seen := make(map[string]bool, 32)
 	out := make([]string, 0, 32)

@@ -291,10 +291,7 @@ func sessionConfig(cfg Config) session.Config {
 
 // routes — единственная точка сборки обработчика.
 func (a *App) routes() http.Handler {
-	a.respond = httperr.New(httperr.Config{
-		RequestID: reqid.From,
-		Translate: translate,
-	})
+	a.respond = newResponder()
 	mux := http.NewServeMux()
 	a.mount(mux)
 	// reqid снаружи всего: идентификатор запроса нужен и ответчику ошибок, и

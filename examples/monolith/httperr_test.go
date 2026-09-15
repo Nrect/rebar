@@ -82,6 +82,25 @@ func TestErrorBody_LeaksNothing(t *testing.T) {
 	require.Equal(t, "invalid-credentials", body["slug"])
 }
 
+// TestRegister_BadAddressIsInput — негодный адрес из формы регистрации отвечает
+// 400 login-invalid, а не 503.
+//
+// Адрес письма здесь — логин, который прислал клиент. mail.ErrInvalidMessage
+// класса не несёт (ADR-0007), а session заворачивает сбой выдачи токена в
+// auth.ErrUnavailable: без правила «исправьте адрес» звучало бы как «повторите
+// позже».
+func TestRegister_BadAddressIsInput(t *testing.T) {
+	s := newStand(t)
+	const notAnAddress = "buyer.example.test"
+
+	status, body := s.postJSON(t, "/register", map[string]string{
+		"Login": notAnAddress, "Password": testPassword,
+	})
+	require.Equal(t, http.StatusBadRequest, status, "адрес из формы — ввод: %s", raw(body))
+	require.Equal(t, "login-invalid", body["slug"])
+	require.NotContains(t, raw(body), notAnAddress)
+}
+
 // requireNoLeaks — в теле нет ничего из того, что наружу не выходит.
 func requireNoLeaks(t *testing.T, body string) {
 	t.Helper()
@@ -107,8 +126,8 @@ func requireNoLeaks(t *testing.T, body string) {
 //
 // До пересадки этого теста не было, и маскировку никто не заметил: отказ,
 // пришедший ОШИБКОЙ адаптера, заворачивался в ErrUnavailable, а таблица
-// ответов проверяет недоступность первой — правило provider-rejected на этом
-// пути было мёртвым, и 503 учил клиента повторять окончательное «нет».
+// ответов тогда проверяла недоступность первой — правило provider-rejected на
+// этом пути было мёртвым, и 503 учил клиента повторять окончательное «нет».
 func providerRefusals(t *testing.T, s *stand) {
 	t.Helper()
 	p := s.app.Provider()
@@ -122,14 +141,14 @@ func providerRefusals(t *testing.T, s *stand) {
 	p.SetCreateErr(payment.ErrProviderRejected)
 	requireRefusal(t, s, "reject-error", http.StatusConflict, "provider-rejected")
 
-	// «Не умеет» — 501: без своего правила он упал бы в 500.
+	// «Не умеет» — 501 классом payment; слаг — имя класса.
 	p.SetCreateErr(payment.ErrUnsupported)
-	requireRefusal(t, s, "unsupported", http.StatusNotImplemented, "payment-unsupported")
+	requireRefusal(t, s, "unsupported", http.StatusNotImplemented, "not-implemented")
 
 	// Временный сбой ОСТАЁТСЯ 503: снятие обёртки не должно было задеть
 	// «ответа нет» — там повтор законен.
 	p.SetCreateErr(paymenttest.ErrProviderDown)
-	requireRefusal(t, s, "transient", http.StatusServiceUnavailable, "payment-unavailable")
+	requireRefusal(t, s, "transient", http.StatusServiceUnavailable, "unavailable")
 
 	// createErr проверяется раньше повтора по ключу: не сбросить — и
 	// следующий checkout в этом тесте упал бы по чужой причине.

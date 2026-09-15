@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/nrect/rebar/auth/authhttp"
+	"github.com/nrect/rebar/auth/session"
 	"github.com/nrect/rebar/authz"
 	"github.com/nrect/rebar/kit/errs"
 	"github.com/nrect/rebar/objectstore"
@@ -203,7 +204,7 @@ func (a *App) allowed(w http.ResponseWriter, r *http.Request, p authz.Permission
 ) (uuid.UUID, bool) {
 	principal, ok := authhttp.PrincipalFrom(r.Context())
 	if !ok {
-		a.respond.Write(r.Context(), w, errs.Unauthenticated("no-session"))
+		a.respond.Write(r.Context(), w, session.ErrNoSession)
 		return uuid.Nil, false
 	}
 	subject := authz.Subject{Realm: string(principal.Realm), ID: principal.SubjectID.String()}

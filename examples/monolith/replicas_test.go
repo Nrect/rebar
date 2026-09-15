@@ -85,7 +85,7 @@ func TestPaymentsReconcile_OneReplicaRuns(t *testing.T) {
 func unstartedIntent(t *testing.T, s *stand) {
 	t.Helper()
 	s.app.Provider().SetCreateErr(paymenttest.ErrProviderDown)
-	requireRefusal(t, s, "replicas", http.StatusServiceUnavailable, "payment-unavailable")
+	requireRefusal(t, s, "replicas", http.StatusServiceUnavailable, "unavailable")
 	s.app.Provider().SetCreateErr(nil)
 	_, err := s.pool(t).Exec(t.Context(),
 		`UPDATE payment_intents SET created_at = created_at - interval '1 hour'

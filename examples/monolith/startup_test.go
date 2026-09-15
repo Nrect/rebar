@@ -46,7 +46,7 @@ func TestStart_SnapshotsGaugesBeforeFirstTick(t *testing.T) {
 	// Намерение, оставшееся created после временного сбоя провайдера и
 	// состаренное на час: сверка считает его зависшим.
 	s.app.Provider().SetCreateErr(paymenttest.ErrProviderDown)
-	requireRefusal(t, s, "startup", http.StatusServiceUnavailable, "payment-unavailable")
+	requireRefusal(t, s, "startup", http.StatusServiceUnavailable, "unavailable")
 	s.app.Provider().SetCreateErr(nil)
 	_, err := s.pool(t).Exec(t.Context(),
 		`UPDATE payment_intents SET created_at = created_at - interval '1 hour'
