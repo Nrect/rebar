@@ -1,8 +1,9 @@
 package monolith
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"net/url"
-	"strconv"
 
 	"github.com/nrect/rebar/auth/session"
 	"github.com/nrect/rebar/mail"
@@ -80,8 +81,8 @@ func (l letters) message(n session.Notification) (mail.Message, bool) {
 	return mail.Message{}, false
 }
 
-// linkMessage — письмо со ссылкой. Ключ дедупа — вид плюс HMAC токена: тот же
-// токен даёт то же письмо, а разные токены — разные строки.
+// linkMessage — письмо со ссылкой. Ключ дедупа — вид плюс SHA-256 токена, как
+// советует mail (Message.DedupKey): тот же токен даёт то же письмо.
 func (l letters) linkMessage(kind mail.Kind, to mail.Address, n session.Notification,
 	subject, path string,
 ) mail.Message {
@@ -91,23 +92,28 @@ func (l letters) linkMessage(kind mail.Kind, to mail.Address, n session.Notifica
 		To:       to,
 		Subject:  subject,
 		Text:     subject + ".\n\nСсылка: " + link + "\n\nСсылка одноразовая.",
-		DedupKey: string(kind) + ":" + dedupOf(n),
+		DedupKey: string(kind) + ":" + digest(n.RawToken),
 		// Письмо не переживает свой токен: доставлять ссылку, которая уже
 		// истекла, значит звать человека на страницу с ошибкой.
 		NotAfter: n.ExpiresAt,
 	}
 }
 
+// plain — письмо без ссылки; ключ дедупа — вид плюс SHA-256 адреса.
 func plain(kind mail.Kind, to mail.Address, subject, text string) mail.Message {
 	return mail.Message{
 		Kind: kind, To: to, Subject: subject, Text: text,
-		DedupKey: string(kind) + ":" + to.Email + ":" + subject,
+		DedupKey: string(kind) + ":" + digest(to.Email),
 	}
 }
 
-// dedupOf — устойчивый ключ письма со ссылкой. Считается по МОМЕНТУ
-// истечения и адресу, а не по сырому токену: токен секрет, а колонка
-// dedup_key — обычные данные.
-func dedupOf(n session.Notification) string {
-	return n.Login + ":" + strconv.FormatInt(n.ExpiresAt.UnixNano(), 10)
+// digest — SHA-256 в hex: ключ дедупа фиксированной длины под mail.MaxKeyLen.
+//
+// ЛОГИН В КЛЮЧ НЕ ИДЁТ: loginid пускает логин до 320 байт, и ключ из него
+// переполнял MaxKeyLen — личность заводилась, а письмо подтверждения не
+// собиралось. Хэш токена нового не раскрывает: сырой токен и так лежит в
+// тексте письма в той же строке очереди.
+func digest(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])
 }
