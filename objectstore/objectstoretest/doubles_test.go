@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/nrect/rebar/kit/errs"
 	"github.com/nrect/rebar/objectstore"
 	"github.com/nrect/rebar/objectstore/objectstoretest"
 )
@@ -94,24 +95,48 @@ func TestMemStore_OwnErrorIsDistinguishable(t *testing.T) {
 	assert.NotErrorIs(t, err, objectstore.ErrUnavailable, "поломка стенда не должна выглядеть сбоем хранилища")
 }
 
-// Инъекция отказа — методом SetErr, а не подменой метода.
-func TestMemStore_SetErrFailsEveryMethod(t *testing.T) {
+// Заданный сбой приходит так, как его отдают s3 и fs: класс 503,
+// objectstore.ErrUnavailable и причина в одной цепочке. Голая причина давала
+// бы потребителю, зовущему стор мимо ядра, 500 там, где прод отвечает 503.
+func TestMemStore_InjectedErrorIsUnavailable(t *testing.T) {
 	t.Parallel()
 	store := objectstoretest.NewMemStore()
 	boom := errors.New("хранилище недоступно")
 	store.SetErr(boom)
 	body := objectstoretest.PNG(32)
 
-	_, putErr := store.Put(t.Context(), objectstore.PutRequest{
+	_, err := store.Put(t.Context(), objectstore.PutRequest{
 		Key: "uploads/a.png", ContentType: "image/png", Body: bytes.NewReader(body), Size: int64(len(body)),
 	})
-	_, listErr := store.List(t.Context(), "uploads", "", 10)
-	_, presignErr := store.Presign(t.Context(), "uploads/a.png", objectstore.MethodGet, time.Hour)
-	deleteErr := store.Delete(t.Context(), "uploads/a.png")
+	requireUnavailable(t, err, boom, "Put")
+	_, err = store.List(t.Context(), "uploads", "", 10)
+	requireUnavailable(t, err, boom, "List")
+	requireUnavailable(t, store.Delete(t.Context(), "uploads/a.png"), boom, "Delete")
+}
 
-	for name, err := range map[string]error{"Put": putErr, "List": listErr, "Presign": presignErr, "Delete": deleteErr} {
-		assert.ErrorIsf(t, err, boom, "%s не отдал заданную ошибку", name)
-	}
+// Presign на заданный сбой не отвечает, как и адаптеры: s3 подписывает ссылку
+// локально, fs собирает её из BaseURL, в хранилище не ходит ни один. Двойник,
+// падающий здесь, зеленил бы у потребителя ветку «хранилище легло — ссылки
+// нет», которой в проде не бывает.
+func TestMemStore_PresignIgnoresInjectedError(t *testing.T) {
+	t.Parallel()
+	store := objectstoretest.NewMemStore()
+	want, err := store.Presign(t.Context(), "uploads/a.png", objectstore.MethodGet, time.Hour)
+	require.NoError(t, err)
+
+	store.SetErr(errors.New("хранилище недоступно"))
+	got, err := store.Presign(t.Context(), "uploads/a.png", objectstore.MethodGet, time.Hour)
+	require.NoError(t, err)
+	assert.Equal(t, want, got)
+}
+
+// requireUnavailable — все три стороны сразу: класс, sentinel модуля и
+// причина. Проверка одной чинила бы её ценой другой.
+func requireUnavailable(t *testing.T, err, cause error, site string) {
+	t.Helper()
+	assert.Equalf(t, errs.KindUnavailable, errs.KindOf(err), "класс ошибки на %s: %v", site, err)
+	require.ErrorIsf(t, err, objectstore.ErrUnavailable, "objectstore.ErrUnavailable на %s", site)
+	require.ErrorIsf(t, err, cause, "причина на %s", site)
 }
 
 // Часы двойника управляемы: тест на настоящих часах делает прогон gremlins

@@ -31,9 +31,12 @@
   Потребителю больше не нужна таблица перевода ошибок `auth`: `errs.KindOf` и
   `httperr` находят класс на самой sentinel. Страж
   `errstest.EveryErrorHasKind` стоит в корне модуля (`sentinels_test.go`) и
-  обходит все подпакеты; двойники `authtest` из него исключены — их ошибки
-  только причины, класс несёт обёртка ядра `session`, и это держит
-  `session.TestPortFailuresReachCallerAsUnavailable`.
+  обходит все подпакеты; двойники `authtest` из него исключены — своего класса
+  у их sentinel нет: сбой хранилищ сессий и попыток двойник заворачивает в
+  `ErrUnavailable` сам, как `authpg` (ниже), а отказы портов потребителя
+  отдаёт голыми, и класс им даёт обёртка ядра `session` — это держит
+  `session.TestPortFailuresReachCallerAsUnavailable` на путях личностей и
+  токенов.
 
   | Sentinel | Класс | Почему |
   |---|---|---|
@@ -67,6 +70,19 @@
   модулей с одним классом совпадали бы через `errors.Is`. Модуль требует
   `github.com/nrect/rebar/kit v0.2.0` — в корне и в каталогах `session`,
   `password`, `loginid`, `authhttp`.
+- **Сбой хранилища `authtest.MemSessions` и `authtest.MemAttempts` приходит в
+  `auth.ErrUnavailable`, как у `authpg`
+  ([ADR-0007, «Двойники»](../docs/adr/0007-error-kind.md)).** Было: `SetErr`,
+  `SetTouchErr` и `SetRecordErr` отдавали причину голой, и потребитель,
+  зовущий хранилище мимо сервиса, видел на двойнике класс 500 там, где прод
+  отвечает 503. Стало: `errs.KindOf` — `unavailable`, а `errors.Is` находит и
+  `auth.ErrUnavailable`, и причину; так уже была устроена `ErrSessionExists`.
+  Ломающее для теста, который ветвился по голой ошибке этих двойников:
+  `errors.Is` по причине истинен по-прежнему, а
+  `NotErrorIs(err, auth.ErrUnavailable)` и сравнение текста — уже нет. Отказы
+  `MemIdentities`, `MemTokens`, `RecordingNotifier` и `RecordingAuditor`
+  приходят голыми, как раньше: эти порты пишет потребитель, класс его сбоя —
+  его решение, а на пути к вызывающему класс даёт обёртка `session`.
 
 ### Fixed
 - **Комментарии объявляли инвариант безопасности без исключения, которое в

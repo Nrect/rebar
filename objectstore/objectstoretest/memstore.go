@@ -17,7 +17,9 @@ import (
 )
 
 // ErrDoubleBroken — ошибка двойника, не домена: так тест не примет свою
-// оплошность за проверяемый инвариант (CONVENTIONS §3).
+// оплошность за проверяемый инвариант (CONVENTIONS §3). В ErrUnavailable не
+// завёрнута: у адаптеров такого состояния нет, и поломка стенда не должна
+// выглядеть сбоем хранилища.
 var ErrDoubleBroken = errors.New("objectstoretest: double was used incorrectly")
 
 // baseURL — база ссылок двойника. Домен .invalid не резолвится никогда: тест,
@@ -47,7 +49,9 @@ func NewMemStore() *MemStore {
 	}
 }
 
-// SetErr — ошибка из любого метода порта: для fail-closed тестов; nil снимает.
+// SetErr — сбой хранилища для fail-closed тестов; nil снимает. Put, Delete и
+// List отдают его в objectstore.ErrUnavailable, как s3 и fs. Presign на него
+// не отвечает: адаптеры считают ссылку без похода в хранилище.
 func (m *MemStore) SetErr(err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -83,7 +87,7 @@ func (m *MemStore) Put(_ context.Context, req objectstore.PutRequest) (objectsto
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
-		return objectstore.Object{}, m.err
+		return objectstore.Object{}, storeError("put", m.err)
 	}
 	if m.now == nil {
 		return objectstore.Object{}, fmt.Errorf("%w: MemStore.SetClock got nil", ErrDoubleBroken)
@@ -107,7 +111,7 @@ func (m *MemStore) Delete(_ context.Context, key string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
-		return m.err
+		return storeError("delete", m.err)
 	}
 	delete(m.rows, key)
 	return nil
@@ -120,7 +124,7 @@ func (m *MemStore) List(_ context.Context, prefix, cursor string, limit int) (ob
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
-		return objectstore.Page{}, m.err
+		return objectstore.Page{}, storeError("list", m.err)
 	}
 	if limit <= 0 {
 		return objectstore.Page{}, nil
@@ -144,6 +148,7 @@ func (m *MemStore) List(_ context.Context, prefix, cursor string, limit int) (ob
 }
 
 // Presign — ссылка двойника: та же проверка метода и срока, что у адаптеров.
+// Заданный сбой не отдаёт: ни s3, ни fs за ссылкой в хранилище не ходят.
 func (m *MemStore) Presign(_ context.Context, key string, method objectstore.Method, ttl time.Duration) (string, error) {
 	if err := objectstore.CheckKey(key); err != nil {
 		return "", err
@@ -153,11 +158,6 @@ func (m *MemStore) Presign(_ context.Context, key string, method objectstore.Met
 	}
 	if ttl <= 0 || ttl > objectstore.MaxPresignTTL {
 		return "", objectstore.ErrBadTTL
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.err != nil {
-		return "", m.err
 	}
 	return baseURL + "/" + pathEscapeKey(key) +
 		"?method=" + string(method) +
@@ -201,6 +201,13 @@ func (m *MemStore) Seed(key string, body []byte, modifiedAt time.Time) {
 		},
 		body: bytes.Clone(body),
 	}
+}
+
+// storeError — сбой так, как его отдают s3 и fs: в objectstore.ErrUnavailable
+// с причиной в цепочке. Голая причина дала бы потребителю, зовущему стор мимо
+// ядра, 500 там, где прод отвечает 503 (ADR-0007, «Двойники»).
+func storeError(op string, err error) error {
+	return fmt.Errorf("%w: objectstoretest: %s: %w", objectstore.ErrUnavailable, op, err)
 }
 
 func pathEscapeKey(key string) string {

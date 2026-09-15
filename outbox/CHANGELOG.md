@@ -29,8 +29,9 @@
   Потребителю больше не нужна таблица перевода ошибок `outbox`: `errs.KindOf`
   и `httperr` находят класс на самой sentinel. Страж
   `errstest.EveryErrorHasKind` стоит в корне модуля (`sentinels_test.go`);
-  двойники `outboxtest` из него исключены — их ошибки только причины, класс
-  несёт обёртка ядра, и это держит `TestPortFailuresReachCallerAsUnavailable`.
+  двойники `outboxtest` из него исключены — своего класса у их sentinel нет:
+  сбой хранилища двойник заворачивает в `ErrUnavailable` сам, как `outboxpg`
+  (ниже), а `ErrHandlerFailed` отдаёт голой — хендлер пишет потребитель.
   Вставку ядро не делает: её зовёт потребитель адаптером в своей транзакции,
   поэтому класс ошибки на этом пути принадлежит ему (`doc.go`); `outboxpg`
   заворачивает сбой в `ErrUnavailable` сам.
@@ -90,6 +91,18 @@
   `PermanentFor`, `ThrottleFor` и `SkipFor` нет: поведение, меняющееся по ходу
   теста, задаётся хуком — им же задаётся отказ, когда идентификатор агрегата
   рождается внутри боевого кода и тест его не знает.
+- **Сбой хранилища `outboxtest.MemStore` приходит в `outbox.ErrUnavailable`,
+  как у `outboxpg` ([ADR-0007, «Двойники»](../docs/adr/0007-error-kind.md)).**
+  Было: `SetErr`, `SetFinishErr` и отменённый контекст отдавались голыми из
+  всех методов, `ErrIDReused` тоже, и потребитель, вставляющий в своей
+  транзакции через `outboxtest.Enqueue`, видел на двойнике класс 500 там, где
+  `outboxpg.Enqueue` отвечает 503. Стало: `errs.KindOf` — `unavailable`, а
+  `errors.Is` находит и `outbox.ErrUnavailable`, и причину — заданную ошибку,
+  `ErrIDReused` или `context.Canceled`. Ломающее для теста, который ветвился
+  по голой ошибке двойника: `errors.Is` по причине истинен по-прежнему, а
+  `NotErrorIs(err, outbox.ErrUnavailable)` и сравнение текста — уже нет.
+  `RecordingHandler` отдаёт `ErrHandlerFailed` голой, как раньше: хендлер
+  пишет потребитель.
 
 ## [0.1.0] — 2026-09-10
 

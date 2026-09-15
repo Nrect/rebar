@@ -3,7 +3,6 @@ package outboxtest
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -15,10 +14,11 @@ import (
 	"github.com/nrect/rebar/outbox"
 )
 
-// ErrIDReused — ошибка двойника, не домена: строку с этим ID уже клали.
-// Отличима от ошибок outbox, чтобы тест не принял свою оплошность за
-// проверяемый инвариант (CONVENTIONS §3).
-var ErrIDReused = errors.New("outboxtest: envelope id is already stored")
+// ErrIDReused — ошибка двойника, не домена: строку с этим ID уже клали. В
+// outboxpg это нарушение первичного ключа, поэтому она завёрнута в
+// outbox.ErrUnavailable; оплошность теста отличает своя sentinel (ADR-0007,
+// «Двойники»).
+var ErrIDReused = fmt.Errorf("%w: outboxtest: envelope id is already stored", outbox.ErrUnavailable)
 
 // dedupKey — уникальность парой, а не одним ключом: один и тот же
 // "order:42" законен для разных Kind.
@@ -46,10 +46,11 @@ func NewMemStore() *MemStore {
 }
 
 // SetErr — ошибка из любого метода порта: для fail-closed тестов; nil снимает.
+// Приходит в outbox.ErrUnavailable, как сбой outboxpg (storeError).
 func (m *MemStore) SetErr(err error) { m.set(func() { m.err = err }) }
 
 // SetFinishErr — ошибка только из Finish: после неё остаток пачки не идёт; nil
-// снимает.
+// снимает. Приходит так же, как SetErr.
 func (m *MemStore) SetFinishErr(err error) { m.set(func() { m.finishErr = err }) }
 
 // SetAfterHandle — хук в начале Finish, ровно в окне между работой хендлера и
@@ -72,7 +73,7 @@ func (m *MemStore) set(mutate func()) {
 func (m *MemStore) Enqueue(ctx context.Context, env outbox.Envelope) (outbox.EnqueueResult, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if err := m.fail(ctx); err != nil {
+	if err := m.fail(ctx, "enqueue"); err != nil {
 		return outbox.EnqueueResult{}, err
 	}
 	key := dedupKey{kind: env.Kind, key: env.DedupKey}
@@ -104,7 +105,7 @@ func (m *MemStore) Enqueue(ctx context.Context, env outbox.Envelope) (outbox.Enq
 func (m *MemStore) Claim(ctx context.Context, req outbox.ClaimRequest) ([]outbox.Envelope, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if err := m.fail(ctx); err != nil {
+	if err := m.fail(ctx, "claim"); err != nil {
 		return nil, err
 	}
 	if req.Limit <= 0 || len(req.Kinds) == 0 {
@@ -174,11 +175,11 @@ func (m *MemStore) Finish(ctx context.Context, req outbox.FinishRequest) error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if err := m.fail(ctx); err != nil {
+	if err := m.fail(ctx, "finish"); err != nil {
 		return err
 	}
 	if m.finishErr != nil {
-		return m.finishErr
+		return storeError("finish", m.finishErr)
 	}
 	row, ok := m.rows[req.ID]
 	if !ok || !heldBy(row, req.Token) {
@@ -195,12 +196,23 @@ func (m *MemStore) Finish(ctx context.Context, req outbox.FinishRequest) error {
 
 // fail — заданная тестом ошибка и ОТМЕНЁННЫЙ КОНТЕКСТ. Второе не придирка:
 // по отменённому ctx драйвер писать откажется, и двойник, который этого не
-// замечает, зеленит код, где исход записывается «после остановки».
-func (m *MemStore) fail(ctx context.Context) error {
+// замечает, зеленит код, где исход записывается «после остановки». Обе
+// приходят в outbox.ErrUnavailable, как у outboxpg.
+func (m *MemStore) fail(ctx context.Context, op string) error {
 	if m.err != nil {
-		return m.err
+		return storeError(op, m.err)
 	}
-	return ctx.Err()
+	if err := ctx.Err(); err != nil {
+		return storeError(op, err)
+	}
+	return nil
+}
+
+// storeError — сбой так, как его отдаёт outboxpg: в outbox.ErrUnavailable с
+// причиной в цепочке. Голая причина дала бы потребителю, вставляющему в своей
+// транзакции, 500 там, где прод отвечает 503 (ADR-0007, «Двойники»).
+func storeError(op string, err error) error {
+	return fmt.Errorf("%w: outboxtest: %s: %w", outbox.ErrUnavailable, op, err)
 }
 
 func (m *MemStore) afterHandleHook() func() {
@@ -246,7 +258,7 @@ func applyOutcome(row outbox.Envelope, req outbox.FinishRequest) (outbox.Envelop
 func (m *MemStore) Stats(ctx context.Context, now time.Time, known []outbox.Kind) (outbox.Stats, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if err := m.fail(ctx); err != nil {
+	if err := m.fail(ctx, "stats"); err != nil {
 		return outbox.Stats{}, err
 	}
 	var (
@@ -280,7 +292,7 @@ func (m *MemStore) Stats(ctx context.Context, now time.Time, known []outbox.Kind
 func (m *MemStore) ListFailed(ctx context.Context, limit int) ([]outbox.Envelope, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if err := m.fail(ctx); err != nil {
+	if err := m.fail(ctx, "list failed"); err != nil {
 		return nil, err
 	}
 	if limit <= 0 {
@@ -303,7 +315,7 @@ func (m *MemStore) ListFailed(ctx context.Context, limit int) ([]outbox.Envelope
 func (m *MemStore) Redrive(ctx context.Context, id uuid.UUID, now time.Time) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if err := m.fail(ctx); err != nil {
+	if err := m.fail(ctx, "redrive"); err != nil {
 		return false, err
 	}
 	row, ok := m.rows[id]
@@ -321,7 +333,7 @@ func (m *MemStore) Redrive(ctx context.Context, id uuid.UUID, now time.Time) (bo
 func (m *MemStore) Purge(ctx context.Context, before time.Time, limit int) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if err := m.fail(ctx); err != nil {
+	if err := m.fail(ctx, "purge"); err != nil {
 		return 0, err
 	}
 	if limit <= 0 {

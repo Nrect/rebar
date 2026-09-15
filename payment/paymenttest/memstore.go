@@ -15,7 +15,8 @@ import (
 	"github.com/nrect/rebar/payment"
 )
 
-// ErrStore — универсальный сбой хранилища для SetErr.
+// ErrStore — универсальный сбой хранилища для SetErr; методы отдают его в
+// payment.ErrUnavailable, как paymentpg.
 var ErrStore = errors.New("paymenttest: store is down")
 
 // MemStore — потокобезопасная реализация payment.Store.
@@ -76,9 +77,9 @@ func NewMemStore() *MemStore {
 	}
 }
 
-// SetErr — если не nil, КАЖДЫЙ вызов возвращает её; nil снимает сбой. Так
-// проверяется, что при сбое стора наружу едет ErrUnavailable и ничего не
-// записывается.
+// SetErr — если не nil, КАЖДЫЙ вызов возвращает её в payment.ErrUnavailable,
+// как paymentpg; nil снимает сбой. Так проверяется, что при сбое стора наружу
+// едет ErrUnavailable и ничего не записывается.
 func (m *MemStore) SetErr(err error) { m.set(func() { m.err = err }) }
 
 // SetRaceOnce — следующий CreateIntent вернёт ErrIdempotencyRace, вставив при
@@ -153,6 +154,14 @@ func (m *MemStore) set(mutate func()) {
 	mutate()
 }
 
+// storeError — заданный сбой так, как его отдаёт paymentpg: в
+// payment.ErrUnavailable с причиной в цепочке. Голая причина дала бы
+// потребителю, зовущему стор мимо сервиса, 500 там, где прод отвечает 503
+// (ADR-0007, «Двойники»). Ошибку хука paymentpg отдаёт как есть — и двойник.
+func storeError(op string, err error) error {
+	return fmt.Errorf("%w: paymenttest: %s: %w", payment.ErrUnavailable, op, err)
+}
+
 func (m *MemStore) put(in payment.Intent) {
 	in.Items = slices.Clone(in.Items)
 	m.intents[in.ID] = in
@@ -171,7 +180,7 @@ func (m *MemStore) CreateIntent(_ context.Context, in payment.Intent) error {
 	defer m.mu.Unlock()
 	m.calls["CreateIntent"]++
 	if m.err != nil {
-		return m.err
+		return storeError("create intent", m.err)
 	}
 	key := keyOf(in.PayerID, in.IdempotencyKey)
 	if m.raceOnce {
@@ -202,7 +211,7 @@ func (m *MemStore) IntentByKey(_ context.Context, payerID uuid.UUID, key string,
 	defer m.mu.Unlock()
 	m.calls["IntentByKey"]++
 	if m.err != nil {
-		return payment.Intent{}, false, m.err
+		return payment.Intent{}, false, storeError("intent by key", m.err)
 	}
 	id, ok := m.byKey[keyOf(payerID, key)]
 	if !ok {
@@ -223,7 +232,7 @@ func (m *MemStore) IntentByID(_ context.Context, id uuid.UUID) (payment.Intent, 
 	defer m.mu.Unlock()
 	m.calls["IntentByID"]++
 	if m.err != nil {
-		return payment.Intent{}, false, m.err
+		return payment.Intent{}, false, storeError("intent by id", m.err)
 	}
 	if _, ok := m.intents[id]; !ok {
 		return payment.Intent{}, false, nil
@@ -246,7 +255,7 @@ func (m *MemStore) Transition(_ context.Context, req payment.TransitionRequest,
 	defer m.mu.Unlock()
 	m.calls["Transition"]++
 	if m.err != nil {
-		return payment.TransitionResult{}, m.err
+		return payment.TransitionResult{}, storeError("transition", m.err)
 	}
 	in, ok := m.intents[req.IntentID]
 	if !ok {
@@ -279,7 +288,7 @@ func (m *MemStore) ApplyEvent(_ context.Context, req payment.ApplyEventRequest,
 	defer m.mu.Unlock()
 	m.calls["ApplyEvent"]++
 	if m.err != nil {
-		return payment.ApplyEventResult{}, m.err
+		return payment.ApplyEventResult{}, storeError("apply event", m.err)
 	}
 
 	ek := eventKey(req.Event)
@@ -343,7 +352,7 @@ func (m *MemStore) ApplyRefund(_ context.Context, req payment.ApplyRefundRequest
 	defer m.mu.Unlock()
 	m.calls["ApplyRefund"]++
 	if m.err != nil {
-		return payment.ApplyRefundResult{}, m.err
+		return payment.ApplyRefundResult{}, storeError("apply refund", m.err)
 	}
 	if err := checkRefundShape(req); err != nil {
 		return payment.ApplyRefundResult{}, err
@@ -390,7 +399,7 @@ func (m *MemStore) Ledger(_ context.Context, intentID uuid.UUID) ([]payment.Ledg
 	defer m.mu.Unlock()
 	m.calls["Ledger"]++
 	if m.err != nil {
-		return nil, m.err
+		return nil, storeError("ledger", m.err)
 	}
 	return m.ledgerOf(intentID), nil
 }
@@ -419,7 +428,7 @@ func (m *MemStore) StalePending(_ context.Context, olderThan time.Time,
 	defer m.mu.Unlock()
 	m.calls["StalePending"]++
 	if m.err != nil {
-		return nil, m.err
+		return nil, storeError("stale pending", m.err)
 	}
 	if err := checkLimit("stale pending", limit); err != nil {
 		return nil, err
@@ -444,7 +453,7 @@ func (m *MemStore) CountStuckPending(_ context.Context, olderThan time.Time) (in
 	defer m.mu.Unlock()
 	m.calls["CountStuckPending"]++
 	if m.err != nil {
-		return 0, m.err
+		return 0, storeError("count stuck pending", m.err)
 	}
 	var n int64
 	for _, in := range m.intents {
@@ -461,7 +470,7 @@ func (m *MemStore) Drift(_ context.Context, _ time.Time, limit int) ([]payment.D
 	defer m.mu.Unlock()
 	m.calls["Drift"]++
 	if m.err != nil {
-		return nil, m.err
+		return nil, storeError("drift", m.err)
 	}
 	if err := checkLimit("drift", limit); err != nil {
 		return nil, err

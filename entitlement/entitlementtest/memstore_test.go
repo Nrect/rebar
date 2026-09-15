@@ -1,6 +1,7 @@
 package entitlementtest_test
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"testing"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/nrect/rebar/entitlement"
 	"github.com/nrect/rebar/entitlement/entitlementtest"
+	"github.com/nrect/rebar/kit/errs"
 )
 
 // Тот же набор гоняется по entitlementpg: двойник и адаптер не имеют права
@@ -24,9 +26,11 @@ func TestMemStore_SatisfiesStoreContract(t *testing.T) {
 	})
 }
 
-// Ошибка двойника отличима от доменных: тест не должен принять поломку стенда
-// за штатный отказ.
-func TestMemStore_ErrIsDistinguishable(t *testing.T) {
+// Заданный сбой приходит так, как его отдаёт entitlementpg: класс 503,
+// entitlement.ErrUnavailable и причина в одной цепочке. Голая причина давала
+// бы потребителю, пишущему выдачу мимо сервиса, 500 там, где прод отвечает
+// 503; поломку стенда по-прежнему отличает своя причина.
+func TestMemStore_InjectedErrorIsUnavailable(t *testing.T) {
 	t.Parallel()
 
 	stand := errors.New("стенд лёг")
@@ -35,15 +39,46 @@ func TestMemStore_ErrIsDistinguishable(t *testing.T) {
 	subject := uuid.New()
 
 	_, err := store.Open(t.Context(), subject, time.Now())
-	require.ErrorIs(t, err, stand)
-	require.ErrorIs(t, store.Grant(t.Context(), subject,
-		entitlement.Grant{ItemID: entitlementtest.SuiteItem}, entitlementtest.SuiteNow()), stand)
-	require.ErrorIs(t, store.Revoke(t.Context(), subject, entitlementtest.SuiteItem), stand)
-	require.NotErrorIs(t, err, entitlement.ErrUnavailable, "ошибка стенда — не доменная ошибка пакета")
+	requireUnavailable(t, err, stand, "Open")
+	requireUnavailable(t, store.Grant(t.Context(), subject,
+		entitlement.Grant{ItemID: entitlementtest.SuiteItem}, entitlementtest.SuiteNow()), stand, "Grant")
+	requireUnavailable(t, store.Revoke(t.Context(), subject, entitlementtest.SuiteItem), stand, "Revoke")
 
 	store.SetErr(nil)
 	_, err = store.Open(t.Context(), subject, time.Now())
 	assert.NoError(t, err)
+}
+
+// Отменённый контекст приходит так же, как от entitlementpg: в
+// entitlement.ErrUnavailable с context.Canceled в цепочке — и на входе в
+// метод, и в ожидании Hold.
+func TestMemStore_CancelledContextIsUnavailable(t *testing.T) {
+	t.Parallel()
+
+	store := entitlementtest.NewMemStore()
+	subject := uuid.New()
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	_, err := store.Open(ctx, subject, entitlementtest.SuiteNow())
+	requireUnavailable(t, err, context.Canceled, "Open")
+	requireUnavailable(t, store.Grant(ctx, subject,
+		entitlement.Grant{ItemID: entitlementtest.SuiteItem}, entitlementtest.SuiteNow()), context.Canceled, "Grant")
+	requireUnavailable(t, store.Revoke(ctx, subject, entitlementtest.SuiteItem), context.Canceled, "Revoke")
+
+	store.Hold()
+	defer store.Release()
+	_, err = store.Open(ctx, subject, entitlementtest.SuiteNow())
+	requireUnavailable(t, err, context.Canceled, "Open в ожидании Hold")
+}
+
+// requireUnavailable — все три стороны сразу: класс, sentinel модуля и
+// причина. Проверка одной чинила бы её ценой другой.
+func requireUnavailable(t *testing.T, err, cause error, site string) {
+	t.Helper()
+	assert.Equalf(t, errs.KindUnavailable, errs.KindOf(err), "класс ошибки на %s: %v", site, err)
+	require.ErrorIsf(t, err, entitlement.ErrUnavailable, "entitlement.ErrUnavailable на %s", site)
+	require.ErrorIsf(t, err, cause, "причина на %s", site)
 }
 
 // Двойник переживает те же пограничные аргументы, что и адаптер: паника здесь

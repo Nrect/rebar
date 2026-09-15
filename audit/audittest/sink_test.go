@@ -11,6 +11,7 @@ import (
 
 	"github.com/nrect/rebar/audit"
 	"github.com/nrect/rebar/audit/audittest"
+	"github.com/nrect/rebar/kit/errs"
 )
 
 func event(action audit.Action, outcome audit.Outcome) audit.Event {
@@ -63,16 +64,20 @@ func TestSink_WrittenEventsAreImmutable(t *testing.T) {
 	assert.Equal(t, "тест", stored.Details["reason"])
 }
 
-// Ошибка двойника отличима от доменной и записи не оставляет.
-func TestSink_ErrStopsWrite(t *testing.T) {
+// Отказ записи приходит так, как его отдаёт auditpg: класс 503,
+// audit.ErrUnavailable и причина в одной цепочке, — и записи не оставляет.
+// Голая причина давала бы потребителю, пишущему журнал в транзакции действия
+// (auditpg.Sink.WithTx), 500 там, где прод отвечает 503.
+func TestSink_InjectedErrorIsUnavailable(t *testing.T) {
 	t.Parallel()
 
 	sink := audittest.NewSink()
 	sink.SetErr(audittest.ErrSinkFailed)
 
 	err := sink.Write(t.Context(), event("a", audit.OutcomeSuccess))
-	require.ErrorIs(t, err, audittest.ErrSinkFailed)
-	require.NotErrorIs(t, err, audit.ErrUnavailable, "поломка стенда отличима от доменного отказа")
+	assert.Equal(t, errs.KindUnavailable, errs.KindOf(err), "класс ошибки: %v", err)
+	require.ErrorIs(t, err, audit.ErrUnavailable)
+	require.ErrorIs(t, err, audittest.ErrSinkFailed, "поломку стенда отличает своя sentinel")
 	assert.Zero(t, sink.Count())
 }
 

@@ -75,9 +75,9 @@
   Потребителю больше не нужна таблица перевода ошибок `entitlement`:
   `errs.KindOf` и `httperr` находят класс на самой sentinel. Страж
   `errstest.EveryErrorHasKind` стоит в корне модуля (`sentinels_test.go`);
-  двойники `entitlementtest` из него исключены — их ошибки только причины,
-  класс несёт обёртка ядра, и это держит
-  `TestPortFailuresReachCallerAsUnavailable`.
+  двойники `entitlementtest` из него исключены — своего класса у их sentinel
+  нет: сбой хранилища и отменённый контекст двойник заворачивает в
+  `ErrUnavailable` сам, как `entitlementpg` (ниже).
 
   | Sentinel | Класс | Почему |
   |---|---|---|
@@ -97,6 +97,19 @@
   Он и держит `entitlement.ErrUnavailable` неравной `authz.ErrUnavailable`
   через `errors.Is` — текст после префикса у них дословно один. Модуль требует
   `github.com/nrect/rebar/kit v0.2.0` — только в корне.
+- **Сбой хранилища и отменённый контекст `entitlementtest.MemStore` приходят в
+  `entitlement.ErrUnavailable`, как у `entitlementpg`
+  ([ADR-0007, «Двойники»](../docs/adr/0007-error-kind.md)).** Было: `SetErr` и
+  отменённый контекст отдавались голыми из `Open`, `Grant` и `Revoke`, в том
+  числе из ожидания `Hold`, и потребитель, пишущий выдачу мимо сервиса (хук
+  платежей в своей транзакции), видел на двойнике класс 500 там, где прод
+  отвечает 503. Стало: `errs.KindOf` — `unavailable`, а `errors.Is` находит и
+  `entitlement.ErrUnavailable`, и причину — заданную ошибку или
+  `context.Canceled`. `entitlementpg` отдаёт отмену контекста через тот же
+  `storeError`, что и сбой базы, — на пуле и в транзакции. Ломающее для
+  теста, который ветвился по голой ошибке двойника: `errors.Is` по причине
+  истинен по-прежнему, а `NotErrorIs(err, entitlement.ErrUnavailable)` и
+  сравнение текста — уже нет.
 
 ## [0.1.0] — 2026-09-10
 

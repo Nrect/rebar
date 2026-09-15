@@ -32,6 +32,7 @@ type MemAttempts struct {
 func NewMemAttempts() *MemAttempts { return &MemAttempts{} }
 
 // SetErr — отказ любого метода порта, память не трогается; nil снимает.
+// Приходит в auth.ErrUnavailable, как у authpg.
 func (m *MemAttempts) SetErr(err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -41,7 +42,7 @@ func (m *MemAttempts) SetErr(err error) {
 // SetRecordErr — отказ ТОЛЬКО на записи: счёт при этом проходит. Отдельной
 // ручкой, потому что «счётчик читается, но не пишется» — самостоятельный
 // отказ, и вход обязан на него закрыться, а не пропустить попытку молча; nil
-// снимает.
+// снимает. Приходит так же, как SetErr.
 func (m *MemAttempts) SetRecordErr(err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -54,7 +55,7 @@ func (m *MemAttempts) Count(_ context.Context, realm auth.Realm, loginKey string
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
-		return 0, m.err
+		return 0, storeError("count attempts", m.err)
 	}
 	var n int
 	for _, a := range m.rows {
@@ -71,10 +72,10 @@ func (m *MemAttempts) Record(_ context.Context, a session.Attempt) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
-		return m.err
+		return storeError("record attempt", m.err)
 	}
 	if m.recordErr != nil {
-		return m.recordErr
+		return storeError("record attempt", m.recordErr)
 	}
 	m.rows = append(m.rows, a)
 	return nil
@@ -86,7 +87,7 @@ func (m *MemAttempts) Purge(_ context.Context, realm auth.Realm, before time.Tim
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
-		return 0, m.err
+		return 0, storeError("purge attempts", m.err)
 	}
 	kept := make([]session.Attempt, 0, len(m.rows))
 	for _, a := range m.rows {
