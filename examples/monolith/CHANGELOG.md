@@ -63,6 +63,9 @@
   довода в `clientActs` лишнее; `TestTranslate_EveryRuleReachable` — правило на
   sentinel, которой нет ни на одном пути наружу, мёртвое;
   `TestRegister_BadAddressIsInput`.
+- `TestSettlerSlugError_KeepsWebhookRetryable`: `errs.Conflict` из хука
+  зачисления под `payment.ErrUnavailable` отвечает 503, а не 409, и повтор
+  провайдера применяет оплату; на `kit v0.2.0` тест красный с 409.
 - `payments_reconcile` под `postgres/pglock`: сверка не захватывает строки
   (курсор в памяти), и две реплики шли бы одной очередью, умножая вызовы
   провайдера; `payment.Reconciler` сам требует внешнюю блокировку. Остальным

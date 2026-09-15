@@ -11,8 +11,9 @@
 //
 //  1. ХУК ЗАЧИСЛЕНИЯ (shoppg.Settler). Заказ, право и событие outbox ложатся
 //     ТОЙ ЖЕ транзакцией, что и книга платежей; ошибка хука откатывает всё,
-//     включая строку дедупа события. Держит
-//     TestSettlerFailure_RollsBackEverything.
+//     включая строку дедупа события, и отвечает 503 — даже если хук вернул
+//     свою SlugError. Держат TestSettlerFailure_RollsBackEverything и
+//     TestSettlerSlugError_KeepsWebhookRetryable.
 //  2. ПОРТ session.Tokens (shoppg.Tokens). Единственная сборка, которой в
 //     тулките нет ни у кого: authpg.WithTx().Insert плюс mail.Prepare плюс
 //     mailpg.WithTx().Enqueue одной транзакцией.
