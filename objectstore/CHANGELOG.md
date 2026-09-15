@@ -22,10 +22,11 @@
   Потребителю больше не нужна таблица перевода ошибок `objectstore`:
   `errs.KindOf` и `httperr` находят класс на самой sentinel. Страж
   `errstest.EveryErrorHasKind` стоит в корне модуля (`sentinels_test.go`);
-  двойники `objectstoretest` из него исключены — их ошибка только причина,
-  класс несёт обёртка ядра, и это держит
-  `TestPortFailuresReachCallerAsUnavailable` на путях `Uploader.Upload` и
-  `Collector.Run`.
+  двойники `objectstoretest` из него исключены — своего класса у их sentinel
+  нет: сбой хранилища двойник заворачивает в `ErrUnavailable` сам, как `s3` и
+  `fs` (ниже), а сбой `MemOwned` отдаёт голым, и класс ему даёт обёртка
+  ядра — это держит `TestPortFailuresReachCallerAsUnavailable` на путях
+  `IsOwned` и `Delete` у `Collector.Run`.
 
   | Sentinel | Класс | Почему |
   |---|---|---|
@@ -76,6 +77,20 @@
   `LastModified` самого объекта: величины разные по смыслу, а не по точности,
   и сравнивать их нельзя — кому нужен момент объекта, читает `List`. Равными
   их сделал бы только лишний `HEAD` после каждой загрузки.
+- **Сбой хранилища `objectstoretest.MemStore` приходит в
+  `objectstore.ErrUnavailable`, как у `s3` и `fs`
+  ([ADR-0007, «Двойники»](../docs/adr/0007-error-kind.md)), а `Presign` на
+  него больше не отвечает.** Было: `SetErr` отдавал причину голой из `Put`,
+  `Delete`, `List` и `Presign`, и потребитель, зовущий стор мимо ядра, видел
+  на двойнике класс 500 там, где прод отвечает 503. Стало: `errs.KindOf` —
+  `unavailable`, а `errors.Is` находит и `objectstore.ErrUnavailable`, и
+  причину. `Presign` под `SetErr` отдаёт ссылку, как адаптеры: `s3`
+  подписывает её локально, `fs` собирает из `BaseURL`, в хранилище не ходит
+  ни один. Ломающее для теста, который ветвился по голой ошибке двойника
+  (`NotErrorIs(err, objectstore.ErrUnavailable)`, сравнение текста) или ждал
+  отказа `Presign` при недоступном хранилище: в проде такого отказа нет.
+  `ErrDoubleBroken` и сбой `MemOwned` приходят голыми, как раньше: нулевых
+  часов у адаптеров нет, а источник владения пишет потребитель.
 
 ### Fixed
 - Интеграционный тест `s3` берёт образ MinIO с `quay.io`, а не с Docker Hub:
