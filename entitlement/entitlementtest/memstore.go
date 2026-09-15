@@ -2,6 +2,7 @@ package entitlementtest
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strings"
 	"sync"
@@ -36,8 +37,8 @@ func NewMemStore() *MemStore {
 }
 
 // SetErr задаёт ошибку всех методов; ею проверяется, что сбой хранилища даёт
-// недоступность, а не отказ в правах. Ошибка стенда, а не домена — сервис
-// завернёт её в свою ErrUnavailable.
+// недоступность, а не отказ в правах. Приходит в entitlement.ErrUnavailable
+// уже от двойника, как от entitlementpg на прямом вызове.
 //
 // Метод, а не поле: двойник читают параллельные горутины, и запись в поле
 // посреди прогона была бы гонкой в самом тесте.
@@ -96,13 +97,13 @@ func (m *MemStore) Open(ctx context.Context, subjectID uuid.UUID, now time.Time)
 		select {
 		case <-hold:
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, storeError("open", ctx.Err())
 		}
 	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if err := m.fail(ctx); err != nil {
+	if err := m.fail(ctx, "open"); err != nil {
 		return nil, err
 	}
 	out := make([]entitlement.Grant, 0, len(m.grants[subjectID]))
@@ -126,7 +127,7 @@ func (m *MemStore) Grant(ctx context.Context, subjectID uuid.UUID, g entitlement
 ) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if err := m.fail(ctx); err != nil {
+	if err := m.fail(ctx, "grant"); err != nil {
 		return err
 	}
 	// ПРЕДМЕТ — ТА ЖЕ ГРАНИЦА, ЧТО CHECK У БАЗЫ: 1..MaxItemIDLen байт. Двойник,
@@ -173,7 +174,7 @@ func laterExpiry(prev, next *time.Time) *time.Time {
 func (m *MemStore) Revoke(ctx context.Context, subjectID uuid.UUID, itemID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if err := m.fail(ctx); err != nil {
+	if err := m.fail(ctx, "revoke"); err != nil {
 		return err
 	}
 	delete(m.grants[subjectID], itemID)
@@ -185,12 +186,24 @@ func (m *MemStore) Revoke(ctx context.Context, subjectID uuid.UUID, itemID strin
 
 // fail — общий отказ методов; вызывается под захваченным мьютексом. Отменённый
 // контекст проверяется раньше заданной ошибки: у адаптера отмена не доезжает
-// до базы вовсе.
-func (m *MemStore) fail(ctx context.Context) error {
+// до базы вовсе. Оба приходят в entitlement.ErrUnavailable, как у
+// entitlementpg.
+func (m *MemStore) fail(ctx context.Context, op string) error {
 	if err := ctx.Err(); err != nil {
-		return err
+		return storeError(op, err)
 	}
-	return m.err
+	if m.err != nil {
+		return storeError(op, m.err)
+	}
+	return nil
+}
+
+// storeError — сбой так, как его отдаёт entitlementpg: в
+// entitlement.ErrUnavailable с причиной в цепочке. Голая причина дала бы
+// потребителю, пишущему выдачу мимо сервиса, 500 там, где прод отвечает 503
+// (ADR-0007, «Двойники»).
+func storeError(op string, err error) error {
+	return fmt.Errorf("%w: entitlementtest: %s: %w", entitlement.ErrUnavailable, op, err)
 }
 
 // clone — копия выдачи с СОБСТВЕННЫМ временем. Указатель наружу означал бы,
