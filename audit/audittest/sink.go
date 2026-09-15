@@ -3,6 +3,7 @@ package audittest
 import (
 	"context"
 	"errors"
+	"fmt"
 	"maps"
 	"sync"
 	"time"
@@ -10,8 +11,9 @@ import (
 	"github.com/nrect/rebar/audit"
 )
 
-// ErrSinkFailed — отказ двойника. Отдельная ошибка, чтобы тест не принял
-// поломку стенда за штатный ErrUnavailable домена.
+// ErrSinkFailed — отказ двойника для SetErr. Write отдаёт его в
+// audit.ErrUnavailable, как auditpg; поломку стенда от штатного сбоя отличает
+// errors.Is по этой sentinel.
 var ErrSinkFailed = errors.New("audittest: sink failed")
 
 // Sink — audit.Sink в памяти. Потокобезопасен целиком, включая настройку.
@@ -27,7 +29,8 @@ var _ audit.Sink = (*Sink)(nil)
 func NewSink() *Sink { return &Sink{} }
 
 // SetErr — ошибка Write: с ней проверяется поведение потребителя на
-// недоступном журнале; nil снимает.
+// недоступном журнале; nil снимает. Приходит в audit.ErrUnavailable, как у
+// auditpg.
 func (s *Sink) SetErr(err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -40,8 +43,11 @@ func (s *Sink) SetErr(err error) {
 func (s *Sink) Write(_ context.Context, ev audit.Event) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Сбой так, как его отдаёт auditpg: голая причина дала бы потребителю,
+	// пишущему в транзакции действия, 500 там, где прод отвечает 503
+	// (ADR-0007, «Двойники»).
 	if s.err != nil {
-		return s.err
+		return fmt.Errorf("%w: audittest: write: %w", audit.ErrUnavailable, s.err)
 	}
 	stored := copyEvent(ev)
 	stored.At = dbMoment(stored.At)

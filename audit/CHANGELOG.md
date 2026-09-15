@@ -10,11 +10,11 @@
   Потребителю больше не нужна таблица перевода ошибок `audit`: `errs.KindOf` и
   `httperr` находят класс на самой sentinel. Страж
   `errstest.EveryErrorHasKind` стоит в корне модуля (`sentinels_test.go`);
-  двойник `audittest` из него исключён — его ошибка только причина, класс
-  несёт обёртка `Recorder.Record`, и это держит
-  `TestPortFailuresReachCallerAsUnavailable`. Запись в транзакции действия
-  (`Prepare` и `auditpg.Sink.WithTx`) идёт мимо ядра: класс на этом пути даёт
-  обёртка `auditpg` в `ErrUnavailable`.
+  двойник `audittest` из него исключён — своего класса у его sentinel нет:
+  отказ записи двойник заворачивает в `ErrUnavailable` сам, как `auditpg`
+  (ниже). Запись в транзакции действия (`Prepare` и `auditpg.Sink.WithTx`)
+  идёт мимо ядра: класс на этом пути даёт обёртка `auditpg` в
+  `ErrUnavailable`.
 
   | Sentinel | Класс | Почему |
   |---|---|---|
@@ -61,6 +61,15 @@
   | `sink.Err = err` | `sink.SetErr(err)` |
 
   `nil` снимает отказ. Совет «ставится до начала работы» снят вместе с полем.
+- **Отказ записи `audittest.Sink` приходит в `audit.ErrUnavailable`, как у
+  `auditpg` ([ADR-0007, «Двойники»](../docs/adr/0007-error-kind.md)).** Было:
+  `Write` отдавал заданную `SetErr` ошибку голой, и потребитель, пишущий
+  журнал в транзакции действия (`Prepare` и `auditpg.Sink.WithTx`), видел на
+  двойнике класс 500 там, где прод отвечает 503. Стало: `errs.KindOf` —
+  `unavailable`, а `errors.Is` находит и `audit.ErrUnavailable`, и причину
+  (`ErrSinkFailed` или заданную ошибку). Ломающее для теста, который ветвился
+  по голой ошибке двойника: `errors.Is` по причине истинен по-прежнему, а
+  `NotErrorIs(err, audit.ErrUnavailable)` и сравнение текста — уже нет.
 
 ## [0.1.0] — 2026-09-10
 
