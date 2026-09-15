@@ -8,6 +8,15 @@
 
 ### Changed
 
+- Вебхук отвечает ответчиком классом, без `Translate`: провайдеру слаги
+  продукта не нужны, а правило, совпавшее с ошибкой хука глубоко под
+  `payment.ErrUnavailable`, превратило бы 503 в 4xx. Держат
+  `TestWebhook_AnswersClassWithoutTranslate` и
+  `TestResponders_WebhookSkipsProductRules`.
+- `payment.ErrInvalidMoney` → 500: сумму и валюту считает сервер из каталога,
+  400 соврал бы клиенту и спрятал дефект сборки в Debug-лог. Понижение класса
+  до 500 законно только с доводом в `downgrades` — это держит
+  `TestTranslate_NoRedundantRule`.
 - Таблица перевода ошибок `errors.go` сжата с 38 строк до 14 после волны
   ADR-0007: класс несёт sentinel модуля, и `httperr` без правила отвечает
   статусом класса и слагом — именем класса. Сняты `unavailableRules` целиком;

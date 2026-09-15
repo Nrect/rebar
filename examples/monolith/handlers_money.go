@@ -11,6 +11,7 @@ import (
 	"github.com/nrect/rebar/auth/session"
 	"github.com/nrect/rebar/authz"
 	"github.com/nrect/rebar/kit/errs"
+	"github.com/nrect/rebar/kit/errs/httperr"
 	"github.com/nrect/rebar/objectstore"
 	"github.com/nrect/rebar/payment"
 
@@ -26,7 +27,7 @@ func (a *App) checkout(w http.ResponseWriter, r *http.Request) {
 		Product        string `json:"product"`
 		IdempotencyKey string `json:"idempotency_key"`
 	}
-	if !a.decode(w, r, &req) {
+	if !decodeJSON(a.respond, w, r, &req) {
 		return
 	}
 	subject, ok := a.allowed(w, r, permBuy, authz.Resource{})
@@ -100,7 +101,7 @@ func (a *App) startPayment(r *http.Request, subject uuid.UUID, product Product,
 // это решение: он отдельный пакет с ровно одной библиотекой.
 func (a *App) webhook(w http.ResponseWriter, r *http.Request) {
 	var body providerEvent
-	if !a.decode(w, r, &body) {
+	if !decodeJSON(a.respondClass, w, r, &body) {
 		return
 	}
 	a.provider.Push(body.event())
@@ -109,7 +110,10 @@ func (a *App) webhook(w http.ResponseWriter, r *http.Request) {
 		Raw: []byte("{}"), Headers: r.Header, RemoteIP: clientIP(r),
 	})
 	if err != nil {
-		a.respond.Write(r.Context(), w, err)
+		// ПРОВАЙДЕРУ — КЛАСС, БЕЗ СЛОВАРЯ ПРОДУКТА: правило, совпавшее с ошибкой
+		// хука глубоко под ErrUnavailable, превратило бы 503 в 4xx, и оплата
+		// потерялась бы.
+		a.respondClass.Write(r.Context(), w, err)
 		return
 	}
 	a.writeJSON(w, http.StatusOK, map[string]any{"outcome": string(res.Outcome)})
@@ -222,12 +226,13 @@ func (a *App) allowed(w http.ResponseWriter, r *http.Request, p authz.Permission
 	return principal.SubjectID, true
 }
 
-// decode читает тело запроса. Возвращает false, если ответ уже написан.
-func (a *App) decode(w http.ResponseWriter, r *http.Request, dst any) bool {
+// decodeJSON читает тело запроса; ошибку пишет переданный ответчик. Возвращает
+// false, если ответ уже написан.
+func decodeJSON(respond *httperr.Responder, w http.ResponseWriter, r *http.Request, dst any) bool {
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxJSONBytes))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
-		a.respond.Write(r.Context(), w, errs.IncorrectInput("body-invalid").WithCause(err))
+		respond.Write(r.Context(), w, errs.IncorrectInput("body-invalid").WithCause(err))
 		return false
 	}
 	return true

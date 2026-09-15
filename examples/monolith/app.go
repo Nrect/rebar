@@ -67,10 +67,11 @@ type App struct {
 	grants  *shoppg.Entitlements
 	uploads *shoppg.Uploads
 
-	gauges  gauges
-	jobs    *scheduler.Scheduler
-	respond *httperr.Responder
-	handler http.Handler
+	gauges       gauges
+	jobs         *scheduler.Scheduler
+	respond      *httperr.Responder
+	respondClass *httperr.Responder
+	handler      http.Handler
 }
 
 // New собирает приложение и накатывает миграции. Любая негодная часть
@@ -292,6 +293,7 @@ func sessionConfig(cfg Config) session.Config {
 // routes — единственная точка сборки обработчика.
 func (a *App) routes() http.Handler {
 	a.respond = newResponder()
+	a.respondClass = newClassResponder()
 	mux := http.NewServeMux()
 	a.mount(mux)
 	// reqid снаружи всего: идентификатор запроса нужен и ответчику ошибок, и
