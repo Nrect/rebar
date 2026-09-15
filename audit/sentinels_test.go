@@ -1,9 +1,11 @@
 package audit_test
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 
@@ -13,8 +15,8 @@ import (
 )
 
 // Каждая экспортируемая sentinel модуля несёт класс или отказ от него с доводом
-// (ADR-0007). Двойник в allow: его ошибка — инъекция причины, класс несёт
-// обёртка ядра (TestPortFailuresReachCallerAsUnavailable).
+// (ADR-0007). Двойник в allow: своего класса у его sentinel нет — класс
+// приходит обёрткой (ADR-0007, «Двойники»).
 func TestEverySentinelHasKindOrRefusal(t *testing.T) {
 	t.Parallel()
 
@@ -43,15 +45,21 @@ func TestSentinelKinds(t *testing.T) {
 	}
 }
 
-// Сбой приёмника на пути ядра доходит до вызывающего с классом 503, а не голой
-// причиной двойника: класс несёт обёртка Record. Запись в транзакции действия
-// (Prepare и auditpg.Sink.WithTx) идёт мимо ядра: там класс даёт обёртка
-// адаптера, а двойник отдаёт причину голой (ADR-0007, «Двойники»).
+// Сбой приёмника на пути ядра доходит до вызывающего с классом 503: класс несёт
+// обёртка Record. Приёмник здесь — голая заглушка: audittest.Sink заворачивает
+// сбой сам, как auditpg, и снятой обёртки Record страж бы не увидел. Запись в
+// транзакции действия (Prepare и auditpg.Sink.WithTx) идёт мимо ядра: там класс
+// даёт обёртка адаптера.
 func TestPortFailuresReachCallerAsUnavailable(t *testing.T) {
 	t.Parallel()
-	rec, sink := newRecorder(t)
-	sink.SetErr(errors.New("connection refused"))
+	rec := audit.NewRecorder(bareSink{err: errors.New("connection refused")}, testConfig())
+	rec.SetClock(func() time.Time { return testClock })
 
 	err := rec.Record(userCtx(t), entry())
 	assert.Equal(t, errs.KindUnavailable, errs.KindOf(err), "Record")
 }
+
+// bareSink — audit.Sink, отдающий сбой голым.
+type bareSink struct{ err error }
+
+func (s bareSink) Write(context.Context, audit.Event) error { return s.err }

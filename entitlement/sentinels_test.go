@@ -1,8 +1,10 @@
 package entitlement_test
 
 import (
+	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -13,8 +15,8 @@ import (
 )
 
 // Каждая экспортируемая sentinel модуля несёт класс или отказ от него с доводом
-// (ADR-0007). Двойники в allow: их ошибки — инъекция причины, класс несёт
-// обёртка ядра (TestPortFailuresReachCallerAsUnavailable).
+// (ADR-0007). Двойники в allow: своего класса у их sentinel нет — класс
+// приходит обёрткой (ADR-0007, «Двойники»).
 func TestEverySentinelHasKindOrRefusal(t *testing.T) {
 	t.Parallel()
 
@@ -64,12 +66,14 @@ func TestSentinelsAreDistinct(t *testing.T) {
 	}
 }
 
-// Сбой хранилища на путях чтения и записи доходит до вызывающего с классом 503,
-// а не голой причиной двойника: класс несёт обёртка ядра.
+// Сбой хранилища на путях чтения и записи доходит до вызывающего с классом 503:
+// класс несёт обёртка ядра. Хранилище здесь — голая заглушка:
+// entitlementtest.MemStore заворачивает сбой сам, как entitlementpg, и снятой
+// обёртки ядра страж бы не увидел.
 func TestPortFailuresReachCallerAsUnavailable(t *testing.T) {
 	t.Parallel()
-	svc, store, _ := newService(t)
-	store.SetErr(errStore)
+	svc := entitlement.New(bareStore{err: errStore}, validConfig())
+	svc.SetClock(newClock().Now)
 	subject := uuid.New()
 
 	_, err := svc.Allows(t.Context(), subject, itemAlgebra)
@@ -81,10 +85,23 @@ func TestPortFailuresReachCallerAsUnavailable(t *testing.T) {
 	assertUnavailable(t, svc.Revoke(t.Context(), subject, itemAlgebra), "Revoke")
 }
 
-// assertUnavailable — класс 503 и причина двойника в цепочке: обёртка не
-// потеряла ни класса, ни исходной ошибки.
+// assertUnavailable — класс 503 и причина в цепочке: обёртка не потеряла ни
+// класса, ни исходной ошибки.
 func assertUnavailable(t *testing.T, err error, site string) {
 	t.Helper()
 	assert.Equalf(t, errs.KindUnavailable, errs.KindOf(err), "класс ошибки на %s: %v", site, err)
-	assert.ErrorIsf(t, err, errStore, "причина двойника на %s", site)
+	assert.ErrorIsf(t, err, errStore, "причина на %s", site)
 }
+
+// bareStore — entitlement.Store, отдающий сбой голым на каждом методе.
+type bareStore struct{ err error }
+
+func (s bareStore) Open(context.Context, uuid.UUID, time.Time) ([]entitlement.Grant, error) {
+	return nil, s.err
+}
+
+func (s bareStore) Grant(context.Context, uuid.UUID, entitlement.Grant, time.Time) error {
+	return s.err
+}
+
+func (s bareStore) Revoke(context.Context, uuid.UUID, string) error { return s.err }

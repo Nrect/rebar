@@ -17,9 +17,8 @@ import (
 )
 
 // Каждая экспортируемая sentinel модуля, подпакеты включительно, несёт класс
-// или отказ от него с доводом (ADR-0007). Двойники в allow: их ошибки —
-// инъекция причины, класс несёт обёртка ядра
-// (session.TestPortFailuresReachCallerAsUnavailable).
+// или отказ от него с доводом (ADR-0007). Двойники в allow: своего класса у их
+// sentinel нет — класс приходит обёрткой (ADR-0007, «Двойники»).
 func TestEverySentinelHasKindOrRefusal(t *testing.T) {
 	t.Parallel()
 

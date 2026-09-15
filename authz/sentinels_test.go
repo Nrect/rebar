@@ -15,8 +15,8 @@ import (
 )
 
 // Каждая экспортируемая sentinel модуля несёт класс или отказ от него с доводом
-// (ADR-0007). Двойники в allow: их ошибки — инъекция причины, класс несёт
-// обёртка ядра (TestPortFailuresReachCallerAsUnavailable).
+// (ADR-0007). Двойники в allow: своего класса у их sentinel нет — класс
+// приходит обёрткой (ADR-0007, «Двойники»).
 func TestEverySentinelHasKindOrRefusal(t *testing.T) {
 	t.Parallel()
 
@@ -67,15 +67,16 @@ func TestSentinelsAreDistinct(t *testing.T) {
 	}
 }
 
-// Сбой источника ролей и хука политики доходит до вызывающего с классом 503, а
-// не голой причиной двойника: класс несёт обёртка ядра.
+// Сбой источника ролей и хука политики доходит до вызывающего с классом 503:
+// класс несёт обёртка ядра. Источник ролей здесь — голая заглушка:
+// authztest.MemRoles заворачивает сбой сам, как authzpg, и снятой обёртки ядра
+// страж бы не увидел. Хук политики пишет потребитель — он отдаёт сбой голым.
 func TestPortFailuresReachCallerAsUnavailable(t *testing.T) {
 	t.Parallel()
 	down := errors.New("connection refused")
 
-	brokenSource, src := newAuthorizer(t, nil)
-	src.Set(subject("v"), roleViewer)
-	src.SetErr(down)
+	reg := authz.NewRegistry(validConfig(), validRules())
+	brokenSource := authz.New(bareRoles{err: down}, validConfig(), nil, reg)
 	brokenPolicy, roles := newAuthorizer(t, func(context.Context, authz.Subject, authz.Permission, authz.Resource) (bool, error) {
 		return false, down
 	})
@@ -99,3 +100,8 @@ func assertUnavailable(t *testing.T, err, cause error, site string) {
 	assert.Equalf(t, errs.KindUnavailable, errs.KindOf(err), "класс ошибки на %s: %v", site, err)
 	assert.ErrorIsf(t, err, cause, "причина на %s", site)
 }
+
+// bareRoles — authz.RoleSource, отдающий сбой голым.
+type bareRoles struct{ err error }
+
+func (r bareRoles) RolesOf(context.Context, authz.Subject) ([]authz.Role, error) { return nil, r.err }
