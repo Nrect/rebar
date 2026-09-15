@@ -56,7 +56,14 @@ func (a *App) startMoney(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	a.pay = payment.NewService(store, provider, obs, payment.Config{
+	a.pay = payment.NewService(store, provider, obs, paymentConfig())
+	a.reconcile = payment.NewReconciler(a.pay, 50)
+	return nil
+}
+
+// paymentConfig — политика оплаты сборки.
+func paymentConfig() payment.Config {
+	return payment.Config{
 		Currency:          currency,
 		MaxAmountMinor:    100_000_00,
 		MaxItems:          20,
@@ -67,7 +74,5 @@ func (a *App) startMoney(ctx context.Context) error {
 		// юрисдикции, а пример переносим и страны своей сборки не знает
 		// (payment/config.go, RequireReceipt).
 		RequireReceipt: false,
-	})
-	a.reconcile = payment.NewReconciler(a.pay, 50)
-	return nil
+	}
 }

@@ -8,6 +8,23 @@
 
 ### Changed
 
+- Таблица перевода ошибок `errors.go` сжата с 38 строк до 14 после волны
+  ADR-0007: класс несёт sentinel модуля, и `httperr` без правила отвечает
+  статусом класса и слагом — именем класса. Сняты `unavailableRules` целиком;
+  слаги, которые лишь переименовывали класс (`no-session`,
+  `too-many-attempts`, `access-denied`, `idempotency-key-invalid`,
+  `idempotency-key-reused`, `amount-invalid`, `webhook-not-authentic`,
+  `webhook-malformed`, `payment-unsupported`, `file-too-large`); мёртвые — на
+  sentinel, которую монолит наружу не отдаёт (`password.ErrBusy`,
+  `entitlement.ErrDenied`, `auth.ErrLoginTaken`, `payment.ErrIdempotencyRace`,
+  `payment.ErrReferenceBusy`, `payment.ErrUnknownIntent`); неверные
+  (`purchase-invalid` на `payment.ErrInvalidRequest` — покупку собирает код,
+  это 500; `file-not-found` на `objectstore.ErrNotFound` — это нет бакета).
+  Добавлено `mail.ErrInvalidMessage → 400 login-invalid`: адрес письма здесь —
+  логин из формы, и регистрация с негодным адресом отвечала 503. Для клиента:
+  503 теперь `unavailable`, 501 — `not-implemented`, 409 на чужой ключ —
+  `conflict`. `allowed` отвечает `session.ErrNoSession`, а не своим
+  `no-session`.
 - Первый снимок гейджей — сразу при старте: `App.Start` зовёт `RunNow` задачи
   `gauges_snapshot` до запуска планировщика. Без него первую минуту после
   деплоя `payment_drift` — денежный алерт с порогом 1 — был бы слеп. Держит
@@ -40,6 +57,15 @@
 
 ### Added
 
+- Стражи таблицы ошибок: `TestTranslate_SentinelsReachHTTP` — итоговые статус
+  и слаг каждой sentinel, которую монолит отдаёт наружу, через настоящий
+  ответчик; `TestTranslate_NoRedundantRule` — правило со статусом класса без
+  довода в `clientActs` лишнее; `TestTranslate_EveryRuleReachable` — правило на
+  sentinel, которой нет ни на одном пути наружу, мёртвое;
+  `TestRegister_BadAddressIsInput`.
+- `TestSettlerSlugError_KeepsWebhookRetryable`: `errs.Conflict` из хука
+  зачисления под `payment.ErrUnavailable` отвечает 503, а не 409, и повтор
+  провайдера применяет оплату; на `kit v0.2.0` тест красный с 409.
 - `payments_reconcile` под `postgres/pglock`: сверка не захватывает строки
   (курсор в памяти), и две реплики шли бы одной очередью, умножая вызовы
   провайдера; `payment.Reconciler` сам требует внешнюю блокировку. Остальным
