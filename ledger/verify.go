@@ -8,8 +8,8 @@ import (
 	"github.com/google/uuid"
 )
 
-// Check — какая проверка записи не сошлась. Закрытый набор: уйдёт меткой
-// метрики сверки.
+// Check — какая проверка не сошлась. Закрытый набор: метка check метрики
+// сверки (ledgerotel), расширяется только надмножеством.
 type Check string
 
 const (
@@ -25,10 +25,19 @@ const (
 	// CheckUnknownKey — ключа с номером записи нет в Config.Keys: проверить
 	// нечем, и это не подделка, а удалённый ключ.
 	CheckUnknownKey Check = "unknown_key"
+	// CheckHeadChain — голова счёта не на конце цепи: номер или подпись
+	// последней записи не те, либо записи идут дальше головы. Хвост удалён,
+	// голову откатили или строку счёта потеряли.
+	CheckHeadChain Check = "head_chain"
+	// CheckHeadBalance — остаток счёта не равен остатку после последней
+	// записи, то есть сумме движений: остаток правили мимо журнала.
+	CheckHeadBalance Check = "head_balance"
 )
 
 // AllChecks — полный набор; держит guard-тест.
-var AllChecks = []Check{CheckSeq, CheckChain, CheckBalance, CheckSignature, CheckUnknownKey}
+var AllChecks = []Check{
+	CheckSeq, CheckChain, CheckBalance, CheckSignature, CheckUnknownKey, CheckHeadChain, CheckHeadBalance,
+}
 
 // Position — место в цепи счёта: номер, подпись и остаток последней
 // проверенной записи. Нулевое значение — начало счёта.
@@ -48,7 +57,8 @@ func (p Position) validate() error {
 	return nil
 }
 
-// Mismatch — несошедшаяся проверка записи.
+// Mismatch — несошедшаяся проверка. У расхождения головы счёта EntryID
+// нулевой, а Seq — номер головы.
 type Mismatch struct {
 	EntryID uuid.UUID
 	Seq     int64
@@ -67,8 +77,8 @@ type Verification struct {
 }
 
 // Verify проверяет до limit записей счёта после from: номер, цепь, остаток
-// после и подпись каждой. Основа сверки (решение 5); итог цепи против остатка
-// счёта сверяет задача сверки, а не порция.
+// после и подпись каждой. Основа сверки (решение 5); голову счёта против конца
+// цепи сверяет Reconciler, а не порция.
 func (s *Service) Verify(ctx context.Context, account uuid.UUID, from Position, limit int) (Verification, error) {
 	if account == uuid.Nil {
 		return Verification{}, fmt.Errorf("%w: account is nil", ErrInvalidRequest)

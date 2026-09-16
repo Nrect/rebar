@@ -42,7 +42,9 @@ func topup(account uuid.UUID, key string) ledger.PostRequest {
 func TestDoubles_HaveNoExportedFields(t *testing.T) {
 	t.Parallel()
 
-	for _, typ := range []reflect.Type{reflect.TypeFor[ledgertest.MemStore](), reflect.TypeFor[ledgertest.Clock]()} {
+	for _, typ := range []reflect.Type{
+		reflect.TypeFor[ledgertest.MemStore](), reflect.TypeFor[ledgertest.Clock](), reflect.TypeFor[ledgertest.Observer](),
+	} {
 		for i := range typ.NumField() {
 			assert.False(t, typ.Field(i).IsExported(), "поле %s.%s публичное", typ.Name(), typ.Field(i).Name)
 		}
@@ -90,6 +92,8 @@ func TestMemStore_SetErr(t *testing.T) {
 	requireUnavailable(t, err, errDown, "Account")
 	_, err = store.Entries(t.Context(), "wallet", account, 0, 10)
 	requireUnavailable(t, err, errDown, "Entries")
+	_, err = store.Accounts(t.Context(), "wallet", uuid.Nil, 10)
+	requireUnavailable(t, err, errDown, "Accounts")
 
 	store.SetErr(nil)
 	_, err = service(t, store).Post(t.Context(), topup(account, "k"))
@@ -126,6 +130,9 @@ func TestMemStore_ArgumentsBeforeCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	_, err := store.Entries(ctx, "wallet", uuid.New(), 0, 0)
+	require.ErrorIs(t, err, ledger.ErrInvalidRequest)
+	require.NotErrorIs(t, err, context.Canceled)
+	_, err = store.Accounts(ctx, "wallet", uuid.Nil, 0)
 	require.ErrorIs(t, err, ledger.ErrInvalidRequest)
 	require.NotErrorIs(t, err, context.Canceled)
 
@@ -174,9 +181,12 @@ func TestMemStore_CallCount(t *testing.T) {
 	require.NoError(t, err)
 	_, err = svc.Verify(t.Context(), account, ledger.Position{}, 10)
 	require.NoError(t, err)
+	_, err = store.Accounts(t.Context(), "wallet", uuid.Nil, 10)
+	require.NoError(t, err)
 
 	for method, want := range map[string]int{
-		"Post": 1, "EntryByKey": 1, "EntryByID": 0, "ReversalOf": 0, "Insert": 1, "Account": 1, "Entries": 1, "Unknown": 0,
+		"Post": 1, "EntryByKey": 1, "EntryByID": 0, "ReversalOf": 0, "Insert": 1, "Account": 1, "Entries": 1,
+		"Accounts": 1, "Unknown": 0,
 	} {
 		assert.Equal(t, want, store.CallCount(method), method)
 	}
@@ -205,6 +215,37 @@ func TestMemStore_KnobsAreSafeWhileServing(t *testing.T) {
 			store.SetErr(nil)
 		},
 		func(int) { _ = store.CallCount("Post") },
+	)
+}
+
+// Наблюдатель хранит копию находки и отдаёт копию: правка по любую сторону не
+// доезжает до другой. Его зовут прогоны планировщика, пока тест читает.
+func TestObserver_CopiesAndIsSafeWhileServing(t *testing.T) {
+	t.Parallel()
+
+	obs := ledgertest.NewObserver()
+	account := uuid.New()
+	sent := []ledger.Mismatch{{EntryID: uuid.New(), Seq: 2, Check: ledger.CheckSignature}}
+	obs.Watch("wallet")
+	obs.Found(t.Context(), ledger.Finding{Book: "wallet", Account: account, Mismatches: sent})
+	sent[0].Check = ledger.CheckChain
+	got := obs.Findings()
+	got[0].Mismatches[0].Seq = 99
+
+	assert.Equal(t, []string{"wallet"}, obs.Watched())
+	require.Len(t, obs.Findings(), 1)
+	assert.Equal(t, ledger.Mismatch{EntryID: sent[0].EntryID, Seq: 2, Check: ledger.CheckSignature},
+		obs.Findings()[0].Mismatches[0], "находка не делит память ни с тем, кто прислал, ни с тем, кто читал")
+
+	whileServing(
+		func() {
+			for range 300 {
+				obs.Found(context.Background(), ledger.Finding{Book: "wallet", Account: account, Mismatches: sent})
+				obs.Watch("wallet")
+			}
+		},
+		func(int) { _ = obs.Findings() },
+		func(int) { _ = obs.Watched() },
 	)
 }
 

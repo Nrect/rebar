@@ -262,6 +262,10 @@ func (s *headStore) Entries(context.Context, string, uuid.UUID, int64, int) ([]l
 	return nil, nil
 }
 
+func (s *headStore) Accounts(context.Context, string, uuid.UUID, int) ([]uuid.UUID, error) {
+	return nil, nil
+}
+
 type headAccount struct{ store *headStore }
 
 func (headAccount) EntryByKey(context.Context, string) (ledger.Entry, bool, error) {

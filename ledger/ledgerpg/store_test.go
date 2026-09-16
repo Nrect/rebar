@@ -59,6 +59,9 @@ func TestStore_ArgumentsBeforeQuery(t *testing.T) {
 	_, err := store.Entries(cancelled, bookName, uuid.New(), 0, 0)
 	require.ErrorIs(t, err, ledger.ErrInvalidRequest)
 	require.NotErrorIs(t, err, context.Canceled)
+	_, err = store.Accounts(cancelled, bookName, uuid.Nil, 0)
+	require.ErrorIs(t, err, ledger.ErrInvalidRequest)
+	require.NotErrorIs(t, err, context.Canceled)
 
 	called := false
 	err = store.Post(t.Context(), "points", uuid.New(), func(ledger.AccountTx, ledger.Account) error {
@@ -167,6 +170,16 @@ func TestStore_ScopesByBookAndAccount(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, tc.balance, balance)
 		requireChain(t, tc.svc, tc.account, tc.entries)
+	}
+
+	// Обход сверки сужен книгой: у баллов счёта stranger нет.
+	for _, tc := range []struct {
+		book string
+		want []uuid.UUID
+	}{{bookName, []uuid.UUID{customer, stranger}}, {points.Name, []uuid.UUID{customer}}} {
+		accounts, err := store.Accounts(t.Context(), tc.book, uuid.Nil, 10)
+		require.NoError(t, err)
+		assert.ElementsMatch(t, tc.want, accounts, "счета книги %s", tc.book)
 	}
 
 	// Чужую запись ядро не находит у себя и до базы не доходит.

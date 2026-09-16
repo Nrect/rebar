@@ -66,6 +66,8 @@ var storeScenarios = []storeScenario{
 	{name: "ошибка fn не оставляет вставок, счёт вне fn не живёт", run: suiteRollback},
 	{name: "отказ вставки обрывает транзакцию fn", run: suiteAbortedTx},
 	{name: "чтение по курсору и потолку; непозитивный потолок — ошибка", run: suiteReads},
+	{name: "обход счетов книги: порядок uuid, курсор и потолок; непозитивный потолок — ошибка", run: suiteAccounts},
+	{name: "сверка проходит книгу целиком за круг и не находит расхождений", run: suiteReconcile},
 	{name: "отменённый контекст — ErrUnavailable и ничего не записано", run: suiteCancelled},
 	{name: "записи и голова отдаются копией", run: suiteCopies},
 }
@@ -313,6 +315,8 @@ func suiteCancelled(t *testing.T, f fixture) {
 	cancelledIs(t, err, "Account")
 	_, err = f.store.Entries(ctx, f.book.Name, account, 0, 10)
 	cancelledIs(t, err, "Entries")
+	_, err = f.store.Accounts(ctx, f.book.Name, uuid.Nil, 10)
+	cancelledIs(t, err, "Accounts")
 
 	late, cancelLate := context.WithCancel(t.Context())
 	defer cancelLate()

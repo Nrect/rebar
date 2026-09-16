@@ -127,6 +127,11 @@ func TestPortFailuresReachCallerAsUnavailable(t *testing.T) {
 		_, err := svc.Verify(t.Context(), uuid.New(), ledger.Position{}, 10)
 		return err
 	}
+	reconcile := func(svc *ledger.Service) error {
+		rec := ledger.NewReconciler(svc, ledgertest.NewObserver(), ledger.ReconcileConfig{Accounts: 10, Page: 10})
+		_, err := rec.Run(t.Context())
+		return err
+	}
 
 	for _, tc := range []struct {
 		failing string
@@ -135,6 +140,7 @@ func TestPortFailuresReachCallerAsUnavailable(t *testing.T) {
 		{"Post", post}, {"EntryByKey", post}, {"Insert", post},
 		{"EntryByID", reverse}, {"ReversalOf", reverse},
 		{"Account", balance}, {"Entries", verify},
+		{"Accounts", reconcile}, {"Account", reconcile}, {"Entries", reconcile},
 	} {
 		svc := ledger.NewService(bareStore{failing: tc.failing, err: down, target: target}, cfg)
 		err := tc.call(svc)
@@ -173,7 +179,8 @@ func TestStoreRefusalsKeepTheirClass(t *testing.T) {
 }
 
 // bareStore — ledger.Store, у которого названный метод отвечает голой ошибкой;
-// остальные отвечают пусто, а EntryByID находит target.
+// остальные отвечают пусто, Accounts отдаёт один счёт, а EntryByID находит
+// target.
 type bareStore struct {
 	failing string
 	err     error
@@ -200,6 +207,10 @@ func (s bareStore) Account(context.Context, string, uuid.UUID) (ledger.Account, 
 
 func (s bareStore) Entries(context.Context, string, uuid.UUID, int64, int) ([]ledger.Entry, error) {
 	return nil, s.fail("Entries")
+}
+
+func (s bareStore) Accounts(context.Context, string, uuid.UUID, int) ([]uuid.UUID, error) {
+	return []uuid.UUID{s.target.ID}, s.fail("Accounts")
 }
 
 type bareAccount bareStore
