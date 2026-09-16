@@ -9,9 +9,9 @@
 инварианты — [doc.go](doc.go), пример подключения, который проверяет
 компилятор, — [example_test.go](example_test.go).
 
-**Статус.** Ядро, двойник с контрактными наборами и HTTP-ручка. Адаптер
-Postgres (`inboxpg`) и метрики (`inboxotel`) — следующие шаги модуля; до них в
-прод модуль не подключается: `inboxtest.MemStore` держит отметки в памяти.
+**Статус.** Ядро, двойник с контрактными наборами, HTTP-ручка и хранилище
+Postgres (`inboxpg`). Метрики (`inboxotel`) — следующий шаг модуля; до него
+наблюдатель — `inbox.LogObserver`.
 
 ## Когда брать
 
@@ -60,7 +60,73 @@ func TestAcmeVerifier(t *testing.T) {
 владение памятью запроса и параллельные вызовы. Какие поломки он называет —
 `inboxtest/suite_verifier_internal_test.go`.
 
-**3. Сервис, ручка и уборка:**
+**3. Хранилище — `inboxpg`.** Схему накатывает раннер проекта со своей таблицей
+версий `inbox_schema_version`: без `WithTableName` goose пишет в общую
+`goose_db_version`, и номера блоков тулкита в ней столкнутся. Блок схему не
+применяет — на старте `CheckSchema` сверяет её и называет каждое расхождение.
+
+```go
+p, err := goose.NewProvider(goose.DialectPostgres, db, inboxpg.Migrations(),
+	goose.WithTableName("inbox_schema_version"))
+if err != nil {
+	return err
+}
+if _, err = p.Up(ctx); err != nil {
+	return err
+}
+
+store := inboxpg.New(pool, map[inbox.SourceName]inboxpg.Handler{"acme": acmeHandler{producer: producer}})
+if err := store.CheckSchema(ctx); err != nil {
+	return err // миграции не накатаны или схема расходится с ними
+}
+```
+
+Обработчик получает транзакцию приёма и кладёт внешний эффект сообщением
+`outbox` в неё же (ADR-0012, решение 6): отметка, решение и сообщение наружу
+коммитятся вместе, а доставку со своими повторами делает очередь.
+
+```go
+type acmeHandler struct{ producer *outbox.Producer }
+
+func (h acmeHandler) Handle(ctx context.Context, tx pgx.Tx, ev inbox.Event) error {
+	var paid struct {
+		OrderID string `json:"order_id"`
+	}
+	if err := json.Unmarshal(ev.Payload, &paid); err != nil {
+		return err // не разобрали мы: 503, повтор дойдёт до починенной реплики
+	}
+	tag, err := tx.Exec(ctx, `UPDATE orders SET status = 'paid' WHERE id = $1 AND status = 'pending'`, paid.OrderID)
+	if err != nil {
+		return postgres.Sanitize(err) // в Detail сырой ошибки — строка заказа
+	}
+	if tag.RowsAffected() == 0 {
+		return nil // заказа нет или он уже оплачен: решение принято
+	}
+	payload, err := json.Marshal(paid)
+	if err != nil {
+		return err
+	}
+	// Ключ события — до 200 байт, с источником он не влезет в ключ outbox: хеш.
+	key := sha256.Sum256([]byte(string(ev.Source) + ":" + ev.ID))
+	env, err := h.producer.Prepare(outbox.Message{
+		Kind:          "order.paid",
+		Payload:       payload,
+		DedupKey:      hex.EncodeToString(key[:]),
+		SchemaVersion: 1,
+	})
+	if err != nil {
+		return err
+	}
+	_, err = outboxpg.Enqueue(ctx, tx, env)
+	return err
+}
+```
+
+`Accept` держит соединение пула, пока работает обработчик, — поэтому в нём нет
+вызовов чужого API. В `WithTx` любая ошибка `Accept` оставляет транзакцию
+проекта прерванной: `COMMIT` не пройдёт, и эффект без отметки не закоммитится.
+
+**4. Сервис, ручка и уборка:**
 
 ```go
 svc := inbox.NewService(store, observer, inbox.Config{
@@ -134,7 +200,7 @@ job := scheduler.Job{Name: "inbox_purge", Interval: time.Hour, Run: svc.Purge}
 - `inboxtest.HMACVerifier`, `SignHMAC`, `EventBody` — тестовая схема подписи
   для ручки без провайдера. Не боевая;
 - `inboxtest.RunStoreSuite` — контрактный набор хранилища: его проходят двойник
-  и адаптер.
+  и `inboxpg`.
 
 ## Наблюдаемость
 
