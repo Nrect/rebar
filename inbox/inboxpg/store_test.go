@@ -212,7 +212,7 @@ func TestStore_Purge_MarkTakesPayload(t *testing.T) {
 
 	// Отметка старше своей границы, тело моложе своей.
 	deleted, err := store.Purge(t.Context(), testNow.Add(-time.Hour), testNow.Add(-3*time.Hour), 10)
-	require.NoError(t, err)
+	require.NoError(t, err, "уборка отметки при живом теле")
 	assert.Equal(t, 1, deleted, "каскад в счёт не идёт")
 	assert.Zero(t, countRows(t, pool, `SELECT count(*) FROM inbox_events`), "отметка осталась")
 	assert.Zero(t, countRows(t, pool, `SELECT count(*) FROM inbox_payloads`), "тело пережило отметку")

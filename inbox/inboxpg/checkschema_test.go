@@ -157,7 +157,7 @@ func TestCheckSchema_ReportsEveryMismatchByName(t *testing.T) {
 			}
 
 			err := store.CheckSchema(t.Context())
-			require.Error(t, err)
+			require.Error(t, err, "CheckSchema не назвал расхождение")
 			lines := strings.Split(err.Error(), "\n")
 			assert.Equal(t, mismatchLine, lines[0], "первая строка — что делать")
 			assert.ElementsMatch(t, tt.want, lines[1:], "расхождения по именам и без лишних")

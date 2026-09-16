@@ -136,14 +136,15 @@ func TestStore_WithTx_AbortsOnError(t *testing.T) {
 			traced.forget(tx.Conn())
 			insertOrder(t, tx, tc.name)
 
-			require.Error(t, tc.fail(store.WithTx(tx)))
-			// Причина читается до COMMIT: после него соединение уходит в пул к соседу.
-			var cause *pgconn.PgError
-			require.ErrorAs(t, traced.lastOn(tx.Conn()), &cause, "причины прерывания в транзакции нет")
-			tc.cause(t, cause)
+			require.Error(t, tc.fail(store.WithTx(tx)), "отказа нет")
+			// Причина снимается до COMMIT: после него соединение уходит в пул к соседу.
+			last := traced.lastOn(tx.Conn())
 
 			require.ErrorIs(t, tx.Commit(t.Context()), pgx.ErrTxCommitRollback, "COMMIT после отказа прошёл")
 			assert.Zero(t, countRows(t, pool, `SELECT count(*) FROM shop_orders WHERE id = $1`, tc.name), "факт потребителя закоммичен")
+			var cause *pgconn.PgError
+			require.ErrorAs(t, last, &cause, "причины прерывания в транзакции нет")
+			tc.cause(t, cause)
 		})
 	}
 	t.Cleanup(func() {
