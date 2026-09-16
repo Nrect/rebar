@@ -76,7 +76,7 @@ stdlib» и весит больше.
 | Модуль | Пакеты | Внешние зависимости |
 |---|---|---|
 | `kit` | `errs`, `httperr`, `config`, `secrets`, `ratelimit`, `ratelimithttp`, `retry`, `reqid` | нет; страж запрещает любой не-stdlib импорт |
-| `postgres` | `postgres`, `postgres/pgtest` | pgx/v5; `pgtest` — testcontainers и goose, только для тестов |
+| `postgres` | `postgres`, `postgres/pgtest`, `postgres/pglock` | pgx/v5; `pgtest` — testcontainers, только для тестов. Зависимости на goose нет и не было: маркеры `-- +goose Up` — комментарии SQL, и `pgtest` разбирает их сам (уточнено 2026-09-16) |
 | `otelboot` | `otelboot`, `errtrack` | otel sdk + prometheus; sentry-go — только в `errtrack` |
 | `scheduler` | `scheduler`, `schedulerotel`, `schedulertest` | otel/metric — только в `schedulerotel` |
 | доменные | `outbox`, `payment`, `auth`, `authz`, `entitlement`, `objectstore`, `audit` | ядро — stdlib (+`uuid`), адаптеры подпакетами |
