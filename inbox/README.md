@@ -9,9 +9,8 @@
 инварианты — [doc.go](doc.go), пример подключения, который проверяет
 компилятор, — [example_test.go](example_test.go).
 
-**Статус.** Ядро, двойник с контрактными наборами, HTTP-ручка и хранилище
-Postgres (`inboxpg`). Метрики (`inboxotel`) — следующий шаг модуля; до него
-наблюдатель — `inbox.LogObserver`.
+**Статус.** Все три шага ADR-0012: ядро, двойник с контрактными наборами и
+HTTP-ручка; хранилище Postgres (`inboxpg`); метрики (`inboxotel`). Не выпущен.
 
 ## Когда брать
 
@@ -129,6 +128,10 @@ func (h acmeHandler) Handle(ctx context.Context, tx pgx.Tx, ev inbox.Event) erro
 **4. Сервис, ручка и уборка:**
 
 ```go
+observer, err := inboxotel.NewObserver(meterProvider.Meter("rebar.inbox")) // без метрик — inbox.LogObserver(logger)
+if err != nil {
+	return err
+}
 svc := inbox.NewService(store, observer, inbox.Config{
 	Sources: map[inbox.SourceName]inbox.SourceConfig{
 		"acme": {
@@ -200,13 +203,23 @@ job := scheduler.Job{Name: "inbox_purge", Interval: time.Hour, Run: svc.Purge}
 - `inboxtest.HMACVerifier`, `SignHMAC`, `EventBody` — тестовая схема подписи
   для ручки без провайдера. Не боевая;
 - `inboxtest.RunStoreSuite` — контрактный набор хранилища: его проходят двойник
-  и `inboxpg`.
+  и `inboxpg`;
+- `inboxtest.Observer` — наблюдатель в памяти: `Watched` — источники, которые
+  завёл `NewService`, `Deliveries` — доставки с исходом и временем.
 
 ## Наблюдаемость
 
-`Observer` обязателен: `inbox.LogObserver` для проекта без метрик, счётчик и
-гистограмма — `inboxotel`, следующий шаг модуля. Метрики и алерты — ADR-0012,
-решение 16. Ни тело, ни заголовки, ни ключ события в лог и метки не попадают.
+`Observer` обязателен: `inboxotel.NewObserver(meter)` — счётчик
+`inbox_received{source,outcome}` и гистограмма `inbox_receive_duration{source}`
+в секундах, `inbox.LogObserver(logger)` — для проекта без метрик. Таблица,
+границы корзин и алерты решения 16 с PromQL — [inboxotel/doc.go](inboxotel/doc.go).
+
+Ряды счётчика по всем парам источника и исхода заводит нулём `NewService` — через
+`Observer.Watch`, тем же набором источников, что сверен с хранилищем: у алерта
+`conflict` порог 1, а ряд, родившийся сразу единицей, `increase()` не видит.
+Наблюдатель, который проект пишет сам, реализует и `Watch`. Уборку видно по
+рядам `cron_*{job="inbox_purge"}` планировщика. Ни тело, ни заголовки, ни ключ
+события в лог и метки не попадают.
 
 ## Версии
 

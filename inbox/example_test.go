@@ -22,8 +22,9 @@ import (
 //
 // В проде хранилище — адаптер Postgres, а обработчик получает транзакцию
 // приёма и кладёт в неё сообщение outbox. Верификатор — свой для отправителя и
-// проверенный inboxtest.RunVerifierSuite. Отличие теста от прода — конструкторы
-// хранилища и верификатора.
+// проверенный inboxtest.RunVerifierSuite, наблюдатель — inboxotel.NewObserver:
+// ряды метрик заведёт NewService. Отличие теста от прода — конструкторы
+// хранилища, верификатора и наблюдателя.
 func Example() {
 	clock := inboxtest.NewClock(time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC))
 	whsec := []byte("whsec-from-the-sender-dashboard")
