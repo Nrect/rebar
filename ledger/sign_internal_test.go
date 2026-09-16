@@ -88,9 +88,14 @@ const wantGoldenHash = "cdd42c03cdcad09c2273b2c18e31d46b52e85c24947a5d050cb26355
 // Решение 4, условие выпуска 4: граница между полями не сдвигается. Без
 // префикса длины "ab"+"cd" и "abcd"+"" давали бы одни байты, и подпись одной
 // записи годилась бы другой: причину пишет оператор, ключ присылает клиент.
+//
+// ПОСТОЯННЫЙ РАЗДЕЛИТЕЛЬ — НЕ ПРЕФИКС ДЛИНЫ, и проба это показала: восемь
+// нулевых байт вместо длины держат строки без NUL, но склеивают поля, в
+// которых эти байты есть (сырые байты id). Отсюда пара с разделителем внутри.
 func TestCanonical_FieldBoundariesDoNotCollide(t *testing.T) {
 	t.Parallel()
 
+	sep := string(make([]byte, 8))
 	fields := map[string]func(e *Entry, v string){
 		"Book":           func(e *Entry, v string) { e.Book = v },
 		"Kind":           func(e *Entry, v string) { e.Kind = v },
@@ -106,16 +111,21 @@ func TestCanonical_FieldBoundariesDoNotCollide(t *testing.T) {
 			}
 			base := signedEntry()
 			base.ReversesID = nil
-			split, joined, shifted := base, base, base
+			split, joined, shifted, sepLeft, sepRight := base, base, base, base, base
 			setFirst(&split, "ab")
 			setSecond(&split, "cd")
 			setFirst(&joined, "abcd")
 			setSecond(&joined, "")
 			setFirst(&shifted, "a")
 			setSecond(&shifted, "bcd")
+			setFirst(&sepLeft, "ab"+sep+"c")
+			setSecond(&sepLeft, "d")
+			setFirst(&sepRight, "ab")
+			setSecond(&sepRight, "c"+sep+"d")
 
 			assert.NotEqual(t, canonical(split), canonical(joined), "%s+%s: \"ab\"+\"cd\" против \"abcd\"+\"\"", first, second)
 			assert.NotEqual(t, canonical(split), canonical(shifted), "%s+%s: \"ab\"+\"cd\" против \"a\"+\"bcd\"", first, second)
+			assert.NotEqual(t, canonical(sepLeft), canonical(sepRight), "%s+%s: разделитель внутри поля", first, second)
 			assert.NotEqual(t, sign(goldenKey(), split), sign(goldenKey(), joined), "%s+%s: подписи", first, second)
 		}
 	}
