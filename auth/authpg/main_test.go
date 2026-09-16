@@ -47,12 +47,13 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// newStore — схема на тест плюс пул с search_path в неё; Up применяется из
-// schema.sql, чтобы тестировался артефакт, а не его копия в коде.
+// newStore — схема на тест плюс пул с search_path в неё. Схема накатывается
+// каталогом миграций, чтобы тестировался артефакт, который уедет раннеру
+// потребителя, а не его копия в коде.
 func newStore(t *testing.T) (*authpg.Store, *pgxpool.Pool) {
 	t.Helper()
 	pool := newSchemaPool(t)
-	pgtest.Apply(t, pool, pgtest.GooseUp(t, "schema.sql"))
+	applyUp(t, pool)
 	return authpg.New(pool), pool
 }
 
