@@ -102,7 +102,7 @@ func (s *stand) upload(t *testing.T, filename string, body []byte) (status int, 
 // scrape — тело /metrics.
 func (s *stand) scrape(t *testing.T) string {
 	t.Helper()
-	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, s.srv.URL+"/metrics", http.NoBody)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, s.probes.URL+"/metrics", http.NoBody)
 	require.NoError(t, err)
 	resp, err := s.client.Do(req)
 	require.NoError(t, err)

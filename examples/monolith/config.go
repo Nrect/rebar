@@ -35,13 +35,31 @@ var AllTransportModes = []TransportMode{TransportSMTP, TransportUnconfigured}
 // Config — всё, что приложение читает из окружения. Нулевое значение
 // непригодно: New паникует, а Load собирает ошибки и отдаёт их разом — пять
 // перезапусков подряд ради пяти забытых переменных это пять инцидентов.
+//
+// УМОЛЧАНИЯ БЕЗОПАСНЫ ДЛЯ ПРОДА: послабления стенда (http, Mailpit без TLS и
+// пароля) ставит stand.env явно, а забытая переменная предохранитель не
+// снимает (docs/CONSUMER.md, §2).
 type Config struct {
-	Addr    string
-	BaseURL string
+	// Environment — deployment.environment.name метрик и окружение трекера.
+	// Умолчания нет: «правильного» окружения не существует.
+	Environment string
+	// LogLevel — debug|info|warn|error; уровень логгера ставит main.
+	LogLevel string
+
+	Addr string
+	// InternalAddr — служебный порт: /metrics, /healthz, /readyz. Умолчание
+	// на 127.0.0.1: наружу его открывают явно.
+	InternalAddr string
+	BaseURL      string
 	// DSN — секрет: в лог, в текст ошибки и в ответ не попадает никогда.
 	// Пул обязан быть сессионным: PgBouncer в режиме transaction молча
 	// выключает pglock у payments_reconcile (ADR-0008).
 	DSN config.Secret
+
+	// TracesEndpoint — приёмник OTLP/HTTP; пусто — трейсинг выключен.
+	TracesEndpoint string
+	// SentryDSN — трекер ошибок; пусто — выключен.
+	SentryDSN config.Secret
 
 	Realm      auth.Realm
 	Secret     token.Secret
@@ -54,8 +72,9 @@ type Config struct {
 
 	// Transport — какой транспорт собирать; см. TransportMode.
 	Transport TransportMode
-	SMTP      smtp.Config
-	MailFrom  string
+	// SMTP читается только при TransportSMTP.
+	SMTP     smtp.Config
+	MailFrom string
 	// MailDomain — правая часть Message-ID.
 	MailDomain string
 
@@ -80,23 +99,30 @@ type Config struct {
 func Load(l *config.Loader) (Config, error) {
 	secret := l.Secret("AUTH_SECRET", token.MinSecretLen)
 	cfg := Config{
+		Environment:    l.Required("ENVIRONMENT"),
+		LogLevel:       l.Enum("LOG_LEVEL", "info", "debug", "info", "warn", "error"),
 		Addr:           l.Optional("ADDR", ":8080"),
-		BaseURL:        l.Optional("BASE_URL", "http://localhost:8080"),
+		InternalAddr:   l.Optional("INTERNAL_ADDR", "127.0.0.1:9090"),
+		BaseURL:        l.URL("BASE_URL", "https", "http"),
 		DSN:            l.Secret("DATABASE_URL", 1),
+		TracesEndpoint: l.Optional("OTEL_TRACES_ENDPOINT", ""),
+		SentryDSN:      l.OptionalSecret("SENTRY_DSN", 1),
 		Realm:          auth.Realm(l.Optional("AUTH_REALM", "shop")),
 		CookieName:     l.Optional("SESSION_COOKIE", "shop_session"),
-		CookieSecure:   l.Bool("SESSION_COOKIE_SECURE", false),
+		CookieSecure:   l.Bool("SESSION_COOKIE_SECURE", true),
 		Version:        l.Optional("VERSION", "dev"),
 		Commit:         l.Optional("COMMIT", "unknown"),
-		MailFrom:       l.Optional("MAIL_FROM", "shop@example.test"),
-		MailDomain:     l.Optional("MAIL_DOMAIN", "example.test"),
+		MailFrom:       l.Required("MAIL_FROM"),
+		MailDomain:     l.Required("MAIL_DOMAIN"),
 		FilesDir:       l.Optional("FILES_DIR", "./var/files"),
 		EntitlementTTL: l.Duration("ENTITLEMENT_TTL", time.Minute),
 		Tick:           l.Duration("TICK", time.Second),
 		GaugesTick:     l.Duration("GAUGES_TICK", time.Minute),
 		Transport: TransportMode(l.Enum("SMTP_TRANSPORT", string(TransportSMTP),
 			modes(AllTransportModes)...)),
-		SMTP: loadSMTP(l),
+	}
+	if cfg.Transport == TransportSMTP {
+		cfg.SMTP = loadSMTP(l)
 	}
 	if err := l.Err(); err != nil {
 		return Config{}, err
@@ -112,23 +138,30 @@ func Load(l *config.Loader) (Config, error) {
 	return cfg, nil
 }
 
-// loadSMTP — Mailpit по умолчанию: без TLS и без пароля, поэтому и
-// AllowPlaintext. Один флаг на оба послабления, и правда он только на стенде.
+// loadSMTP — умолчания строгие: TLS обязателен, вход по паролю. Mailpit без
+// TLS и пароля — это SMTP_TLS=none, SMTP_AUTH=none и SMTP_ALLOW_PLAINTEXT=true,
+// выставленные стендом явно.
 func loadSMTP(l *config.Loader) smtp.Config {
-	return smtp.Config{
-		Host:     l.Optional("SMTP_HOST", "localhost"),
-		Port:     l.Port("SMTP_PORT", 1025),
+	c := smtp.Config{
+		Host:     l.Required("SMTP_HOST"),
+		Port:     l.Port("SMTP_PORT", 587),
 		Username: l.Optional("SMTP_USER", ""),
 		// OptionalSecret: пароль необязателен (SMTP_AUTH=none его не требует),
 		// но заданный обязан быть секретом — типом, который не печатается ни в
 		// логе, ни в %v, ни в JSON. Reveal — на самой границе, где значение
 		// уезжает в конфиг транспорта.
 		Password:       l.OptionalSecret("SMTP_PASSWORD", minSecretLen).Reveal(),
-		TLS:            smtp.TLSMode(l.Enum("SMTP_TLS", string(smtp.TLSNone), modes(smtp.AllTLSModes)...)),
-		Auth:           smtp.AuthMode(l.Enum("SMTP_AUTH", string(smtp.AuthNone), modes(smtp.AllAuthModes)...)),
-		AllowPlaintext: l.Bool("SMTP_ALLOW_PLAINTEXT", true),
+		TLS:            smtp.TLSMode(l.Enum("SMTP_TLS", string(smtp.TLSMandatory), modes(smtp.AllTLSModes)...)),
+		Auth:           smtp.AuthMode(l.Enum("SMTP_AUTH", string(smtp.AuthPlain), modes(smtp.AllAuthModes)...)),
+		AllowPlaintext: l.Bool("SMTP_ALLOW_PLAINTEXT", false),
 		Timeout:        l.Duration("SMTP_TIMEOUT", 10*time.Second),
 	}
+	// Перекрёстная проверка — в тот же список: иначе она всплыла бы отдельным
+	// перезапуском, уже из smtp.New.
+	if c.Auth != smtp.AuthNone && (c.Username == "" || c.Password == "") {
+		l.Fail("SMTP_AUTH", "requires SMTP_USER and SMTP_PASSWORD; a relay without login is SMTP_AUTH=none")
+	}
+	return c
 }
 
 // minSecretLen — потолок снизу для заданного секрета. Ноль здесь означал бы

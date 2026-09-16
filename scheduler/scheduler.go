@@ -74,6 +74,9 @@ func (s *Scheduler) SetClock(now func() time.Time) {
 // Start запускает по горутине на задачу и возвращается сразу; горутины живут
 // до отмены ctx или до Stop. Повторный Start — паника: второй набор тикеров
 // на те же задачи никто бы не остановил, а Stop дождался бы обоих.
+//
+// ОТМЕНА ctx РЕЖЕТ ПРОГОН ПОСРЕДИ РАБОТЫ (у mail — письмо посреди отправки):
+// плавная остановка — Stop, а ctx — не отменяемый сигналом, context.WithoutCancel.
 func (s *Scheduler) Start(ctx context.Context) {
 	s.mu.Lock()
 	if s.started {

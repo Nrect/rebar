@@ -20,7 +20,7 @@ func TestTransportModes_AllAreBuildable(t *testing.T) {
 	require.NotEmpty(t, monolith.AllTransportModes)
 	for _, mode := range monolith.AllTransportModes {
 		t.Run(string(mode), func(t *testing.T) {
-			app, _ := buildApp(t, map[string]string{"SMTP_TRANSPORT": string(mode)})
+			app := newStandWith(t, map[string]string{"SMTP_TRANSPORT": string(mode)}).app
 			require.NotNil(t, app)
 		})
 	}
@@ -33,10 +33,10 @@ func TestTransportModes_AllAreBuildable(t *testing.T) {
 // Deliver узнаёт Unconfigured именно по имени, а не по типу
 // (mail/unconfigured.go). Проверять надо то, что видит Deliver.
 func TestTransport_UnconfiguredIsNamedChoice(t *testing.T) {
-	app, _ := buildApp(t, map[string]string{"SMTP_TRANSPORT": "unconfigured"})
+	app := newStandWith(t, map[string]string{"SMTP_TRANSPORT": "unconfigured"}).app
 	require.Equal(t, mail.UnconfiguredName, app.Transport())
 
-	smtpApp, _ := buildApp(t, nil)
+	smtpApp := newStand(t).app
 	require.NotEqual(t, mail.UnconfiguredName, smtpApp.Transport(),
 		"умолчание — smtp: «писем не шлём» не достаётся забывшему про переменную")
 }
@@ -48,7 +48,7 @@ func TestTransport_UnconfiguredIsNamedChoice(t *testing.T) {
 // руками. Тихий выбор одного из режимов на их месте означал бы, что режим
 // назначает опечатка.
 func TestTransport_UnknownModeIsRefused(t *testing.T) {
-	_, _, err := tryBuildApp(t, map[string]string{"SMTP_TRANSPORT": "carrier-pigeon"})
+	_, err := tryStand(t, map[string]string{"SMTP_TRANSPORT": "carrier-pigeon"})
 	require.Error(t, err, "неизвестный режим не проходит через конфиг")
 
 	require.Panics(t, func() { buildAppFromConfig(t, "carrier-pigeon") },

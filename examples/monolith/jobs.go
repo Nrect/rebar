@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -50,7 +51,7 @@ const (
 // (CONVENTIONS §6). Не scrape и не чужая задача: у неё свои ряды cron_*, и её
 // смерть — отдельная видимая поломка (алерт — в doc.go).
 func (a *App) startJobs() error {
-	observer, err := schedulerotel.NewObserver(a.obs.Meter.Meter("rebar.scheduler"))
+	metered, err := schedulerotel.NewObserver(a.obs.Meter.Meter("rebar.scheduler"))
 	if err != nil {
 		return err
 	}
@@ -61,7 +62,7 @@ func (a *App) startJobs() error {
 		return err
 	}
 	lock := pglock.New(a.db.Pool, lockObserver)
-	jobs, err := scheduler.New(observer,
+	jobs, err := scheduler.New(observers{metered, scheduler.LogObserver(a.log)},
 		scheduler.Job{Name: jobMailDeliver, Interval: a.cfg.Tick, Run: a.letters.Deliver},
 		scheduler.Job{Name: jobOutboxDrain, Interval: a.cfg.Tick, Run: a.worker.Drain},
 		scheduler.Job{Name: jobPaymentsReconcile, Interval: a.cfg.Tick, Run: lock.Wrap(jobPaymentsReconcile, a.reconcile.Run)},
@@ -74,6 +75,25 @@ func (a *App) startJobs() error {
 	}
 	a.jobs = jobs
 	return nil
+}
+
+// observers — метрика для алерта и запись с текстом ошибки для разбора:
+// schedulerotel пишет только счётчики, и прогон, упавший на недоступной базе,
+// без LogObserver виден числом без причины.
+type observers []scheduler.Observer
+
+// Started извещает каждого наблюдателя.
+func (o observers) Started(jobs []string, at time.Time) {
+	for _, x := range o {
+		x.Started(jobs, at)
+	}
+}
+
+// Finished извещает каждого наблюдателя.
+func (o observers) Finished(ctx context.Context, run scheduler.Run) {
+	for _, x := range o {
+		x.Finished(ctx, run)
+	}
 }
 
 // onOrderPaid — письмо об оплате.

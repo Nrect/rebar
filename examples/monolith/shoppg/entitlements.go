@@ -25,10 +25,10 @@ const (
 WHERE subject_id = $1 AND (expires_at IS NULL OR expires_at > $2)
 ORDER BY item_id`
 
-	// ПОВТОРНАЯ ВЫДАЧА ПРОДЛЕВАЕТ СРОК, а не удваивает строку: повтор покупки
-	// — штатное событие. Вместе со сроком обновляется и granted_at.
-	// ON CONFLICT именно по имени ключа: «любое 23505 — продление» тихо съело
-	// бы чужой конфликт.
+	// ПОВТОРНАЯ ВЫДАЧА НЕ УДВАИВАЕТ СТРОКУ: повтор покупки — штатное событие.
+	// Срок переписывается последней выдачей — расхождение с портом, см.
+	// Entitlements. ON CONFLICT именно по имени ключа: «любое 23505 — повтор»
+	// тихо съело бы чужой конфликт.
 	upsertGrantSQL = `INSERT INTO entitlement_grants
 (subject_id, item_id, expires_at, granted_at)
 VALUES ($1, $2, $3, $4)
@@ -38,10 +38,13 @@ SET expires_at = EXCLUDED.expires_at, granted_at = EXCLUDED.granted_at`
 	deleteGrantSQL = `DELETE FROM entitlement_grants WHERE subject_id = $1 AND item_id = $2`
 )
 
-// Entitlements — entitlement.Store поверх эталонной схемы.
+// Entitlements — entitlement.Store поверх копии схемы выдач.
 //
-// Адаптера у пакета нет и не будет в v0.1 (entitlement/doc.go, «Чего в пакете
-// нет»): выдачи живут у потребителя, и у каждого они устроены по-своему.
+// НЕ ОБРАЗЕЦ: готовый адаптер — entitlement/entitlementpg, а этот держит
+// контракт порта не весь — повтор выдачи срок переписывает, а не оставляет
+// поздний, и предмет вне 1..MaxItemIDLen байт не отвергает. Переход ждёт
+// миграции: в копии 00007_entitlement.sql нет CHECK предмета, и сверка
+// entitlementpg на ней красная.
 //
 // ЧАСОВ ЗДЕСЬ НЕТ. Момент приходит параметром Store.Grant, как и у Open, —
 // адаптер, у которого есть собственное время, пишет его молча.

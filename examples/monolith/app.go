@@ -2,8 +2,12 @@ package monolith
 
 import (
 	"context"
+	"errors"
 	"io/fs"
+	"log/slog"
 	"net/http"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/nrect/rebar/audit"
@@ -22,6 +26,7 @@ import (
 	"github.com/nrect/rebar/objectstore"
 	objfs "github.com/nrect/rebar/objectstore/fs"
 	"github.com/nrect/rebar/otelboot"
+	"github.com/nrect/rebar/otelboot/errtrack"
 	"github.com/nrect/rebar/outbox"
 	"github.com/nrect/rebar/outbox/outboxpg"
 	"github.com/nrect/rebar/payment"
@@ -42,9 +47,11 @@ import (
 // Снизу вверх здесь: postgres → otelboot → mail → outbox → auth → authz →
 // entitlement → payment → objectstore → scheduler.
 type App struct {
-	cfg Config
-	obs otelboot.Providers
-	db  *shoppg.DB
+	cfg   Config
+	log   *slog.Logger
+	obs   otelboot.Providers
+	flush func(context.Context) error
+	db    *shoppg.DB
 
 	sessions *session.Service
 	cookies  authhttp.CookieConfig
@@ -69,15 +76,29 @@ type App struct {
 
 	gauges       gauges
 	jobs         *scheduler.Scheduler
+	schemaChecks []func(context.Context) error
 	respond      *httperr.Responder
 	respondClass *httperr.Responder
 	handler      http.Handler
+	probes       http.Handler
+
+	// Процесс: порты и готовность заводит Start, гасит Stop.
+	ready    atomic.Bool
+	public   *http.Server
+	internal *http.Server
+	served   chan error
+	stopOnce sync.Once
+	stopErr  error
 }
 
 // New собирает приложение и накатывает миграции. Любая негодная часть
 // конфигурации роняет сборку здесь, а не на первом запросе (CONVENTIONS §2).
-func New(ctx context.Context, cfg Config, migrations fs.FS) (*App, error) {
-	a := &App{cfg: cfg}
+// log — логгер процесса: блоки сами не логируют, запись ошибок им передают.
+func New(ctx context.Context, cfg Config, log *slog.Logger, migrations fs.FS) (*App, error) {
+	if log == nil {
+		panic("monolith.New: nil log")
+	}
+	a := &App{cfg: cfg, log: log}
 	if err := a.startInfra(ctx, migrations); err != nil {
 		return nil, err
 	}
@@ -85,10 +106,12 @@ func New(ctx context.Context, cfg Config, migrations fs.FS) (*App, error) {
 		return nil, err
 	}
 	a.startIdentity()
-	if err := a.startMoney(ctx); err != nil {
+	if err := a.startMoney(); err != nil {
 		return nil, err
 	}
-	if err := a.checkSchemas(ctx); err != nil {
+	// Сверка — до задач и HTTP, и тем же списком, что у /readyz.
+	a.schemaChecks = a.blockSchemas()
+	if err := checkAll(ctx, a.schemaChecks); err != nil {
 		return nil, err
 	}
 	if err := a.startFiles(); err != nil {
@@ -100,12 +123,24 @@ func New(ctx context.Context, cfg Config, migrations fs.FS) (*App, error) {
 	if err := a.startJobs(); err != nil {
 		return nil, err
 	}
-	a.handler = a.routes()
+	a.routes()
 	return a, nil
 }
 
-// startInfra — postgres и otelboot: то, на чём стоит всё остальное.
+// startInfra — наблюдаемость, трекер и postgres: то, на чём стоит всё
+// остальное. Наблюдаемость раньше пула: декораторы берут meter при сборке.
 func (a *App) startInfra(ctx context.Context, migrations fs.FS) error {
+	obs, err := otelboot.Start(ctx, otelboot.Config{
+		ServiceName: "monolith", Version: a.cfg.Version, Commit: a.cfg.Commit,
+		Environment: a.cfg.Environment, TracesEndpoint: a.cfg.TracesEndpoint, RuntimeMetrics: true,
+	})
+	if err != nil {
+		return err
+	}
+	a.obs = obs
+	if a.flush, err = errtrack.Init(a.cfg.SentryDSN.Reveal(), a.cfg.Environment, a.cfg.Version); err != nil {
+		return err
+	}
 	db, err := shoppg.Open(ctx, a.cfg.DSN.Reveal(), postgres.Config{
 		LockTimeout: 3 * time.Second, StatementTimeout: 10 * time.Second,
 		MaxAttempts: 3, RetryBase: 20 * time.Millisecond,
@@ -117,29 +152,26 @@ func (a *App) startInfra(ctx context.Context, migrations fs.FS) error {
 	if migErr := shoppg.Migrate(ctx, db.Pool, migrations); migErr != nil {
 		return migErr
 	}
-	obs, err := otelboot.Start(ctx, otelboot.Config{
-		ServiceName: "monolith", Version: a.cfg.Version, Commit: a.cfg.Commit,
-		Environment: "example", RuntimeMetrics: true,
-	})
-	if err != nil {
-		return err
-	}
-	a.obs = obs
 	a.orders = shoppg.NewOrders(db)
 	a.grants = shoppg.NewEntitlements(db)
 	a.uploads = shoppg.NewUploads(db)
 	return nil
 }
 
-// Close гасит наблюдаемость и пул. Идемпотентен.
+// Close гасит собранное, но не запущенное приложение: наблюдаемость, пул и
+// трекер. Идемпотентен. Запущенное гасит Stop.
 func (a *App) Close(ctx context.Context) error {
 	err := a.obs.Shutdown(ctx)
 	a.db.Close()
-	return err
+	return errors.Join(err, a.flush(ctx))
 }
 
-// Handler — HTTP-обработчик приложения.
+// Handler — публичный HTTP-обработчик приложения.
 func (a *App) Handler() http.Handler { return a.handler }
+
+// Probes — служебные ручки: /metrics, /healthz, /readyz. Место им — на
+// INTERNAL_ADDR, а не на публичном порту (probes.go).
+func (a *App) Probes() http.Handler { return a.probes }
 
 // CookieNames — имена сессионной и CSRF-куки. Нужны тому, кто ходит в
 // приложение программно: имена зависят от того, есть ли TLS.
@@ -152,24 +184,42 @@ func (a *App) CookieNames() (sessionCookie, csrfCookie string) {
 // Unconfigured именно по имени (mail/unconfigured.go).
 func (a *App) Transport() mail.TransportName { return a.letters.Transport() }
 
-// Start снимает гейджи СРАЗУ и запускает фоновые задачи.
+// readHeaderTimeout — срок заголовков запроса: медленный клиент не держит
+// соединение бесконечно.
+const readHeaderTimeout = 5 * time.Second
+
+// Start занимает порты, снимает первый снимок гейджей, запускает задачи и
+// объявляет готовность — в этом порядке (docs/CONSUMER.md, §4). Занятый порт —
+// ошибка Start, а не горутины после того, как /readyz ответил 200.
 //
-// Без прогона при старте первую минуту гейджи отдавали бы нули, а
-// payment_drift кормит денежный алерт с порогом 1: минута нулей — минута,
-// когда расхождение книг невидимо, и приходится она ровно на момент после
-// деплоя, когда что-то вероятнее всего и пошло не так.
-//
-// RunNow — ДО Start планировщика, как велит scheduler/doc.go: сам он прогона
-// при старте не делает. Наблюдается прогон как обычный, а Started прежний
-// «последний успех» не перезаписывает, так что алерт «снимки не обновляются»
-// этот прогон видит.
-//
-// Ошибка — только о первом снимке: планировщик запущен в любом случае, и
-// задача повторит снимок на своём такте.
+// ctx — сигнальный: его отмена начинает остановку в Wait, а в задачи не
+// доходит. Остановленный Stop процесс заново не стартует.
 func (a *App) Start(ctx context.Context) error {
-	_, err := a.jobs.RunNow(ctx, jobGaugesSnapshot)
-	a.jobs.Start(ctx)
-	return err
+	public := &http.Server{Addr: a.cfg.Addr, Handler: a.handler, ReadHeaderTimeout: readHeaderTimeout}
+	internal := &http.Server{Addr: a.cfg.InternalAddr, Handler: a.probes, ReadHeaderTimeout: readHeaderTimeout}
+	lns, err := listen(ctx, public, internal)
+	if err != nil {
+		return err
+	}
+	// Адрес — занятого порта: при :0 номер выбирает система.
+	public.Addr, internal.Addr = lns[0].Addr().String(), lns[1].Addr().String()
+	a.public, a.internal = public, internal
+
+	// ОТМЕНА КОНТЕКСТА РЕЖЕТ ПРОГОН ПОСРЕДИ РАБОТЫ: у mail это письмо посреди
+	// отправки. Задачи гасит Stop между прогонами, а не сигнал.
+	jobsCtx := context.WithoutCancel(ctx)
+	// Первый снимок — до расписания: без него первую минуту после деплоя
+	// payment_drift отдаёт ноль, а денежный алерт слеп. Сбой снимка уже записал
+	// наблюдатель, и задача повторит его на своём такте.
+	_, _ = a.jobs.RunNow(jobsCtx, jobGaugesSnapshot)
+	a.jobs.Start(jobsCtx)
+
+	a.served = make(chan error, len(lns))
+	go func() { a.served <- public.Serve(lns[0]) }()
+	go func() { a.served <- internal.Serve(lns[1]) }()
+	a.ready.Store(true)
+	a.log.InfoContext(ctx, "started", slog.String("op", "start"))
+	return nil
 }
 
 // Jobs — планировщик фоновых задач.
@@ -220,12 +270,18 @@ func mailConfig(cfg Config) mail.Config {
 		MaxAttempts:     5,
 		Backoff:         mail.Backoff{Base: time.Second, Max: time.Minute},
 		Lease:           30 * time.Second,
-		SendTimeout:     10 * time.Second,
-		BatchSize:       20,
-		MinSendGap:      time.Millisecond,
-		Retention:       7 * 24 * time.Hour,
-		MaxBodyBytes:    64 * 1024,
-		Uncertain:       mail.UncertainRetry,
+		// SendTimeout и BatchSize подобраны под jobsGrace: обычная пачка и два
+		// SendTimeout на запись исхода и возврат остатка укладываются в бюджет
+		// остановки (TestStopBudgets_FitKillDeadline).
+		SendTimeout:  5 * time.Second,
+		BatchSize:    10,
+		MinSendGap:   time.Millisecond,
+		Retention:    7 * 24 * time.Hour,
+		MaxBodyBytes: 64 * 1024,
+		// Выбран с учётом остановки: процесс, убитый после jobsGrace, оставит под
+		// арендой взятую пачку, и после Lease она уйдёт сама; дубль — только у
+		// письма, которое отправлялось в момент убийства (docs/CONSUMER.md, §5).
+		Uncertain: mail.UncertainRetry,
 	}
 }
 
@@ -297,15 +353,16 @@ func sessionConfig(cfg Config) session.Config {
 	return c
 }
 
-// routes — единственная точка сборки обработчика.
-func (a *App) routes() http.Handler {
-	a.respond = newResponder()
-	a.respondClass = newClassResponder()
+// routes — единственная точка сборки обработчиков: публичного и служебного.
+func (a *App) routes() {
+	a.respond = newResponder(a.log)
+	a.respondClass = newClassResponder(a.log)
 	mux := http.NewServeMux()
 	a.mount(mux)
 	// reqid снаружи всего: идентификатор запроса нужен и ответчику ошибок, и
 	// журналу.
-	return reqid.Middleware(mux)
+	a.handler = reqid.Middleware(mux)
+	a.probes = a.probeMux()
 }
 
 // startFiles — objectstore: приём файлов и уборка сирот.

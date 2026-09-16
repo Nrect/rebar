@@ -1,16 +1,21 @@
 package monolith_test
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"regexp"
 	"strconv"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -22,19 +27,25 @@ import (
 	"github.com/nrect/rebar/postgres/pgtest"
 
 	"github.com/nrect/rebar/examples/monolith"
+	"github.com/nrect/rebar/examples/monolith/logotel"
 )
 
 // testSecret — секрет реалма прогона. Не из окружения: тест обязан быть
 // воспроизводимым, а секрет здесь ничего не защищает.
 const testSecret = "монолит-секрет-достаточной-длины-для-hmac"
 
-// stand — приложение прогона со своим сервером.
+// stand — приложение прогона со своими серверами.
 type stand struct {
-	app    *monolith.App
+	app *monolith.App
+	// srv — публичные ручки, probes — служебные; оба без портов процесса.
 	srv    *httptest.Server
+	probes *httptest.Server
 	client *http.Client
 	dsn    string
 	db     *pgxpool.Pool
+	// log — логгер процесса поверх logs: тест читает то, что записали блоки.
+	log  *slog.Logger
+	logs *logBuffer
 	// setCookies — куки ПОСЛЕДНЕГО ответа целиком. Из jar их взять нельзя:
 	// он хранит имя и значение, а проверять надо HttpOnly.
 	setCookies []*http.Cookie
@@ -54,8 +65,23 @@ func newStand(t *testing.T) *stand {
 // подменой внутренностей.
 func newStandWith(t *testing.T, overrides map[string]string) *stand {
 	t.Helper()
-	app, dsn := buildApp(t, overrides)
-	return serveStand(t, app, dsn)
+	s, err := tryStand(t, overrides)
+	require.NoError(t, err, "сборка приложения")
+	return s
+}
+
+// tryStand — то же, но ошибку сборки отдаёт вызывающему: часть тестов
+// проверяет ИМЕННО отказ на старте.
+func tryStand(t *testing.T, overrides map[string]string) (*stand, error) {
+	t.Helper()
+	pgtest.Short(t)
+
+	dsn := pgtest.SchemaDSN(t, db)
+	cfg, err := monolith.Load(loaderOf(standEnv(t, dsn), overrides))
+	if err != nil {
+		return nil, err
+	}
+	return tryServe(t, cfg, dsn)
 }
 
 // newReplica — вторая реплика приложения на базе стенда s: свои пул,
@@ -63,21 +89,33 @@ func newStandWith(t *testing.T, overrides map[string]string) *stand {
 // инстанса одного сервиса.
 func newReplica(t *testing.T, s *stand) *stand {
 	t.Helper()
-	app, err := monolith.New(t.Context(), loadConfig(t, s.dsn, nil), monolith.Migrations())
+	r, err := tryServe(t, loadConfig(t, s.dsn, nil), s.dsn)
 	require.NoError(t, err, "сборка реплики")
-	t.Cleanup(func() { _ = app.Close(context.WithoutCancel(t.Context())) })
-	return serveStand(t, app, s.dsn)
+	return r
 }
 
-// serveStand — сервер и клиент поверх собранного приложения.
-func serveStand(t *testing.T, app *monolith.App, dsn string) *stand {
+// tryServe собирает приложение по конфигу и ставит перед ним серверы.
+func tryServe(t *testing.T, cfg monolith.Config, dsn string) (*stand, error) {
 	t.Helper()
+	logs := &logBuffer{}
+	log := logotel.New(logs, slog.LevelDebug)
+	app, err := monolith.New(t.Context(), cfg, log, monolith.Migrations())
+	if err != nil {
+		return nil, err
+	}
+	t.Cleanup(func() { _ = app.Close(context.WithoutCancel(t.Context())) })
+
 	srv := httptest.NewServer(app.Handler())
 	t.Cleanup(srv.Close)
+	probes := httptest.NewServer(app.Probes())
+	t.Cleanup(probes.Close)
 
 	jar, err := cookiejar.New(nil)
 	require.NoError(t, err)
-	return &stand{app: app, srv: srv, client: &http.Client{Jar: jar}, dsn: dsn}
+	return &stand{
+		app: app, srv: srv, probes: probes, client: &http.Client{Jar: jar},
+		dsn: dsn, log: log, logs: logs,
+	}, nil
 }
 
 // loaderOf — Loader поверх окружения прогона с правками теста.
@@ -99,48 +137,50 @@ func loadConfig(t *testing.T, dsn string, overrides map[string]string) monolith.
 	return cfg
 }
 
-// buildApp собирает приложение и падает на ошибке сборки.
-func buildApp(t *testing.T, overrides map[string]string) (app *monolith.App, dsn string) {
-	t.Helper()
-	app, dsn, err := tryBuildApp(t, overrides)
-	require.NoError(t, err, "сборка приложения")
-	return app, dsn
-}
-
-// tryBuildApp — то же, но ошибку отдаёт вызывающему: часть тестов проверяет
-// ИМЕННО отказ на старте.
-func tryBuildApp(t *testing.T, overrides map[string]string) (app *monolith.App, dsn string, err error) {
-	t.Helper()
-	pgtest.Short(t)
-
-	dsn = pgtest.SchemaDSN(t, db)
-	env := standEnv(t, dsn)
-	cfg, err := monolith.Load(loaderOf(env, overrides))
-	if err != nil {
-		return nil, dsn, err
-	}
-	if app, err = monolith.New(t.Context(), cfg, monolith.Migrations()); err != nil {
-		return nil, dsn, err
-	}
-	t.Cleanup(func() { _ = app.Close(context.WithoutCancel(t.Context())) })
-	return app, dsn, nil
-}
-
-// standEnv — окружение прогона: общая база, общий Mailpit, свой каталог
-// файлов. Такты — час: планировщик либо не стартует, либо не успевает тикнуть,
-// и задачи гоняются руками (RunNow) — иначе результат зависел бы от времени
-// прогона.
+// standEnv — окружение прогона: stand.env, с которым стенд поднимается по
+// README, а поверх — общая база, общий Mailpit и свой каталог файлов. Такты —
+// час: планировщик либо не стартует, либо не успевает тикнуть, и задачи
+// гоняются руками (RunNow) — иначе результат зависел бы от времени прогона.
+// Порты — :0: номер выбирает система, и прогоны порт не делят.
 func standEnv(t *testing.T, dsn string) map[string]string {
 	t.Helper()
-	return map[string]string{
-		"DATABASE_URL": dsn,
-		"AUTH_SECRET":  testSecret,
-		"SMTP_HOST":    box.host,
-		"SMTP_PORT":    strconv.Itoa(box.smtp),
-		"FILES_DIR":    t.TempDir(),
-		"TICK":         "1h",
-		"GAUGES_TICK":  "1h",
+	env := envFile(t, "stand.env")
+	for k, v := range map[string]string{
+		"DATABASE_URL":  dsn,
+		"AUTH_SECRET":   testSecret,
+		"SMTP_HOST":     box.host,
+		"SMTP_PORT":     strconv.Itoa(box.smtp),
+		"FILES_DIR":     t.TempDir(),
+		"TICK":          "1h",
+		"GAUGES_TICK":   "1h",
+		"ADDR":          "127.0.0.1:0",
+		"INTERNAL_ADDR": "127.0.0.1:0",
+	} {
+		env[k] = v
 	}
+	return env
+}
+
+// envFile читает файл окружения: строки KEY=VALUE, пустые и # пропускаются.
+func envFile(t *testing.T, path string) map[string]string {
+	t.Helper()
+	f, err := os.Open(path)
+	require.NoError(t, err)
+	defer func() { _ = f.Close() }()
+
+	env := map[string]string{}
+	lines := bufio.NewScanner(f)
+	for lines.Scan() {
+		line := strings.TrimSpace(lines.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		require.True(t, ok, "%s: строка без «=»: %q", path, line)
+		env[key] = value
+	}
+	require.NoError(t, lines.Err())
+	return env
 }
 
 // buildAppFromConfig собирает приложение с режимом транспорта, выставленным
@@ -155,9 +195,46 @@ func buildAppFromConfig(t *testing.T, mode monolith.TransportMode) {
 
 	cfg := loadConfig(t, pgtest.SchemaDSN(t, db), nil)
 	cfg.Transport = mode
-	app, err := monolith.New(t.Context(), cfg, monolith.Migrations())
+	app, err := monolith.New(t.Context(), cfg, slog.New(slog.DiscardHandler), monolith.Migrations())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = app.Close(context.WithoutCancel(t.Context())) })
+}
+
+// logBuffer — записи логгера прогона. Под замком: пишут горутины сервера и
+// задач, а читает тест.
+type logBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *logBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *logBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// records — записи с сообщением msg. JSON-обработчик пишет запись одним
+// Write, поэтому строка буфера — целая запись.
+func (b *logBuffer) records(t *testing.T, msg string) []map[string]any {
+	t.Helper()
+	var out []map[string]any
+	for line := range strings.SplitSeq(b.String(), "\n") {
+		if line == "" {
+			continue
+		}
+		var rec map[string]any
+		require.NoError(t, json.Unmarshal([]byte(line), &rec), "запись лога не JSON: %s", line)
+		if rec["msg"] == msg {
+			out = append(out, rec)
+		}
+	}
+	return out
 }
 
 // postJSON шлёт JSON и отдаёт статус с разобранным телом.

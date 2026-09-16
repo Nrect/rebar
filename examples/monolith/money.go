@@ -1,7 +1,6 @@
 package monolith
 
 import (
-	"context"
 	"time"
 
 	"github.com/nrect/rebar/outbox/outboxpg"
@@ -26,16 +25,12 @@ const currency = "RUB"
 // право и событие ложатся ТОЙ ЖЕ транзакцией, что и книга платежей, а его
 // ошибка откатывает всё, включая строку дедупа события (payment/ports.go,
 // «Хук потребителя»).
-func (a *App) startMoney(ctx context.Context) error {
+func (a *App) startMoney() error {
 	settler := shoppg.NewSettler(a.db, outboxpg.New(a.db.Pool), grantsOf,
 		a.eventOf(kindOrderPaid), a.eventOf(kindOrderRefunded))
-
+	// Схему сверяет общий список blockSchemas, а не сборка: сверка в двух местах
+	// расходится молча.
 	store := paymentpg.New(a.db.Pool, paymentpg.Options{Settler: settler})
-	// Схему адаптер не применяет, а СВЕРЯЕТ: две правды о схеме — это
-	// молчаливое расхождение кода и базы.
-	if err := store.CheckSchema(ctx); err != nil {
-		return err
-	}
 
 	a.provider = paymenttest.NewMemProvider(providerName)
 	meter := a.obs.Meter.Meter("rebar.payment")

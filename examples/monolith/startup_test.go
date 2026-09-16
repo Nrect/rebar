@@ -24,7 +24,7 @@ import (
 func TestStart_RefusesBadTransportConfig(t *testing.T) {
 	// TLS выключен, а послабление для незашифрованного соединения не выдано:
 	// классическая опечатка стенда, уехавшая в прод.
-	_, _, err := tryBuildApp(t, map[string]string{
+	_, err := tryStand(t, map[string]string{
 		"SMTP_TLS":             string(smtp.TLSNone),
 		"SMTP_ALLOW_PLAINTEXT": "false",
 	})
@@ -56,8 +56,7 @@ func TestStart_SnapshotsGaugesBeforeFirstTick(t *testing.T) {
 	// До старта снимка нет: зависшее уже лежит, а гейдж отдаёт ноль.
 	requireMetric(t, s.scrape(t), "payment_intents_stuck", nil, 0)
 
-	require.NoError(t, s.app.Start(t.Context()))
-	t.Cleanup(s.app.Jobs().Stop)
+	startProcess(t, s)
 
 	requireMetric(t, s.scrape(t), "payment_intents_stuck", nil, 1)
 }

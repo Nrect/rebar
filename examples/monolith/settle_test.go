@@ -77,7 +77,7 @@ func TestSettlerSlugError_KeepsWebhookRetryable(t *testing.T) {
 	provider := paymenttest.NewMemProvider(monolith.ProviderName)
 	pay := payment.NewService(paymentpg.New(s.pool(t), paymentpg.Options{Settler: hook}),
 		provider, paymenttest.NewObserver(), monolith.PaymentConfig())
-	webhook := monolith.WebhookHandler(pay, provider)
+	webhook := monolith.WebhookHandler(pay, provider, s.log)
 	intent := pendingIntent(t, pay)
 
 	status, body := serveJSON(t, webhook, providerBody(intent))
@@ -108,7 +108,7 @@ func TestWebhook_AnswersClassWithoutTranslate(t *testing.T) {
 		provider, paymenttest.NewObserver(), monolith.PaymentConfig())
 	intent := pendingIntent(t, pay)
 
-	status, body := serveJSON(t, monolith.WebhookHandler(pay, provider), providerBody(intent))
+	status, body := serveJSON(t, monolith.WebhookHandler(pay, provider, s.log), providerBody(intent))
 	require.Equal(t, http.StatusServiceUnavailable, status,
 		"провайдеру — класс, а не слаг продукта: %s", raw(body))
 	require.Equal(t, "unavailable", body["slug"])

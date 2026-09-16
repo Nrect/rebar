@@ -8,6 +8,39 @@
 
 ### Changed
 
+- Старт и остановка — по `docs/CONSUMER.md`, §§4–5. `App.Start` занимает порты
+  до «готов», снимает первый снимок гейджей и запускает задачи на контексте,
+  который сигнал не отменяет; `App.Wait` ждёт сигнала или падения сервера;
+  `App.Stop` гасит по шагам со своими бюджетами: `/readyz` → 503, публичный
+  `Shutdown` (10 с), `scheduler.Stop` (15 с), пул — только после чистой
+  остановки, служебный порт, `otelboot` и трекер (3 с). `cmd/monolith` —
+  логгер первой строкой, конфиг, `New`, `Start`, `Wait`. Почта подобрана под
+  бюджет задач: `SendTimeout` 5 с (было 10), `BatchSize` 10 (было 20) — обычная
+  пачка и два `SendTimeout` на запись исхода и возврат остатка укладываются в
+  15 с; держит `TestStopBudgets_FitKillDeadline`.
+- `/metrics`, `/healthz` и новая `/readyz` — на служебном порту `INTERNAL_ADDR`
+  (по умолчанию `127.0.0.1:9090`), с публичного роутера сняты. `/readyz`
+  сверяет схему блоков тем же списком, что и старт (`blockSchemas`), причину
+  пишет Warn; сверка `paymentpg` переехала в этот список из сборки.
+- Логи — JSON из `log/slog` в stdout (`logotel`): записи Error уходят и в
+  трекер (`errtrack`, `SENTRY_DSN`), `request_id`, `trace_id` и `subject_id`
+  дописывает обработчик контекста. Логгер процесса передаётся в
+  `New(ctx, cfg, log, migrations)` и дальше в `httperr`; ключ ошибки — `error`.
+- Наблюдатель планировщика — тройник `schedulerotel` и `scheduler.LogObserver`:
+  упавший прогон виден записью с причиной, а не только счётчиком.
+- **Умолчания окружения безопасны для прода — стенд запускается с
+  `stand.env`.** `SESSION_COOKIE_SECURE=true`, `SMTP_TLS=mandatory`,
+  `SMTP_AUTH=plain` (вход без учётки — отказ в общем списке),
+  `SMTP_ALLOW_PLAINTEXT=false`, `SMTP_PORT=587`; умолчаний нет у `ENVIRONMENT`,
+  `BASE_URL`, `MAIL_FROM`, `MAIL_DOMAIN` и `SMTP_HOST`. Новые переменные:
+  `ENVIRONMENT` (окружение `example` из кода снято), `LOG_LEVEL`,
+  `INTERNAL_ADDR`, `OTEL_TRACES_ENDPOINT`, `SENTRY_DSN`. Тот же `stand.env`
+  поднимает тесты стенда, поэтому пример окружения не отстаёт от `Load`.
+- `shoppg.Entitlements`: снят устаревший комментарий «адаптера у пакета нет» —
+  `entitlementpg` влит. Переход на него ждёт миграции: в копии
+  `00007_entitlement.sql` нет CHECK предмета, и сверка `entitlementpg` на ней
+  красная; расхождения самого `shoppg.Entitlements` с портом названы там же.
+
 - Регистрация проверяет получателя портом `session.Recipients` до записи
   личности (Д4, правка в `auth`): у монолита правило — `mail.NormalizeAddress`,
   то же, по которому собирается письмо. Негодный адрес отвечает 400
@@ -74,6 +107,13 @@
 
 ### Added
 
+- `TestStop_RunningJobWritesOutcome`: сверка платежей по расписанию задержана
+  у провайдера, приходит сигнал — остановка ждёт прогон, и исход ложится в базу.
+  `TestReadyz_SchemaMismatchIs503`: несошедшаяся колонка блока — 503 и Warn, а
+  служебные ручки на публичном порту не отвечают. `TestStart_BusyPortRefuses`,
+  `TestJobs_FailureIsLogged`, `TestLogs_HTTPErrorCarriesIDs`, `TestLoad_*` —
+  безопасные умолчания и список обязательных; `TestStopBudgets_FitKillDeadline`
+  — сумма бюджетов остановки и бюджет задач под пачку `mail`; тесты `logotel`.
 - Стражи таблицы ошибок: `TestTranslate_SentinelsReachHTTP` — итоговые статус
   и слаг каждой sentinel, которую монолит отдаёт наружу, через настоящий
   ответчик; `TestTranslate_NoRedundantRule` — правило со статусом класса без
@@ -113,6 +153,12 @@
 
 ### Fixed
 
+- SIGTERM отменял контекст фоновых задач: прогон обрывался посреди работы — у
+  `mail` письмо посреди отправки оставалось в `sending`, а после `Lease` его
+  цену выбирал `Uncertain`. HTTP гасился одновременно с отменой задач, а `Stop`
+  шёл `defer`'ом без бюджета.
+- Занятый порт всплывал ошибкой из горутины `ListenAndServe` уже после старта.
+- Схема сверялась в двух местах (`checkSchemas` и `startMoney`).
 - Повтор ключа в `checkout` разбирает `payment.Start`, а не проба
   `IntentByKey` до него. Проба отдавала любое найденное намерение успехом:
   другой товар под тем же ключом получал 200 с чужой ценой и ссылкой, повтор
