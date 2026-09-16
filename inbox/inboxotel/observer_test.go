@@ -103,10 +103,12 @@ func TestObserver_EveryPointIsFromClosedSets(t *testing.T) {
 }
 
 // Доставка, которую оборвал отправитель, приходит с отменённым ctx и обязана
-// попасть и в счётчик, и в гистограмму.
+// попасть и в счётчик, и в гистограмму. Ряды заведены: без них потерянный счёт
+// оставил бы scrape пустым, и упал бы помощник, а не утверждение.
 func TestObserver_CountsUnderCanceledContext(t *testing.T) {
 	t.Parallel()
 	reader, obs := newObserver(t)
+	obs.Watch(billing)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
