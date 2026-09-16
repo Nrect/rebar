@@ -165,20 +165,28 @@ for {
 	case <-ctx.Done():
 		return
 	case <-deliver.C:
-		// Ошибка прогона — только сбой Claim/Finish (база); отказ провайдера — исход строки.
-		if _, err := svc.Deliver(ctx); err != nil {
+		// Сбой базы — ErrUnavailable. Отмена ctx — остановка, а не сбой; отказ
+		// провайдера — исход строки, а не ошибка прогона.
+		if _, err := svc.Deliver(ctx); errors.Is(err, mail.ErrUnavailable) {
 			slog.ErrorContext(ctx, "mail deliver", "err", err) // текст без адресов и тел
 		}
 		if stats, err := svc.Stats(ctx); err == nil {
 			gauges.Set(stats)
 		}
 	case <-purge.C:
-		if _, err := svc.Purge(ctx); err != nil {
+		if _, err := svc.Purge(ctx); err != nil && ctx.Err() == nil {
 			slog.ErrorContext(ctx, "mail purge", "err", err)
 		}
 	}
 }
 ```
+
+Останавливать процесс отменой `ctx` безопасно: `Deliver` пишет исход уже
+отправленного письма и возвращает невзятые строки пачки в очередь без
+потраченной попытки — обе записи мимо отмены, не дольше `SendTimeout`. Под
+арендой остаётся только письмо, отправку которого оборвала сама отмена: оно
+могло уйти, и после `Lease` его судьбу решает `Config.Uncertain` (комментарий
+к `Deliver`).
 
 Несколько реплик воркера безопасны: `Claim` берёт строки `FOR UPDATE SKIP
 LOCKED` с арендой `Lease`, строку упавшего воркера заберут после её истечения.

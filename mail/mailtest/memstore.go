@@ -190,6 +190,13 @@ func (m *MemStore) Finish(ctx context.Context, req mail.FinishRequest) error {
 	if !ok || row.Status != mail.StatusSending {
 		return fmt.Errorf("%w: mailtest: row %s is not in sending", mail.ErrUnavailable, req.ID)
 	}
+	if req.Outcome == mail.FinishReleased {
+		// Как mailpg: попытка возвращается, срок, ошибка и транспорт — прежние.
+		row.Status, row.LockedUntil, row.UpdatedAt = mail.StatusPending, nil, dbMoment(req.Now)
+		row.Attempts = max(row.Attempts-1, 0)
+		m.rows[req.ID] = row
+		return nil
+	}
 	row.LastError, row.Transport, row.UpdatedAt = req.Error, req.Transport, dbMoment(req.Now)
 	row.LockedUntil = nil
 	if req.Outcome == mail.FinishRetry {

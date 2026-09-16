@@ -22,10 +22,11 @@ const MaxErrorLen = 500
 // Ошибка прогона — сбой Claim или Finish либо отмена ctx.
 //
 // ОТМЕНА ctx РЕЖЕТ ПАЧКУ ПОСРЕДИ ПРОГОНА. Известный исход строки пишется мимо
-// отмены, не дольше SendTimeout. Строки после отмены не шлются и ждут конца
-// Lease; строка, чью отправку оборвала сама отмена, — тоже: письмо могло уйти.
-// Следующий прогон возьмёт их с Reclaimed, и при UncertainPark они уйдут в
-// failed, даже неотправленные.
+// отмены; строки, до отправки которых прогон не дошёл, возвращаются в очередь
+// без потраченной попытки (FinishReleased) — обе записи не дольше SendTimeout
+// каждая. Под арендой остаются только строка, чью отправку оборвала сама
+// отмена (письмо могло уйти), и взятые с Reclaimed: после Lease их решает
+// Config.Uncertain.
 func (s *Service) Deliver(ctx context.Context) (int, error) {
 	// Провайдера нет — очередь не трогаем: попытки не тратятся, письма ждут
 	// настоящий транспорт. Проверка по имени, а не по типу: декоратор
@@ -42,42 +43,83 @@ func (s *Service) Deliver(ctx context.Context) (int, error) {
 }
 
 func (s *Service) deliverBatch(ctx context.Context, now time.Time, batch []Envelope) (int, error) {
-	var (
-		processed int
-		errs      []error
-	)
+	processed := 0
 	for i, env := range batch {
 		if err := s.waitTurn(ctx, i); err != nil {
-			errs = append(errs, err)
-			break
+			return s.stop(ctx, processed, batch[i:], err)
 		}
 		req, err := s.attempt(ctx, now, env)
 		if err != nil {
-			errs = append(errs, err)
-			break
+			return s.stop(ctx, processed, unstarted(batch, i, req), err)
 		}
 		req.Now = s.now()
 		if err = s.finish(ctx, req); err != nil {
 			// Исход записать не удалось: слать дальше — плодить дубли.
-			errs = append(errs, fmt.Errorf("%w: finish: %w", ErrUnavailable, err))
-			break
+			return processed, fmt.Errorf("%w: finish: %w", ErrUnavailable, err)
 		}
 		processed++
 	}
-	return processed, errors.Join(errs...)
+	return processed, nil
+}
+
+// unstarted — строки, до отправки которых отменённый прогон не дошёл: остаток
+// пачки и сама строка, если отмена застала её раньше отправки. Строка с
+// оборванной отправкой в них не входит — письмо могло уйти.
+func unstarted(batch []Envelope, i int, req FinishRequest) []Envelope {
+	if req.Outcome == FinishReleased {
+		return batch[i:]
+	}
+	return batch[i+1:]
+}
+
+// stop — пачку остановила отмена: невзятые строки возвращаются в очередь, а
+// причина отмены уходит наверх вместе со сбоем возврата, если он был.
+func (s *Service) stop(ctx context.Context, processed int, rest []Envelope, cause error) (int, error) {
+	released, err := s.releaseRest(ctx, rest)
+	return processed + released, errors.Join(cause, err)
+}
+
+// releaseRest возвращает строки в pending немедленно и без потраченной
+// попытки: быстрая остановка (выкат, SIGTERM) не должна жечь лимит попыток, а
+// при UncertainPark — уводить в failed письма, которые не отправлялись.
+//
+// СТРОКА С Reclaimed ОСТАЁТСЯ ПОД АРЕНДОЙ. Её прошлая попытка не завершилась, и
+// возврат стёр бы это знание: следующий Claim отдал бы её без Reclaimed, и
+// UncertainPark отправил бы письмо, которое, возможно, уже ушло.
+func (s *Service) releaseRest(ctx context.Context, rest []Envelope) (int, error) {
+	relCtx, cancel := s.detached(ctx)
+	defer cancel()
+	released := 0
+	for _, env := range rest {
+		if env.Reclaimed {
+			continue
+		}
+		req := FinishRequest{ID: env.ID, Outcome: FinishReleased, Now: s.now()}
+		if err := s.store.Finish(relCtx, req); err != nil {
+			return released, fmt.Errorf("%w: release: %w", ErrUnavailable, err)
+		}
+		released++
+	}
+	return released, nil
 }
 
 // finish пишет известный исход МИМО ОТМЕНЫ ctx: отмена, пришедшая посреди
-// отправки, не должна стоить дубля. Бюджет — SendTimeout, потолок шага строки:
-// без него повисшая база держала бы остановку без предела.
+// отправки, не должна стоить дубля.
 func (s *Service) finish(ctx context.Context, req FinishRequest) error {
-	finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.cfg.SendTimeout)
+	finishCtx, cancel := s.detached(ctx)
 	defer cancel()
 	return s.store.Finish(finishCtx, req)
 }
 
+// detached — контекст записи мимо отмены прогона. Срок — SendTimeout, потолок
+// шага строки: без него повисшая база держала бы остановку без предела.
+func (s *Service) detached(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), s.cfg.SendTimeout)
+}
+
 // waitTurn — отмена перед строкой и пауза MinSendGap между письмами (квота
-// провайдера — письмо в секунду). Взятые строки дождутся истечения аренды.
+// провайдера — письмо в секунду). После отмены остаток пачки возвращается в
+// очередь (releaseRest).
 func (s *Service) waitTurn(ctx context.Context, index int) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -96,7 +138,8 @@ func (s *Service) waitTurn(ctx context.Context, index int) error {
 }
 
 // attempt — исход одной строки: проверки, из-за которых письмо не полетит.
-// Ошибка — исхода нет: отправку оборвала отмена прогона.
+// Ошибка — прогон отменён раньше, чем исход стал известен: с FinishReleased —
+// до отправки, без исхода — посреди неё.
 func (s *Service) attempt(ctx context.Context, now time.Time, env Envelope) (FinishRequest, error) {
 	req := FinishRequest{ID: env.ID}
 	switch {
@@ -114,13 +157,18 @@ func (s *Service) checkAndSend(ctx context.Context, now time.Time, req FinishReq
 	if s.supp != nil {
 		sup, found, err := s.supp.IsSuppressed(ctx, env.To.Email)
 		switch {
-		case err != nil:
+		case err != nil && ctx.Err() == nil:
 			// Не проверили — не шлём: стоп-лист недоступен, повтор позже.
 			return s.retryLater(now, req, env, err), nil
-		case found:
+		case err == nil && found:
 			req.Outcome, req.Error = FinishSuppressed, string(sup.Reason)
 			return req, nil
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		// Прогон отменён до отправки: письмо не уходило, строка вернётся в очередь.
+		req.Outcome = FinishReleased
+		return req, err
 	}
 	return s.send(ctx, now, req, env)
 }
