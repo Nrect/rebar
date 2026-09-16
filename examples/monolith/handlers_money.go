@@ -117,8 +117,8 @@ func (a *App) webhook(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		// ПРОВАЙДЕРУ — КЛАСС, БЕЗ СЛОВАРЯ ПРОДУКТА: правило, совпавшее с ошибкой
-		// хука глубоко под ErrUnavailable, превратило бы 503 в 4xx, и оплата
-		// потерялась бы.
+		// хука глубоко под ErrUnavailable, превратило бы 503 в 4xx, и сбой
+		// зачисления прошёл бы мимо алертов на 5xx.
 		a.respondClass.Write(r.Context(), w, err)
 		return
 	}

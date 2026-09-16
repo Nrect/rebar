@@ -49,7 +49,8 @@ func newResponder(log *slog.Logger) *httperr.Responder {
 
 // newClassResponder — ответчик ручек для машины (вебхук): класс без Translate.
 // Машине слаги продукта не нужны, а правило, совпавшее с ошибкой хука глубоко
-// под ErrUnavailable, превратило бы 503 в 4xx, и провайдер перестал бы повторять.
+// под ErrUnavailable, превратило бы 503 в 4xx, и сбой зачисления прошёл бы мимо
+// алертов на 5xx.
 func newClassResponder(log *slog.Logger) *httperr.Responder {
 	return httperr.New(httperr.Config{RequestID: reqid.From, Logger: log})
 }
