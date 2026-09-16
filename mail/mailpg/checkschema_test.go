@@ -12,13 +12,6 @@ import (
 	"github.com/nrect/rebar/mail/mailpg"
 )
 
-// Schema — то, что потребитель применит из кода: обязан совпадать с файлом,
-// который он же может скопировать в миграции.
-func TestSchema_EmbedEqualsFile(t *testing.T) {
-	t.Parallel()
-	assert.Equal(t, readSchema(t), mailpg.Schema)
-}
-
 func TestCheckSchema_FullSchemaPasses(t *testing.T) {
 	t.Parallel()
 	store, _ := newStore(t)
@@ -26,7 +19,7 @@ func TestCheckSchema_FullSchemaPasses(t *testing.T) {
 	require.NoError(t, store.CheckSchema(context.Background()))
 }
 
-// Первая строка ошибки — что делать: скопировать schema.sql в миграции.
+// Первая строка ошибки — что делать: накатить миграции раннером проекта.
 func TestCheckSchema_MissingTableTellsWhatToDo(t *testing.T) {
 	t.Parallel()
 	pool := newSchemaPool(t)
@@ -35,7 +28,7 @@ func TestCheckSchema_MissingTableTellsWhatToDo(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "таблицы email_outbox нет")
-	assert.Contains(t, err.Error(), "schema.sql")
+	assert.Contains(t, err.Error(), "накатите mailpg.Migrations() раннером проекта")
 	assert.Contains(t, err.Error(), "Миграция")
 	assert.NotErrorIs(t, err, mail.ErrUnavailable, "расхождение схемы — не временный сбой")
 }
@@ -112,7 +105,7 @@ func TestCheckSchema_ReportsEveryMismatchByName(t *testing.T) {
 
 			require.Error(t, err)
 			lines := strings.Split(err.Error(), "\n")
-			assert.Contains(t, lines[0], "расходится с mailpg/schema.sql", "первая строка — что делать")
+			assert.Contains(t, lines[0], "накатите mailpg.Migrations() раннером проекта", "первая строка — что делать")
 			for _, want := range tt.want {
 				assert.Contains(t, lines[1:], want)
 			}

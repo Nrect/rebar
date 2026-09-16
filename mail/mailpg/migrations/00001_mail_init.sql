@@ -1,8 +1,13 @@
--- Схема outbox пакета mail (ADR-0001, раздел «Схема»). Файл копируется в
--- каталог миграций потребителя как есть; раннера миграций в пакете нет.
+-- Схема outbox пакета mail (ADR-0001, раздел «Схема»), первая миграция
+-- (ADR-0011). Накатывает раннер потребителя, пакет её только везёт. Выпущенный
+-- файл не правится: изменение схемы — новый файл (ADR-0011, решение 6).
+--
+-- ИДЕМПОТЕНТНА: повторный накат на базу, где схема уже стоит, проходит.
+-- Существующую таблицу IF NOT EXISTS не сверяет — это делает CheckSchema
+-- (ADR-0011, решение 4).
 
 -- +goose Up
-CREATE TABLE email_outbox (
+CREATE TABLE IF NOT EXISTS email_outbox (
     id                  UUID PRIMARY KEY,
     kind                TEXT NOT NULL,
     to_email            TEXT NOT NULL,
@@ -41,9 +46,11 @@ CREATE TABLE email_outbox (
     ),
     CONSTRAINT email_outbox_lock_chk CHECK ((status = 'sending') = (locked_until IS NOT NULL))
 );
-CREATE UNIQUE INDEX ux_email_outbox_dedup ON email_outbox (dedup_key);   -- имя — часть контракта Store.Enqueue
-CREATE INDEX ix_email_outbox_due ON email_outbox (next_attempt_at, id) WHERE status IN ('pending','sending');
-CREATE INDEX ix_email_outbox_terminal ON email_outbox (updated_at) WHERE status IN ('sent','failed','expired','suppressed');
+CREATE UNIQUE INDEX IF NOT EXISTS ux_email_outbox_dedup ON email_outbox (dedup_key);   -- имя — часть контракта Store.Enqueue
+CREATE INDEX IF NOT EXISTS ix_email_outbox_due ON email_outbox (next_attempt_at, id) WHERE status IN ('pending','sending');
+CREATE INDEX IF NOT EXISTS ix_email_outbox_terminal ON email_outbox (updated_at) WHERE status IN ('sent','failed','expired','suppressed');
 
 -- +goose Down
-DROP TABLE email_outbox;
+-- Идемпотентна (ADR-0011, уточнение 1): стенды гоняют Up и Down по кругу.
+-- Индексы уходят вместе с таблицей.
+DROP TABLE IF EXISTS email_outbox;

@@ -1,6 +1,7 @@
 package mailpg
 
 import (
+	"io/fs"
 	"regexp"
 	"strings"
 	"testing"
@@ -13,29 +14,48 @@ import (
 // тип с заглавной; CONSTRAINT, комментарии и переносы CHECK под неё не подходят.
 var columnLine = regexp.MustCompile(`(?m)^ {4}([a-z_]+)\s+[A-Z]`)
 
-// Ожидания CheckSchema живут в коде, схема — в файле: страж их расхождения.
-func TestExpectedColumns_MatchSchemaFile(t *testing.T) {
+// Ожидания CheckSchema живут в коде, схема — в миграциях: страж их расхождения.
+func TestExpectedColumns_MatchMigrations(t *testing.T) {
 	t.Parallel()
 
-	matches := columnLine.FindAllStringSubmatch(Schema, -1)
+	ddl := schemaDDL(t)
+	matches := columnLine.FindAllStringSubmatch(ddl, -1)
 	declared := make([]string, 0, len(matches))
 	for _, m := range matches {
 		declared = append(declared, m[1])
 	}
-	require.Len(t, declared, len(expectedColumns), "число колонок в schema.sql и в expectedColumns")
+	require.Len(t, declared, len(expectedColumns), "число колонок в миграциях и в expectedColumns")
 	for _, name := range declared {
-		assert.Contains(t, expectedColumns, name, "колонка %s есть в schema.sql, но не в expectedColumns", name)
+		assert.Contains(t, expectedColumns, name, "колонка %s есть в миграциях, но не в expectedColumns", name)
 	}
 	for _, name := range expectedChecks {
-		assert.Contains(t, Schema, "CONSTRAINT "+name+" CHECK", name)
+		assert.Contains(t, ddl, "CONSTRAINT "+name+" CHECK", name)
 	}
 	for name, unique := range expectedIndexes {
 		kind := "CREATE INDEX "
 		if unique {
 			kind = "CREATE UNIQUE INDEX "
 		}
-		assert.Contains(t, Schema, kind+name+" ON email_outbox", name)
+		assert.Contains(t, ddl, kind+name+" ON email_outbox", name)
 	}
+}
+
+// schemaDDL — каталог Migrations() текстом подряд, как его получит раннер
+// потребителя. IF NOT EXISTS снят: здесь сверяются имена, а форму команд держат
+// TestInitMigration_HoldsContract и повторный накат.
+func schemaDDL(t *testing.T) string {
+	t.Helper()
+	migrations := Migrations()
+	entries, err := fs.ReadDir(migrations, ".")
+	require.NoError(t, err)
+	var ddl strings.Builder
+	for _, entry := range entries {
+		raw, readErr := fs.ReadFile(migrations, entry.Name())
+		require.NoError(t, readErr)
+		ddl.Write(raw)
+		ddl.WriteString("\n")
+	}
+	return strings.ReplaceAll(ddl.String(), " IF NOT EXISTS ", " ")
 }
 
 // Адаптер читает и пишет ровно те колонки, которые проверяет CheckSchema.
