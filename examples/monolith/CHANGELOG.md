@@ -189,6 +189,14 @@
 
 ### Fixed
 
+- **Время — в UTC и из часов приложения (docs/CONSUMER.md, §8).** Заказ,
+  событие вебхука без `occurred_at` и запись загрузки брали `time.Now()` мимо
+  часов и в поясе процесса; теперь — часы `App` в UTC, подмена `SetClock`
+  (паника на nil). `logotel` пишет время записи в UTC через `ReplaceAttr`, у
+  Postgres стенда `TZ: UTC` — второй рубеж. Исключения монолита вычеркнуты из
+  `scripts/timeguard.allow`. Держат `TestClock_HandlersTakeAppClock` (часы в
+  2031 году, моменты в базе — `Equal` до микросекунд),
+  `TestApp_SetClockPanicsOnNil` и `TestNew_TimeInUTC`.
 - SIGTERM отменял контекст фоновых задач: прогон обрывался посреди работы — у
   `mail` письмо посреди отправки оставалось в `sending`, а после `Lease` его
   цену выбирал `Uncertain`. HTTP гасился одновременно с отменой задач, а `Stop`

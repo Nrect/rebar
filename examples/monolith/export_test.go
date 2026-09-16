@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/nrect/rebar/payment"
 	"github.com/nrect/rebar/payment/paymenttest"
@@ -21,9 +22,15 @@ func PaymentConfig() payment.Config { return paymentConfig() }
 // WebhookHandler — ручка вебхука с ответчиками монолита поверх чужого
 // payment.Service: тест подключает к paymentpg свой хук, не трогая сборку App.
 func WebhookHandler(pay *payment.Service, provider *paymenttest.MemProvider, log *slog.Logger) http.Handler {
-	a := &App{pay: pay, provider: provider, respond: newResponder(log), respondClass: newClassResponder(log)}
+	a := &App{
+		pay: pay, provider: provider, respond: newResponder(log), respondClass: newClassResponder(log),
+		now: func() time.Time { return time.Now().UTC() },
+	}
 	return http.HandlerFunc(a.webhook)
 }
+
+// Now — момент часов приложения: по нему тест сверяет, что часы по умолчанию в UTC.
+func (a *App) Now() time.Time { return a.now() }
 
 // Refund — возврат платёжным сервисом сборки, с тем же хуком, что у вебхука:
 // ручки возврата у примера нет.

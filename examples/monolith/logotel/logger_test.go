@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -75,6 +76,18 @@ func TestNew_LevelFollowsVar(t *testing.T) {
 	level.Set(slog.LevelDebug)
 	log.DebugContext(t.Context(), "cron job done")
 	require.NotZero(t, buf.Len())
+}
+
+// TestNew_TimeInUTC — время записи в UTC, какой бы пояс ни был у момента: записи
+// двух сервисов сходятся по времени. Момент — в чужом поясе явно: t.Setenv("TZ")
+// не меняет уже загруженный time.Local.
+func TestNew_TimeInUTC(t *testing.T) {
+	at := time.Date(2031, time.March, 9, 2, 30, 15, 0, time.FixedZone("UTC+05:45", 5*60*60+45*60))
+	var buf bytes.Buffer
+	log := logotel.New(&buf, slog.LevelInfo)
+	require.NoError(t, log.Handler().Handle(t.Context(), slog.NewRecord(at, slog.LevelInfo, "started", 0)))
+
+	require.Equal(t, "2031-03-08T20:45:15Z", decode(t, &buf)["time"])
 }
 
 func decode(t *testing.T, buf *bytes.Buffer) map[string]any {

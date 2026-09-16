@@ -50,6 +50,7 @@ import (
 type App struct {
 	cfg   Config
 	log   *slog.Logger
+	now   func() time.Time
 	obs   otelboot.Providers
 	flush func(context.Context) error
 	db    *shoppg.DB
@@ -98,7 +99,8 @@ func New(ctx context.Context, cfg Config, log *slog.Logger, migrations fs.FS) (*
 	if log == nil {
 		panic("monolith.New: nil log")
 	}
-	a := &App{cfg: cfg, log: log}
+	// Часы приложения: ручки берут момент отсюда, а не из time.Now (docs/CONSUMER.md, §8).
+	a := &App{cfg: cfg, log: log, now: func() time.Time { return time.Now().UTC() }}
 	if err := a.startInfra(ctx, migrations); err != nil {
 		return nil, err
 	}
@@ -124,6 +126,15 @@ func New(ctx context.Context, cfg Config, log *slog.Logger, migrations fs.FS) (*
 	}
 	a.routes()
 	return a, nil
+}
+
+// SetClock подменяет часы приложения; только для тестов, до первого запроса.
+// nil — паника здесь, а не разыменование nil в ручке.
+func (a *App) SetClock(now func() time.Time) {
+	if now == nil {
+		panic("monolith.App.SetClock: now must not be nil")
+	}
+	a.now = now
 }
 
 // startInfra — наблюдаемость, трекер и postgres: то, на чём стоит всё
