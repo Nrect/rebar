@@ -58,6 +58,48 @@ func (s *cancellingStore) Claim(ctx context.Context, req outbox.ClaimRequest) ([
 	return rows, err
 }
 
+// ВЗЯТАЯ С Reclaimed СТРОКА НЕ ВОЗВРАЩАЕТСЯ. Её прошлая попытка не досказала
+// исход, и возврат стёр бы это знание: следующий Claim отдал бы её без
+// Reclaimed, и хендлер не узнал бы, что эффект мог случиться. Она ждёт аренды;
+// обычная строка той же пачки возвращается.
+func TestDrain_ReleaseKeepsReclaimedRowUnderLease(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, nil)
+	lost := h.enqueue(t, nil)
+	crashed, err := h.store.Claim(context.Background(), outbox.ClaimRequest{
+		Now: h.clock.Now(), Lease: h.cfg.Lease, Limit: 1,
+		Kinds: []outbox.Kind{kindPaid}, Token: uuid.New(),
+	})
+	require.NoError(t, err)
+	require.Len(t, crashed, 1, "попытка упавшего воркера не взяла строку")
+	h.clock.Advance(h.cfg.Lease + time.Second)
+	fresh := h.enqueue(t, func(m *outbox.Message) { m.AggregateID = "B-7" })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	worker, err := outbox.NewWorker(&cancellingStore{MemStore: h.store, cancel: cancel}, h.reg, h.cfg)
+	require.NoError(t, err)
+	worker.SetClock(h.clock.Now)
+
+	processed, err := worker.Drain(ctx)
+	require.ErrorIs(t, err, context.Canceled)
+	require.NotErrorIs(t, err, outbox.ErrUnavailable)
+	assert.Equal(t, 1, processed, "возвращена только обычная строка")
+	requireReleased(t, h.row(t, fresh.ID))
+	kept := h.row(t, lost.ID)
+	assert.Equal(t, outbox.StatusProcessing, kept.Status, "строка с Reclaimed возвращена в очередь")
+	assert.Equal(t, 2, kept.Attempts)
+
+	assert.Equal(t, 1, h.drain(t), "возвращённая строка не ушла следующим прогоном")
+	h.clock.Advance(h.cfg.Lease + time.Second)
+	assert.Equal(t, 1, h.drain(t))
+	handled := h.handler.Handled()
+	require.Len(t, handled, 2)
+	assert.Equal(t, fresh.ID, handled[0].ID)
+	assert.Equal(t, lost.ID, handled[1].ID)
+	assert.True(t, handled[1].Reclaimed, "возврат стёр знание о неизвестном исходе")
+}
+
 // ОТМЕНА ПОСЛЕ ОТВЕТА ХЕНДЛЕРА НЕ СТОИТ ПОВТОРА ЭФФЕКТА. Хендлер отработал, и
 // исход пишется мимо отмены: строка done и после Lease не исполняется снова.
 // Невзятый остаток пачки возвращается в очередь и уходит следующим прогоном.

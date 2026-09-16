@@ -22,8 +22,9 @@ import (
 // Permanent или Throttled — пишется мимо отмены; строки, до хендлера которых
 // прогон не дошёл, возвращаются в очередь без потраченной попытки
 // (FinishReleased) — обе записи не дольше HandlerTimeout каждая. Под арендой
-// остаётся только строка, чей хендлер оборвала сама отмена (ошибка без класса
-// при отменённом ctx): эффект мог случиться, после Lease она придёт с Reclaimed.
+// остаются только строка, чей хендлер оборвала сама отмена (ошибка без класса
+// при отменённом ctx), и взятые с Reclaimed: исход их попытки неизвестен, и
+// после Lease они придут с Reclaimed.
 func (w *Worker) Drain(ctx context.Context) (int, error) {
 	now := w.now()
 	token := w.newToken()
@@ -180,12 +181,19 @@ func (w *Worker) throttle(req FinishRequest, env Envelope, after time.Duration) 
 // писать, и «освобождение» стало бы тихим no-op — строки висели бы под
 // арендой с потраченной попыткой ровно в том сценарии, ради которого
 // released и заведён.
+//
+// СТРОКА С Reclaimed ОСТАЁТСЯ ПОД АРЕНДОЙ. Её прошлая попытка не досказала
+// исход, и возврат стёр бы это знание: следующий Claim отдал бы её без
+// Reclaimed, и хендлер не узнал бы, что эффект мог случиться (doc.go, п. 2).
 func (w *Worker) releaseRest(ctx context.Context, token uuid.UUID, rest []Envelope) (int, error) {
 	relCtx, cancel := w.detached(ctx)
 	defer cancel()
 
 	released := 0
 	for _, env := range rest {
+		if env.Reclaimed {
+			continue
+		}
 		req := FinishRequest{ID: env.ID, Token: token, Outcome: FinishReleased, Now: w.now()}
 		if err := w.store.Finish(relCtx, req); err != nil {
 			return released, fmt.Errorf("%w: release: %w", ErrUnavailable, err)
