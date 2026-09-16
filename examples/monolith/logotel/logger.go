@@ -1,6 +1,6 @@
-// Package logotel — логгер процесса (docs/CONSUMER.md, §§1 и 7): JSON в поток,
-// записи Error — ещё и в трекер ошибок, а request_id, trace_id и subject_id
-// дописывает обработчик из контекста, а не вызывающий код.
+// Package logotel — логгер процесса (docs/CONSUMER.md, §§1, 7 и 8): JSON в поток
+// со временем в UTC, записи Error — ещё и в трекер ошибок, а request_id,
+// trace_id и subject_id дописывает обработчик из контекста, а не вызывающий код.
 //
 // Каталог назван *otel не для вида: trace_id читается из спана otel, а otel
 // законен только в таких каталогах (depguard в корне репозитория).
@@ -28,7 +28,17 @@ const (
 // New — логгер процесса. level меняют после чтения конфига: логгер ставится
 // раньше, чтобы и ошибка конфига ушла JSON-записью.
 func New(w io.Writer, level slog.Leveler) *slog.Logger {
-	base := slog.NewJSONHandler(w, &slog.HandlerOptions{Level: level})
+	base := slog.NewJSONHandler(w, &slog.HandlerOptions{
+		Level: level,
+		// Время записи — в UTC: slog берёт его из time.Now в поясе процесса, и
+		// записи двух сервисов не сходятся по времени (docs/CONSUMER.md, §8).
+		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+			if len(groups) == 0 && a.Key == slog.TimeKey && a.Value.Kind() == slog.KindTime {
+				a.Value = slog.TimeValue(a.Value.Time().UTC())
+			}
+			return a
+		},
+	})
 	// Обработчик контекста снаружи трекера: событие получает те же ключи, что
 	// и строка лога.
 	tracked := errtrack.WrapLogger(slog.New(base)).Handler()

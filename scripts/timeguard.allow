@@ -12,7 +12,4 @@ scheduler/schedulertest/recording.go	deadline := time.Now().Add(timeout)	сро�
 scheduler/schedulertest/recording.go	if time.Now().After(deadline) {	срок ожидания в помощнике теста, момент не хранится
 postgres/pgtest/pgtest.go	sweep(ctx, admin, time.Now())	имя и возраст тестовых баз стенда, не данные
 postgres/pgtest/pgtest.go	name, err := newDBName(time.Now())	имя и возраст тестовых баз стенда, не данные
-examples/monolith/handlers_money.go	if createErr := a.orders.Create(ctx, order, time.Now()); createErr != nil {	долг: момент мимо часов приложения и без UTC — чип монолита
-examples/monolith/handlers_money.go	at = time.Now()	долг: момент мимо часов приложения и без UTC — чип монолита
-examples/monolith/handlers_money.go	if err := a.uploads.Record(r.Context(), obj, subject, header.Filename, time.Now()); err != nil {	долг: момент мимо часов приложения и без UTC — чип монолита
 entitlement/service.go	now:   time.Now,	часы по умолчанию без UTC; модуль в заморозке 7c1a927 — волна часов в UTC после тегов (ROADMAP)

@@ -9,6 +9,8 @@ services:
       POSTGRES_USER: monolith
       POSTGRES_PASSWORD: monolith
       POSTGRES_DB: monolith
+      # Второй рубеж: время в UTC держит код — часы приложения, логи и пул с postgres.WithUTC.
+      TZ: UTC
     ports: ["5432:5432"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U monolith"]

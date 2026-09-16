@@ -77,7 +77,7 @@ func (a *App) startPayment(r *http.Request, subject uuid.UUID, product Product,
 		ID: orderIDOf(subject, key), SubjectID: subject, ProductCode: product.Code,
 		AmountMinor: product.AmountMinor, Currency: currency,
 	}
-	if createErr := a.orders.Create(ctx, order, time.Now()); createErr != nil {
+	if createErr := a.orders.Create(ctx, order, a.now()); createErr != nil {
 		return payment.StartResult{}, "", createErr
 	}
 	return a.pay.Start(ctx, payment.StartRequest{
@@ -110,7 +110,7 @@ func (a *App) webhook(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(a.respondClass, w, r, &body) {
 		return
 	}
-	a.provider.Push(body.event())
+	a.provider.Push(body.event(a.now()))
 
 	res, _, err := a.pay.HandleWebhook(r.Context(), payment.WebhookRequest{
 		Raw: []byte("{}"), Headers: r.Header, RemoteIP: clientIP(r),
@@ -138,16 +138,19 @@ type providerEvent struct {
 }
 
 // event — разбор события. Незнакомый тип отображается в EventIgnored, а не
-// домысливается: домысленный успех — это отданный бесплатно товар.
-func (e providerEvent) event() payment.Event {
+// домысливается: домысленный успех — это отданный бесплатно товар. Событие без
+// occurred_at получает received — момент приёма по часам приложения.
+func (e providerEvent) event(received time.Time) payment.Event {
 	intent, err := uuid.Parse(e.IntentID)
 	if err != nil {
 		// uuid.Nil означает орфана: событие всё равно будет записано.
 		intent = uuid.Nil
 	}
-	at := e.At
+	// Чужой момент — в UTC там, где разобран; в окно его зажимает payment
+	// (docs/CORRECTNESS.md, §8).
+	at := e.At.UTC()
 	if at.IsZero() {
-		at = time.Now()
+		at = received
 	}
 	return payment.Event{
 		Provider: providerName, ProviderEventID: e.EventID, ProviderPaymentID: e.PaymentID,
@@ -189,7 +192,7 @@ func (a *App) upload(w http.ResponseWriter, r *http.Request) {
 		a.respond.Write(r.Context(), w, err)
 		return
 	}
-	if err := a.uploads.Record(r.Context(), obj, subject, header.Filename, time.Now()); err != nil {
+	if err := a.uploads.Record(r.Context(), obj, subject, header.Filename, a.now()); err != nil {
 		a.respond.Write(r.Context(), w, err)
 		return
 	}
