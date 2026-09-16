@@ -146,8 +146,7 @@ func (r *Reconciler) check(ctx context.Context, account uuid.UUID) (int, []Misma
 func (r *Reconciler) chain(ctx context.Context, account uuid.UUID, headSeq int64) (Verification, error) {
 	var total Verification
 	for total.Next.Seq < headSeq {
-		limit := int(min(int64(r.cfg.Page), headSeq-total.Next.Seq))
-		page, err := r.svc.store.Entries(ctx, r.svc.book.Name, account, total.Next.Seq, limit)
+		page, err := r.svc.store.Entries(ctx, r.svc.book.Name, account, total.Next.Seq, r.cfg.Page)
 		if err != nil {
 			return total, storeError("read entries", err)
 		}
