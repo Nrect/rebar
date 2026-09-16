@@ -69,7 +69,7 @@ func NewService(store Store, obs Observer, cfg Config) *Service {
 	return &Service{
 		store: store, obs: obs, sources: sources,
 		maxBody: cfg.MaxBodyBytes, retention: cfg.Retention, payloadTTL: cfg.PayloadRetention, purgeBatch: cfg.PurgeBatch,
-		now: time.Now,
+		now: func() time.Time { return time.Now().UTC() },
 	}
 }
 

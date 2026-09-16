@@ -3,7 +3,6 @@
 idem/purge.go	return &Purger{pruner: pruner, retention: cfg.Retention, now: time.Now}	часы по умолчанию без UTC; модуль вне тегов — волна часов в UTC (ROADMAP, «Признанные долги»)
 idem/idemtest/memstore.go	now:      time.Now,	часы по умолчанию без UTC; модуль вне тегов — волна часов в UTC (ROADMAP, «Признанные долги»)
 outbox/outboxotel/handlers.go	start := time.Now()	длительность хендлера по монотонным часам (time.Since), момент не хранится
-inbox/service.go	now: time.Now,	часы по умолчанию без UTC; модуль вне тегов — волна часов в UTC (ROADMAP, «Признанные долги»)
 auth/session/service.go	return &Service{cfg: cfg, deps: deps, now: time.Now}	часы по умолчанию без UTC; модуль в заморозке 7c1a927 — волна часов в UTC после тегов (ROADMAP)
 mail/cmd/sesfake/relay.go	now:    time.Now,	часы по умолчанию без UTC; письмо собирается из now().UTC(); модуль в заморозке — волна после тегов (ROADMAP)
 mail/sesv2/sesv2.go	now:              time.Now,	часы по умолчанию без UTC; подпись SigV4 сама приводит к UTC; модуль в заморозке — волна после тегов (ROADMAP)
