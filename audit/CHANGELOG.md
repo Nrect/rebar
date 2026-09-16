@@ -6,6 +6,28 @@
 ## Unreleased
 
 ### Changed
+- **Ломающее: схема `auditpg` переехала в миграции, `auditpg.Schema` убран
+  ([ADR-0011](../docs/adr/0011-migrations-in-blocks.md)).**
+  `auditpg/schema.sql` стал `auditpg/migrations/00001_audit_init.sql`, каталог
+  отдаёт `auditpg.Migrations() fs.FS`; строка `Schema` со снимком схемы ушла
+  вместе с файлом (решение 5), замена — `Migrations()`. Накатывает раннер
+  проекта со своей таблицей версий `audit_schema_version`: у goose —
+  `goose.NewProvider(goose.DialectPostgres, db, auditpg.Migrations(),
+  goose.WithTableName("audit_schema_version"))`; модуль goose не импортирует.
+  Первая миграция идемпотентна: `IF NOT EXISTS` у таблицы и индексов,
+  `CREATE OR REPLACE FUNCTION`, триггер журнала — `DROP TRIGGER IF EXISTS`,
+  `CREATE TRIGGER` и безусловный `ENABLE ALWAYS` следом (пересозданный триггер
+  приходит в `ORIGIN`, и повторный накат возвращает ему `ENABLE ALWAYS`);
+  `Down` — `DROP … IF EXISTS`, включая функцию триггера. Подсказки
+  `CheckSchema` — «накатите `auditpg.Migrations()` раннером проекта» вместо
+  «скопируйте `auditpg/schema.sql` в миграции» и «сверьте миграцию». Тесты
+  адаптера накатывают каталог; накат, повторный накат со строкой журнала и
+  сброшенным режимом триггера и двойной откат держат `TestMigrations_*`.
+  **Переход базы, где схема уже накатана копией `schema.sql`:** `CheckSchema`
+  зелёный — затем отметить первую миграцию применённой, не выполняя
+  (`GetDBVersion` провайдера заводит `audit_schema_version`, затем
+  `INSERT INTO audit_schema_version (version_id, is_applied) VALUES (1, true)`;
+  таблицу версий руками не создавать — решение 4).
 - **Класс ошибки у sentinel ([ADR-0007](../docs/adr/0007-error-kind.md)).**
   Потребителю больше не нужна таблица перевода ошибок `audit`: `errs.KindOf` и
   `httperr` находят класс на самой sentinel. Страж
