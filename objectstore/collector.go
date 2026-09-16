@@ -115,9 +115,9 @@ func (c *Collector) sweep(ctx context.Context, objects []Object, deadline time.T
 	return collected, nil
 }
 
-// stopped — ошибка, на которой встал прогон: при отменённом ctx — причина
-// отмены, а не сбой порта. Порт отмену может и не пропустить: s3 отдаёт её
-// ErrUnavailable без причины в цепочке.
+// stopped — ошибка, на которой встали прогон или загрузка: при отменённом ctx —
+// причина отмены, а не сбой порта. Порт отмену может и не пропустить: s3 отдаёт
+// её ErrUnavailable без причины в цепочке.
 func stopped(ctx context.Context, failure error) error {
 	if err := ctx.Err(); err != nil {
 		return err

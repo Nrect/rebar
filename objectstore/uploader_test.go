@@ -2,7 +2,9 @@ package objectstore_test
 
 import (
 	"bytes"
+	"context"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 
@@ -315,6 +317,57 @@ func TestUploader_StoreFailureHidesDetails(t *testing.T) {
 	require.ErrorIs(t, err, objectstore.ErrUnavailable)
 	assert.NotContains(t, err.Error(), "secret.png")
 	assert.NotContains(t, err.Error(), "10.0.0.7")
+}
+
+// ОТМЕНА ПОСРЕДИ ЗАГРУЗКИ — НЕ ТРЕВОГА. Клиент, ушедший посреди загрузки,
+// обрывает чтение тела или Put, а s3 отдаёт оборванный запрос ErrUnavailable без
+// причины в цепочке. Загрузка обязана вернуть причину отмены: иначе уход
+// клиента — это 503 «хранилище недоступно».
+func TestUploader_CancelDuringUploadIsNotUnavailable(t *testing.T) {
+	t.Parallel()
+	for _, cut := range []string{"тело", "Put"} {
+		t.Run(cut, func(t *testing.T) {
+			t.Parallel()
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			store := &cancellingStore{MemStore: objectstoretest.NewMemStore(), cancel: cancel, cutPut: cut == "Put"}
+			var body io.Reader = bytes.NewReader(objectstoretest.PNG(128))
+			if cut == "тело" {
+				body = cancellingBody{cancel: cancel}
+			}
+			up := objectstore.NewUploader(store, testUploaderConfig())
+
+			_, err := up.Upload(ctx, objectstore.UploadRequest{Body: body, Size: -1})
+
+			require.ErrorIs(t, err, context.Canceled)
+			require.NotErrorIs(t, err, objectstore.ErrUnavailable, "уход клиента выглядит сбоем хранилища")
+			assert.Empty(t, store.Keys())
+		})
+	}
+}
+
+// ОТМЕНЁННАЯ ЗАГРУЗКА В ХРАНИЛИЩЕ НЕ ХОДИТ. У хранилища, которое контекст не
+// читает (fs), файл ушедшего клиента лёг бы сиротой, а 201 ушёл бы в пустоту.
+func TestUploader_CancelledUploadDoesNotPut(t *testing.T) {
+	t.Parallel()
+	store := &countingStore{}
+	up := objectstore.NewUploader(store, testUploaderConfig())
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	_, err := up.Upload(ctx, objectstore.UploadRequest{Body: bytes.NewReader(objectstoretest.PNG(128)), Size: -1})
+
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Zero(t, store.puts, "отменённая загрузка сходила в хранилище")
+}
+
+// cancellingBody — тело клиента, ушедшего посреди загрузки: соединение рвётся,
+// net/http отменяет контекст запроса, чтение отдаёт ошибку.
+type cancellingBody struct{ cancel context.CancelFunc }
+
+func (b cancellingBody) Read([]byte) (int, error) {
+	b.cancel()
+	return 0, io.ErrUnexpectedEOF
 }
 
 func TestNewUploader_PanicsOnNilStore(t *testing.T) {

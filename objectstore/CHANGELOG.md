@@ -128,6 +128,20 @@
   `TestCollector_CancelDuringPortCallIsNotUnavailable` — порт, запрос к
   которому обрывает отмена, как у `s3`, — и
   `TestCollector_CancelledRunDoesNotList`.
+- **`Uploader.Upload` отдаёт причину отмены как есть, а не `ErrUnavailable`.**
+  Было: сбой чтения тела и сбой `Put` сворачивались в `ErrUnavailable` без
+  причины. Клиент, ушедший посреди загрузки, обрывает то или другое (net/http
+  отменяет контекст запроса, `s3` отдаёт оборванный запрос сбоем транспорта),
+  и уход клиента отвечал 503 «хранилище недоступно». Стало: при отменённом
+  `ctx` загрузка отдаёт `ctx.Err()` — после сбоя чтения тела, после сбоя `Put`
+  и перед `Put`: отменённая загрузка в хранилище не ходит, и у `fs` не
+  остаётся файла-сироты. Проверки входа (`ErrTooLarge`, `ErrEmptyBody`, тип)
+  отмена не перебивает. Класса у отмены нет, как у `Collector.Run`:
+  `httperr` без правила ответит на голый `context.Canceled` 500 и, раз контекст
+  запроса отменён, в лог не запишет; другой статус задаётся правилом
+  `Translate` потребителя. Держат `TestUploader_CancelDuringUploadIsNotUnavailable`
+  (тело и `Put`, хранилище пропускает отмену, как `s3`) и
+  `TestUploader_CancelledUploadDoesNotPut`.
 - Интеграционный тест `s3` берёт образ MinIO с `quay.io`, а не с Docker Hub:
   тот отвечает «pull access denied … repository does not exist» без
   `docker login`, и `make chip-check MODULE=objectstore` краснел у всех.
