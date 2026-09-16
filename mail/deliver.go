@@ -19,7 +19,13 @@ const MaxErrorLen = 500
 //
 // Исход транспорта и стоп-листа — исход строки, а не прогона: одна вечно
 // ломающаяся строка не должна морозить гейдж последнего успеха крона.
-// Ошибка прогона — только сбой Claim или Finish.
+// Ошибка прогона — сбой Claim или Finish либо отмена ctx.
+//
+// ОТМЕНА ctx РЕЖЕТ ПАЧКУ ПОСРЕДИ ПРОГОНА. Известный исход строки пишется мимо
+// отмены, не дольше SendTimeout. Строки после отмены не шлются и ждут конца
+// Lease; строка, чью отправку оборвала сама отмена, — тоже: письмо могло уйти.
+// Следующий прогон возьмёт их с Reclaimed, и при UncertainPark они уйдут в
+// failed, даже неотправленные.
 func (s *Service) Deliver(ctx context.Context) (int, error) {
 	// Провайдера нет — очередь не трогаем: попытки не тратятся, письма ждут
 	// настоящий транспорт. Проверка по имени, а не по типу: декоратор
@@ -45,9 +51,13 @@ func (s *Service) deliverBatch(ctx context.Context, now time.Time, batch []Envel
 			errs = append(errs, err)
 			break
 		}
-		req := s.attempt(ctx, now, env)
+		req, err := s.attempt(ctx, now, env)
+		if err != nil {
+			errs = append(errs, err)
+			break
+		}
 		req.Now = s.now()
-		if err := s.store.Finish(ctx, req); err != nil {
+		if err = s.finish(ctx, req); err != nil {
 			// Исход записать не удалось: слать дальше — плодить дубли.
 			errs = append(errs, fmt.Errorf("%w: finish: %w", ErrUnavailable, err))
 			break
@@ -55,6 +65,15 @@ func (s *Service) deliverBatch(ctx context.Context, now time.Time, batch []Envel
 		processed++
 	}
 	return processed, errors.Join(errs...)
+}
+
+// finish пишет известный исход МИМО ОТМЕНЫ ctx: отмена, пришедшая посреди
+// отправки, не должна стоить дубля. Бюджет — SendTimeout, потолок шага строки:
+// без него повисшая база держала бы остановку без предела.
+func (s *Service) finish(ctx context.Context, req FinishRequest) error {
+	finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.cfg.SendTimeout)
+	defer cancel()
+	return s.store.Finish(finishCtx, req)
 }
 
 // waitTurn — отмена перед строкой и пауза MinSendGap между письмами (квота
@@ -77,7 +96,8 @@ func (s *Service) waitTurn(ctx context.Context, index int) error {
 }
 
 // attempt — исход одной строки: проверки, из-за которых письмо не полетит.
-func (s *Service) attempt(ctx context.Context, now time.Time, env Envelope) FinishRequest {
+// Ошибка — исхода нет: отправку оборвала отмена прогона.
+func (s *Service) attempt(ctx context.Context, now time.Time, env Envelope) (FinishRequest, error) {
 	req := FinishRequest{ID: env.ID}
 	switch {
 	case env.NotAfter != nil && !now.Before(*env.NotAfter):
@@ -87,25 +107,25 @@ func (s *Service) attempt(ctx context.Context, now time.Time, env Envelope) Fini
 	default:
 		return s.checkAndSend(ctx, now, req, env)
 	}
-	return req
+	return req, nil
 }
 
-func (s *Service) checkAndSend(ctx context.Context, now time.Time, req FinishRequest, env Envelope) FinishRequest {
+func (s *Service) checkAndSend(ctx context.Context, now time.Time, req FinishRequest, env Envelope) (FinishRequest, error) {
 	if s.supp != nil {
 		sup, found, err := s.supp.IsSuppressed(ctx, env.To.Email)
 		switch {
 		case err != nil:
 			// Не проверили — не шлём: стоп-лист недоступен, повтор позже.
-			return s.retryLater(now, req, env, err)
+			return s.retryLater(now, req, env, err), nil
 		case found:
 			req.Outcome, req.Error = FinishSuppressed, string(sup.Reason)
-			return req
+			return req, nil
 		}
 	}
 	return s.send(ctx, now, req, env)
 }
 
-func (s *Service) send(ctx context.Context, now time.Time, req FinishRequest, env Envelope) FinishRequest {
+func (s *Service) send(ctx context.Context, now time.Time, req FinishRequest, env Envelope) (FinishRequest, error) {
 	sendCtx, cancel := context.WithTimeout(ctx, s.cfg.SendTimeout)
 	res, err := s.transport.Send(sendCtx, env)
 	cancel()
@@ -117,13 +137,18 @@ func (s *Service) send(ctx context.Context, now time.Time, req FinishRequest, en
 	case IsRejected(err):
 		req.Outcome, req.FailReason = FinishFailed, FailRejected
 		req.Error = truncateError(err.Error())
+	case ctx.Err() != nil:
+		// Отправку оборвала отмена прогона, а не провайдер: письмо могло уйти.
+		// Исход не пишем — записанный повтор обошёл бы UncertainPark, а
+		// исчерпанная попытка сожгла бы письмо; строка ждёт конца аренды.
+		return req, ctx.Err()
 	case env.Attempts >= s.cfg.MaxAttempts: // Attempts уже увеличен Claim'ом
 		req.Outcome, req.FailReason = FinishFailed, FailExhausted
 		req.Error = truncateError(err.Error())
 	default:
-		return s.retryLater(now, req, env, err)
+		return s.retryLater(now, req, env, err), nil
 	}
-	return req
+	return req, nil
 }
 
 func (s *Service) retryLater(now time.Time, req FinishRequest, env Envelope, cause error) FinishRequest {

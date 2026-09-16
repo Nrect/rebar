@@ -30,45 +30,194 @@ func TestDeliver_FinishFailureStopsBatch(t *testing.T) {
 	assert.Len(t, h.tr.Sent(), 1, "вторая строка не отправлена")
 }
 
-// Отмена ctx останавливает пачку; взятые строки дождутся истечения аренды.
-//
-// ОТМЕНА ПОСРЕДИ ОТПРАВКИ СТОИТ ДУБЛЯ, И ЭТО ПОВЕДЕНИЕ ПРОДА, А НЕ ДВОЙНИКА.
-// Письмо ушло, а Finish идёт по тому же отменённому контексту и до базы не
-// доезжает: mailpg отвечает ErrUnavailable, строка остаётся в sending. После
-// истечения аренды её заберёт следующий прогон с Reclaimed, и дальше решает
-// Config.Uncertain: здесь UncertainRetry, то есть письмо уедет второй раз; при
-// UncertainPark строка ушла бы в failed, хотя письмо доставлено. Раньше тест
-// ждал записанный исход — он был зелёным только потому, что двойник контекст
-// не смотрел. Отмена МЕЖДУ строками не стоит ничего: её ловит waitTurn до
-// отправки.
-func TestDeliver_ContextCancelStopsBatch(t *testing.T) {
+// ОТМЕНА ПОСРЕДИ ОТПРАВКИ НЕ СТОИТ ДУБЛЯ. Письмо ушло, и исход пишется мимо
+// отмены: строка sent, прогон после конца аренды её не шлёт. Раньше Finish шёл
+// по отменённому контексту и до базы не доезжал — строка ждала аренды, и при
+// UncertainRetry письмо уезжало второй раз, а при UncertainPark строка уходила
+// в failed, хотя письмо доставлено. Судьбу второй, не тронутой строки решает
+// политика: при UncertainPark она уходит в failed неотправленной.
+func TestDeliver_CancelDuringSendRecordsOutcome(t *testing.T) {
+	t.Parallel()
+	cases := map[string]struct {
+		policy   mail.UncertainPolicy
+		restSent bool
+	}{
+		"retry": {mail.UncertainRetry, true},
+		"park":  {mail.UncertainPark, false},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t, false, func(c *mail.Config) { c.Uncertain = tc.policy })
+			first := h.enqueue(t, nil)
+			h.clock.advance(time.Second) // порядок Claim — по NextAttemptAt
+			second := h.enqueue(t, func(m *mail.Message) { m.To.Email = "second@school.ru" })
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			var sent []uuid.UUID
+			h.tr.SetSendHook(func(_ context.Context, env mail.Envelope) (mail.SendResult, error) {
+				sent = append(sent, env.ID)
+				cancel()
+				return mail.SendResult{ProviderMessageID: "mem-" + env.ID.String()}, nil
+			})
+
+			processed, err := h.svc.Deliver(ctx)
+			require.ErrorIs(t, err, context.Canceled)
+			require.NotErrorIs(t, err, mail.ErrUnavailable, "исход записан — сбоя хранилища нет")
+			assert.Equal(t, 1, processed)
+			row := h.row(t, first.ID)
+			assert.Equal(t, mail.StatusSent, row.Status, "исход отправленного письма не записан")
+			assert.Equal(t, "mem-"+first.ID.String(), row.ProviderMessageID)
+
+			h.clock.advance(h.cfg.Lease + time.Second)
+			assert.Equal(t, 1, h.deliver(t), "после конца аренды взята не одна вторая строка")
+			assert.Equal(t, mail.StatusSent, h.row(t, first.ID).Status)
+			want := []uuid.UUID{first.ID}
+			if tc.restSent {
+				want = append(want, second.ID)
+			}
+			assert.Equal(t, want, sent, "отправленное письмо ушло второй раз")
+		})
+	}
+}
+
+// ОТМЕНА МЕЖДУ ПИСЬМАМИ НЕ ТРОГАЕТ ОСТАТОК ПАЧКИ: её ловит waitTurn до
+// отправки. Вторая строка остаётся такой, какой её взял Claim, — не отправлена,
+// исход не записан — и ждёт конца аренды.
+func TestDeliver_CancelBetweenRowsLeavesRestUntouched(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t, false, nil)
-	h.enqueue(t, nil)
-	h.enqueue(t, func(m *mail.Message) { m.To.Email = "second@school.ru" })
+	first := h.enqueue(t, nil)
+	h.clock.advance(time.Second) // порядок Claim — по NextAttemptAt
+	second := h.enqueue(t, func(m *mail.Message) { m.To.Email = "second@school.ru" })
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	sends := 0
+	svc := mail.NewService(cancelOnFinish{Store: h.store, cancel: cancel}, h.tr, nil, h.cfg)
+	svc.SetClock(h.clock.now)
+
+	processed, err := svc.Deliver(ctx)
+	require.ErrorIs(t, err, context.Canceled)
+	require.NotErrorIs(t, err, mail.ErrUnavailable)
+	assert.Equal(t, 1, processed)
+	sent := h.tr.Sent()
+	require.Len(t, sent, 1, "после отмены ушло письмо")
+	assert.Equal(t, first.ID, sent[0].ID)
+	assert.Equal(t, mail.StatusSent, h.row(t, first.ID).Status)
+
+	rest := h.row(t, second.ID)
+	assert.Equal(t, mail.StatusSending, rest.Status, "остаток пачки не ждёт конца аренды")
+	assert.Equal(t, 1, rest.Attempts)
+	assert.Empty(t, rest.Transport, "исход строки после отмены записан")
+	assert.Empty(t, rest.LastError)
+}
+
+// ОТПРАВКУ, КОТОРУЮ ОБОРВАЛА ОТМЕНА, ЯДРО НЕ ЗАПИСЫВАЕТ: письмо могло уйти.
+// Записанный повтор обошёл бы UncertainPark, а исчерпанная попытка сожгла бы
+// письмо — поэтому строка ждёт конца аренды, как при падении процесса, и её
+// судьбу решает политика. MaxAttempts = 1: оборванная попытка последняя.
+func TestDeliver_SendCutByCancelIsLeftToUncertainPolicy(t *testing.T) {
+	t.Parallel()
+	cases := map[string]struct {
+		policy mail.UncertainPolicy
+		status mail.Status
+		reason mail.FailReason
+		sends  int
+	}{
+		"retry": {mail.UncertainRetry, mail.StatusSent, "", 2},
+		"park":  {mail.UncertainPark, mail.StatusFailed, mail.FailUncertain, 1},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t, false, func(c *mail.Config) {
+				c.Uncertain, c.MaxAttempts = tc.policy, 1
+			})
+			env := h.enqueue(t, nil)
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			sends := 0
+			h.tr.SetSendHook(func(sendCtx context.Context, _ mail.Envelope) (mail.SendResult, error) {
+				sends++
+				if sends > 1 {
+					return mail.SendResult{ProviderMessageID: "mem-2"}, nil
+				}
+				cancel()
+				<-sendCtx.Done()
+				return mail.SendResult{}, sendCtx.Err()
+			})
+
+			processed, err := h.svc.Deliver(ctx)
+			require.ErrorIs(t, err, context.Canceled)
+			require.NotErrorIs(t, err, mail.ErrUnavailable)
+			assert.Zero(t, processed)
+			row := h.row(t, env.ID)
+			assert.Equal(t, mail.StatusSending, row.Status, "исход оборванной отправки записан")
+			assert.Empty(t, row.LastError)
+
+			h.clock.advance(h.cfg.Lease + time.Second)
+			assert.Equal(t, 1, h.deliver(t))
+			row = h.row(t, env.ID)
+			assert.Equal(t, tc.status, row.Status)
+			assert.Equal(t, tc.reason, row.FailReason)
+			assert.Equal(t, tc.sends, sends)
+		})
+	}
+}
+
+// ОТМЕНА ПОСРЕДИ ПРОВЕРКИ СТОП-ЛИСТА ЗАПИСЫВАЕТ ПОВТОР: письмо не уходило, и
+// исход «не проверили — не шлём» известен. Без записи строка ждала бы аренды,
+// и при UncertainPark неотправленное письмо ушло бы в failed.
+func TestDeliver_CancelDuringSuppressorCheckRecordsRetry(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, false, func(c *mail.Config) { c.Uncertain = mail.UncertainPark })
+	env := h.enqueue(t, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	svc := mail.NewService(h.store, h.tr, cancellingSuppressor{cancel: cancel}, h.cfg)
+	svc.SetClock(h.clock.now)
+
+	processed, err := svc.Deliver(ctx)
+
+	require.NoError(t, err, "строка в пачке одна, и её исход записан")
+	assert.Equal(t, 1, processed)
+	row := h.row(t, env.ID)
+	assert.Equal(t, mail.StatusPending, row.Status, "повтор не записан")
+	assert.Contains(t, row.LastError, context.Canceled.Error())
+	assert.Empty(t, h.tr.Sent())
+}
+
+// ПОВИСШАЯ ЗАПИСЬ ИСХОДА НЕ ПЕРЕЖИВАЕТ SendTimeout. Исход пишется мимо отмены
+// прогона, и без своего срока повисшая база держала бы остановку процесса без
+// предела.
+func TestDeliver_HungFinishDoesNotOutliveBudget(t *testing.T) {
+	t.Parallel()
+	const budget = 50 * time.Millisecond
+	h := newHarness(t, false, func(c *mail.Config) { c.SendTimeout = budget })
+	h.enqueue(t, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	h.tr.SetSendHook(func(context.Context, mail.Envelope) (mail.SendResult, error) {
-		sends++
 		cancel()
 		return mail.SendResult{ProviderMessageID: "mem-1"}, nil
 	})
+	hung := &hungFinish{Store: h.store}
+	svc := mail.NewService(hung, h.tr, nil, h.cfg)
+	svc.SetClock(h.clock.now)
 
-	processed, err := h.svc.Deliver(ctx)
-	require.ErrorIs(t, err, context.Canceled)
-	require.ErrorIs(t, err, mail.ErrUnavailable, "исход записать не удалось — это сбой прогона")
-	assert.Equal(t, 0, processed, "исход отправленной строки записать не удалось")
-	assert.Equal(t, 1, sends, "вторая строка не отправлена")
+	processed, err := svc.Deliver(ctx)
 
-	// Порядок Claim задаёт хранилище; какая именно строка осталась — не важно.
-	statuses := map[mail.Status]int{}
-	for _, row := range h.store.Rows() {
-		statuses[row.Status]++
-	}
-	assert.Equal(t, map[mail.Status]int{mail.StatusSending: 2}, statuses,
-		"обе строки ждут истечения аренды: у отправленной исход не записан")
+	require.True(t, hung.called, "до записи исхода прогон не дошёл")
+	require.NotErrorIs(t, hung.entryErr, context.Canceled, "запись исхода получила отменённый контекст прогона")
+	require.True(t, hung.hasDeadline, "у записи исхода нет срока")
+	assert.False(t, hung.deadline.After(hung.enteredAt.Add(budget)), "срок записи исхода дальше SendTimeout")
+	require.ErrorIs(t, err, mail.ErrUnavailable)
+	require.ErrorIs(t, err, context.DeadlineExceeded, "запись исхода оборвал не её срок")
+	assert.Zero(t, processed)
 }
 
 // Пауза между письмами — квота провайдера (Postbox: письмо в секунду).
@@ -138,4 +287,57 @@ func drain(t *testing.T, svc *mail.Service) {
 		}
 	}
 	t.Error("очередь не опустела за 500 прогонов")
+}
+
+// cancelOnFinish — хранилище, у которого отмена приходит сразу за записью
+// исхода: между письмами, а не посреди отправки.
+type cancelOnFinish struct {
+	mail.Store
+	cancel context.CancelFunc
+}
+
+func (s cancelOnFinish) Finish(ctx context.Context, req mail.FinishRequest) error {
+	defer s.cancel()
+	return s.Store.Finish(ctx, req)
+}
+
+// cancellingSuppressor — стоп-лист, проверку в котором обрывает отмена.
+type cancellingSuppressor struct{ cancel context.CancelFunc }
+
+func (s cancellingSuppressor) IsSuppressed(ctx context.Context, _ string) (mail.Suppression, bool, error) {
+	s.cancel()
+	return mail.Suppression{}, false, ctx.Err()
+}
+
+func (cancellingSuppressor) Suppress(context.Context, mail.Suppression) error { return nil }
+
+// hungFinish — хранилище, у которого запись исхода висит, пока её не оборвёт
+// контекст. Контекст запоминается до ожидания, а без срока ожидания нет вовсе:
+// сломанный срок роняет тест утверждением, а не просрочкой бинаря.
+type hungFinish struct {
+	mail.Store
+
+	called      bool
+	enteredAt   time.Time
+	entryErr    error
+	deadline    time.Time
+	hasDeadline bool
+}
+
+// hungCeiling — потолок ожидания hungFinish: выше бюджета теста, ниже
+// просрочки бинаря.
+const hungCeiling = 5 * time.Second
+
+func (s *hungFinish) Finish(ctx context.Context, _ mail.FinishRequest) error {
+	s.called, s.enteredAt, s.entryErr = true, time.Now(), ctx.Err()
+	s.deadline, s.hasDeadline = ctx.Deadline()
+	if !s.hasDeadline {
+		return errors.New("hungFinish: у записи исхода нет срока")
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(hungCeiling):
+		return errors.New("hungFinish: срок записи исхода не сработал")
+	}
 }

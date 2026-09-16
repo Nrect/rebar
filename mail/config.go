@@ -46,7 +46,9 @@ type Config struct {
 	Backoff     Backoff
 	// Lease — аренда строки на попытку; строго больше SendTimeout, иначе второй
 	// воркер заберёт строку, пока первый ещё шлёт.
-	Lease       time.Duration
+	Lease time.Duration
+	// SendTimeout — потолок отправки письма и, отдельно, записи её исхода: исход
+	// пишется мимо отмены прогона, и повисшая база держит остановку не дольше.
 	SendTimeout time.Duration
 	// BatchSize — строк за один прогон Deliver.
 	BatchSize int
