@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -28,6 +29,9 @@ import (
 	"github.com/nrect/rebar/examples/monolith/shoppg"
 )
 
+// quiet — логгер ответчиков в табличных тестах: записи здесь не проверяются.
+var quiet = slog.New(slog.DiscardHandler)
+
 // TestTranslate_SentinelsReachHTTP — итоговые статус и слаг каждой sentinel,
 // которую монолит может отдать наружу: гейт «порты сходятся у потребителя».
 // Ручкам людей отвечает продуктовый ответчик, вебхуку — ответчик классом.
@@ -39,8 +43,8 @@ func TestTranslate_SentinelsReachHTTP(t *testing.T) {
 			assert.Equal(t, o.slug, slug, "%s: %v", o.route, o.err)
 		}
 	}
-	check(newResponder(), outcomes())
-	check(newClassResponder(), machineOutcomes())
+	check(newResponder(quiet), outcomes())
+	check(newClassResponder(quiet), machineOutcomes())
 }
 
 // TestTranslate_NoRedundantRule — правило, без которого ответ не хуже, лишнее:
@@ -50,7 +54,7 @@ func TestTranslate_SentinelsReachHTTP(t *testing.T) {
 // ответ — находка всегда; тот же статус оправдан только строкой clientActs, а
 // понижение класса до 500 — только строкой downgrades.
 func TestTranslate_NoRedundantRule(t *testing.T) {
-	respond, acts, down := newResponder(), clientActs(), downgrades()
+	respond, acts, down := newResponder(quiet), clientActs(), downgrades()
 	answered := make(map[string]bool, len(acts))
 	lowered := make(map[error]bool, len(down))
 	for _, r := range rules() {
@@ -133,11 +137,11 @@ func TestTranslate_EveryRuleReachable(t *testing.T) {
 func TestResponders_WebhookSkipsProductRules(t *testing.T) {
 	hook := itemClosedInHook()
 
-	status, slug := answerOf(t, newResponder(), hook)
+	status, slug := answerOf(t, newResponder(quiet), hook)
 	require.Equal(t, http.StatusForbidden, status, "условие пробы: правило продукта совпадает с ошибкой хука")
 	require.Equal(t, "item-not-open", slug)
 
-	status, slug = answerOf(t, newClassResponder(), hook)
+	status, slug = answerOf(t, newClassResponder(quiet), hook)
 	require.Equal(t, http.StatusServiceUnavailable, status)
 	require.Equal(t, "unavailable", slug)
 }

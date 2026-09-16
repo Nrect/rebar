@@ -15,8 +15,8 @@
 //     видна только здесь. Образец в auth/authpg/doc.go.
 //  2. Settler — хук paymentpg: заказ, право и событие outbox ложатся ТОЙ ЖЕ
 //     транзакцией, что и книга платежей.
-//  3. Entitlements — entitlement.Store. Адаптера у пакета нет, схема —
-//     эталонная из entitlement/doc.go, скопирована в migrations как есть.
+//  3. Entitlements — entitlement.Store до перехода на entitlementpg: переход
+//     ждёт миграции (entitlements.go).
 //  4. Identities — auth.Identities поверх shop_users.
 //
 // Безопасность:

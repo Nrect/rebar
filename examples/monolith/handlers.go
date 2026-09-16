@@ -11,14 +11,9 @@ import (
 // это отказ в обслуживании одной строкой.
 const maxJSONBytes = 32 << 10
 
-// mount вешает ручки. Роутера нет намеренно: пример проверяет проводку, а не
-// красоту маршрутов.
+// mount вешает публичные ручки. Роутера нет намеренно: пример проверяет
+// проводку, а не красоту маршрутов. Служебных здесь нет — они в probeMux.
 func (a *App) mount(mux *http.ServeMux) {
-	mux.HandleFunc("GET /healthz", a.healthz)
-	// /metrics — голый обработчик otelboot: scrape в базу не ходит, снимки
-	// гейджей обновляет задача gauges_snapshot (metrics.go).
-	mux.Handle("GET /metrics", a.obs.Metrics)
-
 	mux.HandleFunc("POST /register", a.register)
 	mux.HandleFunc("GET /confirm", a.confirm)
 	mux.HandleFunc("POST /signin", a.signIn)
@@ -28,14 +23,6 @@ func (a *App) mount(mux *http.ServeMux) {
 	mux.HandleFunc("POST /webhook", a.webhook)
 	mux.Handle("POST /upload", a.authenticated(http.HandlerFunc(a.upload)))
 	mux.Handle("GET /lesson/{id}", a.authenticated(http.HandlerFunc(a.lesson)))
-}
-
-// healthz — жив ли процесс. База сюда не ходит: readiness и liveness это
-// разные вопросы, и упавшая база не повод перезапускать процесс.
-func (a *App) healthz(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(`{"status":"ok"}`))
 }
 
 // authenticated — обвязка сессии. Отказ уезжает через тот же ответчик, что и

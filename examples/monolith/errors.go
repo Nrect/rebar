@@ -3,6 +3,7 @@ package monolith
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/nrect/rebar/auth/loginid"
 	"github.com/nrect/rebar/auth/password"
@@ -41,15 +42,16 @@ func denialOf(d authz.Decision) error {
 }
 
 // newResponder — ответчик ручек для людей: слаг продукта поверх класса.
-func newResponder() *httperr.Responder {
-	return httperr.New(httperr.Config{RequestID: reqid.From, Translate: translate})
+// Ошибку ручки пишет он, в логгер процесса; своя запись рядом — дубль.
+func newResponder(log *slog.Logger) *httperr.Responder {
+	return httperr.New(httperr.Config{RequestID: reqid.From, Translate: translate, Logger: log})
 }
 
 // newClassResponder — ответчик ручек для машины (вебхук): класс без Translate.
 // Машине слаги продукта не нужны, а правило, совпавшее с ошибкой хука глубоко
 // под ErrUnavailable, превратило бы 503 в 4xx, и провайдер перестал бы повторять.
-func newClassResponder() *httperr.Responder {
-	return httperr.New(httperr.Config{RequestID: reqid.From})
+func newClassResponder(log *slog.Logger) *httperr.Responder {
+	return httperr.New(httperr.Config{RequestID: reqid.From, Logger: log})
 }
 
 // rule — «эта доменная ошибка отвечает этим слагом и этим классом».
