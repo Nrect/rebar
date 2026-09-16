@@ -1,7 +1,5 @@
 # Исключения стража времени (scripts/timeguard.sh): путь<TAB>строка кода<TAB>причина.
 # Починил — вычеркни: запись, которой нет в коде, роняет стража.
-idem/purge.go	return &Purger{pruner: pruner, retention: cfg.Retention, now: time.Now}	часы по умолчанию без UTC; модуль вне тегов — волна часов в UTC (ROADMAP, «Признанные долги»)
-idem/idemtest/memstore.go	now:      time.Now,	часы по умолчанию без UTC; модуль вне тегов — волна часов в UTC (ROADMAP, «Признанные долги»)
 outbox/outboxotel/handlers.go	start := time.Now()	длительность хендлера по монотонным часам (time.Since), момент не хранится
 inbox/service.go	now: time.Now,	часы по умолчанию без UTC; модуль вне тегов — волна часов в UTC (ROADMAP, «Признанные долги»)
 auth/session/service.go	return &Service{cfg: cfg, deps: deps, now: time.Now}	часы по умолчанию без UTC; модуль в заморозке 7c1a927 — волна часов в UTC после тегов (ROADMAP)

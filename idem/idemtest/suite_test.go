@@ -15,6 +15,6 @@ func TestMemStore_Suite(t *testing.T) {
 	idemtest.RunDoSuite(t, func(_ *testing.T, cfg idem.Config, obs idem.Observer, now func() time.Time) idemtest.Subject {
 		store := idemtest.NewMemStore(cfg, obs)
 		store.SetClock(now)
-		return idemtest.Subject{Do: store.Do, Pruner: store}
+		return idemtest.Subject{Do: store.Do, Pruner: store, Reader: store}
 	})
 }

@@ -31,7 +31,7 @@ type opFunc = func(ctx context.Context, tx pgx.Tx) (idem.Response, error)
 
 // New паникует на nil-пуле, nil-наблюдателе и негодном Config: ошибка сборки
 // падает на старте. Config и наблюдатель те же, что у idemtest.NewMemStore;
-// Config копируется.
+// Config копируется, obs.Watch — по каждой его операции.
 func New(pool *pgxpool.Pool, cfg idem.Config, obs idem.Observer) *Store {
 	if pool == nil {
 		panic("idempg.New: nil pool")
@@ -43,6 +43,9 @@ func New(pool *pgxpool.Pool, cfg idem.Config, obs idem.Observer) *Store {
 		panic("idempg.New: " + err.Error())
 	}
 	cfg.Operations = slices.Clone(cfg.Operations)
+	for _, op := range cfg.Operations {
+		obs.Watch(op)
+	}
 	return &Store{pool: pool, cfg: cfg, obs: obs, now: func() time.Time { return time.Now().UTC() }}
 }
 

@@ -4,12 +4,26 @@ import (
 	"context"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/nrect/rebar/idem"
 )
+
+// Часы по умолчанию — в UTC (CONVENTIONS §11). Сверка изнутри: момент записи
+// приводится к timestamptz и без этого, и снаружи пояс часов не виден.
+func TestMemStore_DefaultClockIsUTC(t *testing.T) {
+	t.Parallel()
+
+	now := NewMemStore(suiteConfig(), NewObserver()).now()
+	assert.True(t, inUTC(now), "часы по умолчанию в поясе %q, а не time.UTC", now.Location())
+}
+
+// inUTC — пояс сверяется указателем, а не именем: time.Local при TZ=UTC тоже
+// зовётся «UTC».
+func inUTC(moment time.Time) bool { return moment.Location() == time.UTC }
 
 // ИСКЛЮЧЕНИЕ ПО КЛЮЧУ, А НЕ ОБЩИМ ЗАМКОМ: op идёт без замка двойника, иначе
 // параллельный вызов ждал бы вместо in_flight (ADR-0012, решение 14).

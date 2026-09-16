@@ -170,15 +170,19 @@ func TestMemStore_KnobsAreRaceFree(t *testing.T) {
 	knobs.Wait()
 }
 
-// Наблюдатель отдаёт копию: правка полученного среза его память не меняет.
-func TestObserver_OutcomesIsACopy(t *testing.T) {
+// Наблюдатель отдаёт копии: правка полученного среза его память не меняет.
+func TestObserver_ReturnsCopies(t *testing.T) {
 	t.Parallel()
 
 	obs := idemtest.NewObserver()
+	obs.Watch("orders.create")
 	obs.Outcome(t.Context(), "orders.create", idem.OutcomeExecuted)
-	got := obs.Outcomes()
-	got[0].Outcome = idem.OutcomeError
+	outcomes := obs.Outcomes()
+	outcomes[0].Outcome = idem.OutcomeError
+	watched := obs.Watched()
+	watched[0] = "orders.mutated"
 	assert.Equal(t, idem.OutcomeExecuted, obs.Outcomes()[0].Outcome)
+	assert.Equal(t, []idem.Operation{"orders.create"}, obs.Watched())
 }
 
 func TestClock(t *testing.T) {

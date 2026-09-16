@@ -14,17 +14,32 @@ type Observed struct {
 	Outcome   idem.Outcome
 }
 
-// Observer — двойник idem.Observer: запоминает исходы по порядку.
-// Потокобезопасен: Do зовут параллельные запросы.
+// Observer — двойник idem.Observer: запоминает операции Watch и исходы по
+// порядку. Потокобезопасен: Do зовут параллельные запросы.
 type Observer struct {
 	mu       sync.Mutex
+	watched  []idem.Operation
 	outcomes []Observed
 }
 
 var _ idem.Observer = (*Observer)(nil)
 
-// NewObserver — двойник наблюдателя без исходов.
+// NewObserver — двойник наблюдателя без операций и исходов.
 func NewObserver() *Observer { return &Observer{} }
+
+// Watch запоминает операцию.
+func (o *Observer) Watch(op idem.Operation) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.watched = append(o.watched, op)
+}
+
+// Watched — операции в порядке Watch; копия.
+func (o *Observer) Watched() []idem.Operation {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return slices.Clone(o.watched)
+}
 
 // Outcome запоминает исход.
 func (o *Observer) Outcome(_ context.Context, op idem.Operation, outcome idem.Outcome) {

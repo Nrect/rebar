@@ -45,8 +45,9 @@ type record struct {
 }
 
 // NewMemStore — пустое хранилище. Паникует на nil-наблюдателе и негодном
-// Config, как конструктор адаптера. Config копируется: правка набора операций
-// вызывающим хранилище не меняет.
+// Config, как конструктор адаптера, и так же зовёт obs.Watch по каждой
+// операции Config. Config копируется: правка набора операций вызывающим
+// хранилище не меняет.
 func NewMemStore(cfg idem.Config, obs idem.Observer) *MemStore {
 	if obs == nil {
 		panic("idemtest.NewMemStore: observer must not be nil")
@@ -55,11 +56,14 @@ func NewMemStore(cfg idem.Config, obs idem.Observer) *MemStore {
 		panic("idemtest.NewMemStore: " + err.Error())
 	}
 	cfg.Operations = slices.Clone(cfg.Operations)
+	for _, op := range cfg.Operations {
+		obs.Watch(op)
+	}
 	return &MemStore{
 		cfg: cfg, obs: obs,
 		records:  map[recordKey]record{},
 		inFlight: map[recordKey]bool{},
-		now:      time.Now,
+		now:      func() time.Time { return time.Now().UTC() },
 	}
 }
 
@@ -219,6 +223,15 @@ func (m *MemStore) Purge(ctx context.Context, before time.Time, limit int) (int,
 		delete(m.records, o.key)
 	}
 	return len(old), nil
+}
+
+// CreatedAt — момент записи под ключом области мимо порта, для утверждений
+// теста (Reader набора); false — записи нет.
+func (m *MemStore) CreatedAt(_ context.Context, scope idem.Scope, key idem.Key) (time.Time, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, ok := m.records[recordKey{realm: scope.Realm, subject: scope.Subject, key: key.String()}]
+	return r.createdAt, ok, nil
 }
 
 // fail — отменённый контекст и заданный сбой: оба в idem.ErrUnavailable, как у

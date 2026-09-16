@@ -7,9 +7,8 @@
 `Retry-After: 1`. Решения и доводы — [ADR-0012](../docs/adr/0012-inbox-idempotency.md),
 решения 9–17.
 
-Состояние: ядро, двойник с контрактным набором, `idemhttp` и хранилище Postgres
-`idempg`. Метрики `idemotel` — следующий шаг; до него наблюдатель —
-`idem.LogObserver`.
+Состояние: ядро, двойник с контрактным набором, `idemhttp`, хранилище Postgres
+`idempg` и метрики `idemotel` — все три шага ADR-0012.
 
 ## Когда брать
 
@@ -84,7 +83,7 @@ func migrateIdem(ctx context.Context, db *sql.DB) error {
 `INSERT` и `DELETE` на `idem_records`.
 
 ```go
-store := idempg.New(pool, cfg, idem.LogObserver(logger))
+store := idempg.New(pool, cfg, obs) // obs — idemotel.NewObserver(meter) или idem.LogObserver(logger)
 if err := store.CheckSchema(ctx); err != nil {
 	return err // миграции не накатаны или схема расходится с ними
 }
@@ -148,14 +147,19 @@ res, err := store.Do(r.Context(), req, func(ctx context.Context, tx pgx.Tx) (ide
 моменты как в `timestamptz`, отмена и `SetErr` в `ErrUnavailable`. Код теста
 отличается от прода конструктором хранилища и формой op — без `pgx.Tx`.
 Ручки двойника — сеттеры под замком: их можно дёргать, пока ручка обслуживает
-запрос.
+запрос. `idemtest.Observer` запоминает операции `Watch` и исходы;
+`idemtest.RunDoSuite` — контрактный набор для своего хранилища, `Reader` — его
+окно мимо порта.
 
 ## Наблюдаемость
 
-`Observer` обязателен у хранилища: `idemotel` (следующий шаг) или
-`idem.LogObserver`. Метрика `idem_requests{operation,outcome}` и алерты —
-ADR-0012, решение 16: «ответ не записывается» (`not_recordable|too_large`,
-порог 1), «ключи переиспользуют» (`reused`), «уборка умерла»
-(`cron_*{job="idem_purge"}`).
+`Observer` обязателен у хранилища: `idemotel.NewObserver(meter)` — счётчик
+`idem_requests{operation,outcome}`, `idem.LogObserver` — для проекта без
+метрик. Ряды заводит сборка хранилища: `idempg.New` и `idemtest.NewMemStore`
+зовут `Watch` по каждой операции `Config`, и операции, забытой метрикой, не
+бывает. Алерты — «ответ не записывается» (`not_recordable|too_large`, порог 1),
+«ключи переиспользуют» (`reused`, предупреждение), «уборка умерла»
+(`cron_last_success_timestamp_seconds{job="idem_purge"}` старше двух
+интервалов). PromQL и таблица — [idemotel/doc.go](idemotel/doc.go).
 
 Инварианты и «Чего нет» — [doc.go](doc.go); изменения — [CHANGELOG.md](CHANGELOG.md).
