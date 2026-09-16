@@ -44,6 +44,34 @@
   машине: каждый мутант ходит в базу.
 
 ### Changed
+- **Ломающее: схема `entitlementpg` переехала в миграции,
+  `entitlementpg.Schema` убран
+  ([ADR-0011](../docs/adr/0011-migrations-in-blocks.md)).**
+  `entitlementpg/schema.sql` стал
+  `entitlementpg/migrations/00001_entitlement_init.sql`, каталог отдаёт
+  `entitlementpg.Migrations() fs.FS`; строка `Schema` со снимком схемы ушла
+  вместе с файлом (решение 5), замена — `Migrations()`. В теге `entitlementpg`
+  ещё не выходил (в `v0.1.0` его нет): сборка ломается только у того, кто взял
+  его псевдоверсией. Накатывает раннер проекта со своей таблицей версий
+  `entitlement_schema_version`: у goose —
+  `goose.NewProvider(goose.DialectPostgres, db, entitlementpg.Migrations(),
+  goose.WithTableName("entitlement_schema_version"))`; модуль goose не
+  импортирует. Первая миграция идемпотентна: `CREATE TABLE IF NOT EXISTS`;
+  `Down` — `DROP TABLE IF EXISTS`. Колонки, CHECK и имена не менялись.
+  Подсказки `CheckSchema` — «накатите `entitlementpg.Migrations()` раннером
+  проекта» вместо «скопируйте `schema.sql`» и «сверьте миграцию». Тесты
+  адаптера накатывают каталог; поставку каталога и форму первой миграции
+  держат `TestMigrations_Catalog` и `TestInitMigration_HoldsContract`, накат и
+  двойной откат — `TestMigrations_UpDownUp`, повторный накат с данными —
+  `TestMigrations_ReapplyOnAppliedSchema`. Они сменили
+  `TestSchemaFile_HoldsContract`, `TestSchema_AppliesBothWays` и
+  `TestSchema_EmbedMatchesFile`; `TestExpectedColumns_MatchSchemaFile` стал
+  `TestExpectedColumns_MatchMigrations`.
+  **Переход базы, где схема уже накатана копией `schema.sql`:** `CheckSchema`
+  зелёный — затем отметить первую миграцию применённой, не выполняя
+  (`GetDBVersion` провайдера заводит `entitlement_schema_version`, затем
+  `INSERT INTO entitlement_schema_version (version_id, is_applied) VALUES (1, true)`;
+  таблицу версий руками не создавать — решение 4).
 - **Контракт `Store.Grant`: предмет вне `1..MaxItemIDLen` байт — `ErrInvalidGrant`,
   и выдачи не остаётся.** `entitlementtest.MemStore` принимал пустой и
   переросший предмет, а адаптер отвергает его CHECK: потребитель, пишущий

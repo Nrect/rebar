@@ -44,12 +44,12 @@ const item = "course.algebra"
 // moment — момент выдачи. Время в порту — параметр, часы тестам не нужны.
 func moment() time.Time { return time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC) }
 
-// newStore — схема на тест плюс накат из schema.sql: тестируется артефакт,
-// который уедет в миграции потребителя, а не его копия в коде.
+// newStore — схема на тест плюс накат каталога миграций: тестируется артефакт,
+// который уедет раннеру потребителя, а не его копия в коде.
 func newStore(t *testing.T) (*entitlementpg.Store, *pgxpool.Pool) {
 	t.Helper()
 	pool := newSchemaPool(t)
-	pgtest.Apply(t, pool, pgtest.GooseUp(t, schemaPath))
+	applyUp(t, pool)
 	return entitlementpg.New(pool), pool
 }
 

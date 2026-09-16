@@ -1,5 +1,10 @@
--- Схема выдач пакета entitlement (ADR-0003). Файл копируется в каталог
--- миграций потребителя как есть; раннера миграций в пакете нет.
+-- Схема выдач пакета entitlement (ADR-0003), первая миграция (ADR-0011).
+-- Накатывает раннер потребителя, пакет её только везёт. Выпущенный файл не
+-- правится: изменение схемы — новый файл (ADR-0011, решение 6).
+--
+-- ИДЕМПОТЕНТНА: повторный накат на базу, где схема уже стоит, проходит.
+-- Существующую таблицу IF NOT EXISTS не сверяет — это делает CheckSchema
+-- (ADR-0011, решение 4).
 --
 -- ТОЛЬКО ВЫДАЧИ. Таблиц каталога из наброска в entitlement/doc.go
 -- (entitlement_products, entitlement_product_items) здесь нет: порт Store их
@@ -11,7 +16,7 @@
 -- +goose Up
 -- Выдача. subject_id без внешнего ключа: имени таблицы пользователей
 -- пакет не знает, FK добавляет потребитель своей миграцией.
-CREATE TABLE entitlement_grants (
+CREATE TABLE IF NOT EXISTS entitlement_grants (
     subject_id uuid        NOT NULL,
     item_id    text        NOT NULL,
     expires_at timestamptz,           -- NULL — бессрочно
@@ -25,4 +30,5 @@ CREATE TABLE entitlement_grants (
 );
 
 -- +goose Down
-DROP TABLE entitlement_grants;
+-- Идемпотентна (ADR-0011, уточнение 1): стенды гоняют Up и Down по кругу.
+DROP TABLE IF EXISTS entitlement_grants;
