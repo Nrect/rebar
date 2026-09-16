@@ -51,14 +51,24 @@ func (c *Collector) SetClock(now func() time.Time) {
 // СБОЙ IsOwned ОСТАНАВЛИВАЕТ ПРОГОН. Недоступный источник владения признал бы
 // сиротами всех, а «считаем сиротой при ошибке» — это способ удалить бакет
 // целиком одной недоступной базой (ADR-0006).
+//
+// ОТМЕНА ctx РЕЖЕТ ОБХОД ПОСРЕДИ СТРАНИЦЫ. Удалённое до неё удалено и
+// посчитано, остальное ждёт следующего прогона. Ошибка — причина отмены как
+// есть, без ErrUnavailable: s3 отдаёт оборванный запрос сбоем транспорта, и
+// выключение выглядело бы тревогой «хранилище недоступно». Класса у отмены нет:
+// context.Canceled не ошибка тулкита, её переводит вызывающий (ADR-0007, «Чего
+// НЕТ»).
 func (c *Collector) Run(ctx context.Context) (int, error) {
 	deadline := c.now().Add(-c.cfg.MinAge)
 	var collected int
 	var cursor string
 	for {
+		if err := ctx.Err(); err != nil {
+			return collected, err
+		}
 		page, err := c.store.List(ctx, c.cfg.Prefix, cursor, c.cfg.BatchSize)
 		if err != nil {
-			return collected, fmt.Errorf("%w: list", ErrUnavailable)
+			return collected, stopped(ctx, fmt.Errorf("%w: list", ErrUnavailable))
 		}
 		n, err := c.sweep(ctx, page.Objects, deadline)
 		collected += n
@@ -90,17 +100,27 @@ func (c *Collector) sweep(ctx context.Context, objects []Object, deadline time.T
 		}
 		owned, err := c.owned.IsOwned(ctx, obj.Key)
 		if err != nil {
-			return collected, fmt.Errorf("%w: ownership is unknown, run stopped", ErrUnavailable)
+			return collected, stopped(ctx, fmt.Errorf("%w: ownership is unknown, run stopped", ErrUnavailable))
 		}
 		if owned {
 			continue
 		}
 		if c.cfg.Mode == CollectDelete {
 			if err = c.store.Delete(ctx, obj.Key); err != nil {
-				return collected, fmt.Errorf("%w: delete", ErrUnavailable)
+				return collected, stopped(ctx, fmt.Errorf("%w: delete", ErrUnavailable))
 			}
 		}
 		collected++
 	}
 	return collected, nil
+}
+
+// stopped — ошибка, на которой встал прогон: при отменённом ctx — причина
+// отмены, а не сбой порта. Порт отмену может и не пропустить: s3 отдаёт её
+// ErrUnavailable без причины в цепочке.
+func stopped(ctx context.Context, failure error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return failure
 }

@@ -114,6 +114,19 @@
   `TestMemStore_IgnoresCancelledContextLikeFS`.
 
 ### Fixed
+- **`Collector.Run` отдаёт причину отмены как есть, а не `ErrUnavailable`.**
+  Было: сбой `List`, `IsOwned` и `Delete` сворачивался в `ErrUnavailable` без
+  причины, а `s3` отдаёт оборванный отменой запрос сбоем транспорта — и
+  выключение процесса посреди обхода выглядело у планировщика тревогой
+  «хранилище недоступно»: `errors.Is(err, context.Canceled)` ложно. Контракт
+  `TestCollector_StopsOnCancelledContext` держался только тем, что `fs` и
+  двойник отмену пропускали. Стало: при отменённом `ctx` прогон отдаёт
+  `ctx.Err()` — перед каждым `List` и после сбоя любого порта. Класса у отмены
+  нет: `context.Canceled` не ошибка тулкита, её переводит вызывающий
+  ([ADR-0007, «Чего НЕТ»](../docs/adr/0007-error-kind.md)). Держат
+  `TestCollector_CancelDuringPortCallIsNotUnavailable` — порт, запрос к
+  которому обрывает отмена, как у `s3`, — и
+  `TestCollector_CancelledRunDoesNotList`.
 - Интеграционный тест `s3` берёт образ MinIO с `quay.io`, а не с Docker Hub:
   тот отвечает «pull access denied … repository does not exist» без
   `docker login`, и `make chip-check MODULE=objectstore` краснел у всех.

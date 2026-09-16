@@ -3,6 +3,7 @@ package objectstore_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -148,6 +149,58 @@ func TestCollector_StopsOnCancelledContext(t *testing.T) {
 	assert.Len(t, store.Keys(), 1)
 }
 
+// ОТМЕНА ПОСРЕДИ ЗАПРОСА К ПОРТУ — НЕ ТРЕВОГА. Оборванный отменой запрос порт
+// отдаёт сбоем, а s3 — ErrUnavailable без причины в цепочке. Прогон обязан
+// вернуть причину отмены: иначе каждое выключение процесса посреди обхода
+// выглядит у планировщика как «хранилище недоступно».
+func TestCollector_CancelDuringPortCallIsNotUnavailable(t *testing.T) {
+	t.Parallel()
+	orphan := testPrefix + "/orphan.png"
+	for _, cut := range []string{"List", "IsOwned", "Delete"} {
+		t.Run(cut, func(t *testing.T) {
+			t.Parallel()
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			store := &cancellingStore{
+				MemStore: objectstoretest.NewMemStore(), cancel: cancel,
+				cutList: cut == "List", cutDelete: cut == "Delete",
+			}
+			store.Seed(orphan, []byte("body"), testNow.Add(-2*time.Hour))
+			var owned objectstore.Owned = objectstoretest.NewMemOwned()
+			if cut == "IsOwned" {
+				owned = cancellingOwned{cancel: cancel}
+			}
+			c := objectstore.NewCollector(store, owned, testCollectorConfig(objectstore.CollectDelete))
+			c.SetClock(func() time.Time { return testNow })
+
+			collected, err := c.Run(ctx)
+
+			require.ErrorIs(t, err, context.Canceled)
+			require.NotErrorIs(t, err, objectstore.ErrUnavailable, "выключение выглядит сбоем хранилища")
+			assert.Zero(t, collected)
+			assert.Equal(t, []string{orphan}, store.Keys())
+		})
+	}
+}
+
+// ОТМЕНЁННЫЙ ПРОГОН В ХРАНИЛИЩЕ НЕ ХОДИТ. Отмену видно и у хранилища, которое
+// контекст не читает (fs), на пустой странице: без проверки до List прогон
+// отчитался бы успехом.
+func TestCollector_CancelledRunDoesNotList(t *testing.T) {
+	t.Parallel()
+	store := &countingStore{}
+	c := objectstore.NewCollector(store, objectstoretest.NewMemOwned(), testCollectorConfig(objectstore.CollectDelete))
+	c.SetClock(func() time.Time { return testNow })
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	collected, err := c.Run(ctx)
+
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Zero(t, collected)
+	assert.Zero(t, store.lists, "отменённый прогон сходил в хранилище")
+}
+
 // Сбой хранилища тоже останавливает прогон и не рассказывает подробностей.
 func TestCollector_StopsOnListFailure(t *testing.T) {
 	t.Parallel()
@@ -188,3 +241,48 @@ func (stuckCursorStore) Presign(context.Context, string, objectstore.Method, tim
 	return "", objectstore.ErrUnavailable
 }
 func (stuckCursorStore) PublicURL(string) string { return "" }
+
+// countingStore — хранилище, которое контекст не читает, как fs: считает
+// обращения к List и отдаёт пустую страницу.
+type countingStore struct {
+	stuckCursorStore
+	lists int
+}
+
+func (s *countingStore) List(context.Context, string, string, int) (objectstore.Page, error) {
+	s.lists++
+	return objectstore.Page{}, nil
+}
+
+// cancellingStore — хранилище, названный метод которого обрывает отмена
+// посреди запроса, как у s3: ctx отменяется, наружу — ErrUnavailable без
+// причины в цепочке.
+type cancellingStore struct {
+	*objectstoretest.MemStore
+	cancel             context.CancelFunc
+	cutList, cutDelete bool
+}
+
+func (s *cancellingStore) List(ctx context.Context, prefix, cursor string, limit int) (objectstore.Page, error) {
+	if s.cutList {
+		s.cancel()
+		return objectstore.Page{}, fmt.Errorf("%w: list: no response", objectstore.ErrUnavailable)
+	}
+	return s.MemStore.List(ctx, prefix, cursor, limit)
+}
+
+func (s *cancellingStore) Delete(ctx context.Context, key string) error {
+	if s.cutDelete {
+		s.cancel()
+		return fmt.Errorf("%w: delete: no response", objectstore.ErrUnavailable)
+	}
+	return s.MemStore.Delete(ctx, key)
+}
+
+// cancellingOwned — источник владения, запрос к которому обрывает отмена.
+type cancellingOwned struct{ cancel context.CancelFunc }
+
+func (o cancellingOwned) IsOwned(context.Context, string) (bool, error) {
+	o.cancel()
+	return false, errors.New("conn closed")
+}
