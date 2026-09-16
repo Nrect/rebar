@@ -1,8 +1,13 @@
--- Схема очереди пакета outbox (ADR-0002, раздел «Схема»). Файл копируется в
--- каталог миграций потребителя как есть; раннера миграций в пакете нет.
+-- Схема очереди пакета outbox (ADR-0002, раздел «Схема»), первая миграция
+-- (ADR-0011). Накатывает раннер потребителя, пакет её только везёт. Выпущенный
+-- файл не правится: изменение схемы — новый файл (ADR-0011, решение 6).
+--
+-- ИДЕМПОТЕНТНА: повторный накат на базу, где схема уже стоит, проходит.
+-- Существующую таблицу IF NOT EXISTS не сверяет — это делает CheckSchema
+-- (ADR-0011, решение 4).
 
 -- +goose Up
-CREATE TABLE outbox_messages (
+CREATE TABLE IF NOT EXISTS outbox_messages (
     id              UUID PRIMARY KEY,
     kind            TEXT NOT NULL CHECK (kind ~ '^[a-z0-9_.]{1,64}$'),
     payload         JSONB NOT NULL,
@@ -30,11 +35,13 @@ CREATE TABLE outbox_messages (
     CONSTRAINT outbox_messages_fail_chk CHECK ((status = 'failed') = (fail_reason <> ''))
 );
 -- имя индекса — часть контракта Store.Enqueue: конфликт разбирается по нему
-CREATE UNIQUE INDEX ux_outbox_messages_dedup ON outbox_messages (kind, dedup_key) WHERE dedup_key <> '';
-CREATE INDEX ix_outbox_messages_due ON outbox_messages (available_at, id) WHERE status IN ('pending','processing');
-CREATE INDEX ix_outbox_messages_terminal ON outbox_messages (updated_at) WHERE status IN ('done','expired');
-CREATE INDEX ix_outbox_messages_failed ON outbox_messages (updated_at) WHERE status = 'failed';
-CREATE INDEX ix_outbox_messages_aggregate ON outbox_messages (aggregate_type, aggregate_id, occurred_at, id);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_outbox_messages_dedup ON outbox_messages (kind, dedup_key) WHERE dedup_key <> '';
+CREATE INDEX IF NOT EXISTS ix_outbox_messages_due ON outbox_messages (available_at, id) WHERE status IN ('pending','processing');
+CREATE INDEX IF NOT EXISTS ix_outbox_messages_terminal ON outbox_messages (updated_at) WHERE status IN ('done','expired');
+CREATE INDEX IF NOT EXISTS ix_outbox_messages_failed ON outbox_messages (updated_at) WHERE status = 'failed';
+CREATE INDEX IF NOT EXISTS ix_outbox_messages_aggregate ON outbox_messages (aggregate_type, aggregate_id, occurred_at, id);
 
 -- +goose Down
-DROP TABLE outbox_messages;
+-- Идемпотентна (ADR-0011, уточнение 1): стенды гоняют Up и Down по кругу.
+-- Индексы уходят вместе с таблицей.
+DROP TABLE IF EXISTS outbox_messages;

@@ -12,7 +12,7 @@ import (
 	"github.com/nrect/rebar/outbox"
 )
 
-// Store — outbox.Store поверх таблицы outbox_messages (schema.sql).
+// Store — outbox.Store поверх таблицы outbox_messages (Migrations).
 type Store struct {
 	db executor
 }

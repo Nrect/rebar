@@ -6,6 +6,28 @@
 ## Unreleased
 
 ### Changed
+- **Ломающее: схема `outboxpg` переехала в миграции, `outboxpg.Schema` убран
+  ([ADR-0011](../docs/adr/0011-migrations-in-blocks.md)).**
+  `outboxpg/schema.sql` стал `outboxpg/migrations/00001_outbox_init.sql`,
+  каталог отдаёт `outboxpg.Migrations() fs.FS`; строка `Schema` со снимком
+  схемы ушла вместе с файлом (решение 5), замена — `Migrations()`. Накатывает
+  раннер проекта со своей таблицей версий `outbox_schema_version`: у goose —
+  `goose.NewProvider(goose.DialectPostgres, db, outboxpg.Migrations(),
+  goose.WithTableName("outbox_schema_version"))`; модуль goose не импортирует.
+  Первая миграция идемпотентна: `CREATE TABLE IF NOT EXISTS` и
+  `CREATE [UNIQUE] INDEX IF NOT EXISTS`; `Down` — `DROP TABLE IF EXISTS`.
+  Колонки, CHECK и имена индексов прежние. Подсказки `CheckSchema` —
+  «накатите `outboxpg.Migrations()` раннером проекта» вместо «скопируйте
+  `outboxpg/schema.sql` в миграции» и «сверьте миграцию»; отсылка
+  «(README, «Миграция»)» убрана — такого раздела у модуля нет. Тесты адаптера
+  накатывают каталог; стражи каталога и его поставку, накат, двойной откат и
+  повторный накат со строкой в очереди держат `TestMigrations_*`, форму первой
+  миграции — `TestInitMigration_HoldsContract`.
+  **Переход базы, где схема уже накатана копией `schema.sql`:** `CheckSchema`
+  зелёный — затем отметить первую миграцию применённой, не выполняя:
+  `GetDBVersion` провайдера заводит `outbox_schema_version`, затем
+  `INSERT INTO outbox_schema_version (version_id, is_applied) VALUES (1, true)`;
+  таблицу версий руками не создавать (решение 4).
 - **`outboxtest.MemStore` хранит и отдаёт моменты как `timestamptz`: в UTC и с
   точностью до микросекунд, — и с той же точностью сравнивает параметры
   (аренда в `Claim`, `Purge`).** Раньше двойник отдавал время как передали, с
