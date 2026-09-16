@@ -11,7 +11,7 @@ import (
 	"github.com/nrect/rebar/mail"
 )
 
-// Store — mail.Store поверх таблицы email_outbox (schema.sql).
+// Store — mail.Store поверх таблицы email_outbox (Migrations).
 type Store struct {
 	db executor
 }

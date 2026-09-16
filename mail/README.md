@@ -22,20 +22,37 @@ go get github.com/nrect/rebar/mail@v0.1.0
 
 ## Миграция
 
-Скопируйте схему в каталог миграций со своим номером. Файл в формате goose
-(`-- +goose Up` / `-- +goose Down`), менять его не нужно:
+Схема — миграции goose, их отдаёт `mailpg.Migrations()` (`fs.FS`). Накатывает
+раннер проекта со своей таблицей версий `mail_schema_version`: без
+`WithTableName` goose пишет в общую `goose_db_version`, и номера блоков тулкита
+в ней столкнутся.
 
-```bash
-cp "$(go list -m -f '{{.Dir}}' github.com/nrect/rebar/mail)/mailpg/schema.sql" migrations/0042_email_outbox.sql
+```go
+func migrateMail(ctx context.Context, db *sql.DB) error {
+	p, err := goose.NewProvider(goose.DialectPostgres, db, mailpg.Migrations(),
+		goose.WithTableName("mail_schema_version"))
+	if err != nil {
+		return err
+	}
+	_, err = p.Up(ctx)
+	return err
+}
 ```
 
-Если миграции применяются из кода, тот же файл доступен строкой
-`mailpg.Schema`. Пакет схему **не применяет** — автомиграция из библиотеки
-даёт две правды о схеме, требует DDL-прав у приложения и гонит реплики на
-старте. Вместо этого на старте зовите `store.CheckSchema(ctx)`: он сверяет
-колонки, CHECK-ограничения и индексы со `schema.sql` и возвращает одну ошибку
-со всеми расхождениями, первая строка — что делать. Свои колонки в таблицу
-добавлять можно, расхождением это не считается.
+Модуль goose не импортирует, а пакет схему **не применяет** — автомиграция из
+библиотеки даёт две правды о схеме, требует DDL-прав у приложения и гонит
+реплики на старте. Вместо этого на старте зовите `store.CheckSchema(ctx)`: он
+сверяет колонки, CHECK-ограничения и индексы с миграциями и возвращает одну
+ошибку со всеми расхождениями, первая строка — что делать. Свои колонки в
+таблицу добавлять можно, расхождением это не считается.
+
+**Переход базы, где схема уже накатана копией `schema.sql`.** Сперва зелёный
+`CheckSchema`; красный называет расхождение — чините своей миграцией и
+повторите. Затем отметьте первую миграцию применённой, не выполняя её:
+`p.GetDBVersion(ctx)` заводит `mail_schema_version`, затем
+`INSERT INTO mail_schema_version (version_id, is_applied) VALUES (1, true)`.
+Таблицу версий руками не создавайте: goose кладёт в неё нулевую строку и без
+неё отказывается работать.
 
 ## Проводка
 
@@ -46,7 +63,7 @@ if err != nil {
 }
 store := mailpg.New(pool)
 if err := store.CheckSchema(ctx); err != nil {
-	return err // миграция не применена или расходится со schema.sql
+	return err // миграции не накатаны или схема расходится с ними
 }
 
 // Транспорт: Yandex Cloud Postbox; для AWS SES — https://email.<region>.amazonaws.com.

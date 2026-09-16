@@ -28,6 +28,28 @@
   пачки под арендой, как раньше.
 
 ### Changed
+- **Ломающее: схема `mailpg` переехала в миграции, `mailpg.Schema` убран
+  ([ADR-0011](../docs/adr/0011-migrations-in-blocks.md)).**
+  `mailpg/schema.sql` стал `mailpg/migrations/00001_mail_init.sql`, каталог
+  отдаёт `mailpg.Migrations() fs.FS`; строка `Schema` со снимком схемы ушла
+  вместе с файлом (решение 5), замена — `Migrations()`. Накатывает раннер
+  проекта со своей таблицей версий `mail_schema_version` — по модулю, хотя
+  данные в `email_outbox`: у goose — `goose.NewProvider(goose.DialectPostgres,
+  db, mailpg.Migrations(), goose.WithTableName("mail_schema_version"))`; модуль
+  goose не импортирует. Первая миграция идемпотентна: `IF NOT EXISTS` у таблицы
+  и индексов; `Down` — `DROP TABLE IF EXISTS`. Подсказки `CheckSchema` —
+  «накатите `mailpg.Migrations()` раннером проекта» вместо «скопируйте
+  `mailpg/schema.sql` в миграции»; отсылка к README, «Миграция», осталась —
+  там теперь подключение раннера и переход. Тесты адаптера накатывают каталог;
+  поставку каталога, форму первой миграции, накат с откатом дважды и повторный
+  накат на таблицу с письмом держат `TestMigrations_Catalog`,
+  `TestInitMigration_HoldsContract`, `TestMigrations_UpDownUp` и
+  `TestMigrations_ReapplyOnAppliedSchema`.
+  **Переход базы, где схема уже накатана копией `schema.sql`:** `CheckSchema`
+  зелёный — затем отметить первую миграцию применённой, не выполняя:
+  `GetDBVersion` провайдера заводит `mail_schema_version`, затем
+  `INSERT INTO mail_schema_version (version_id, is_applied) VALUES (1, true)`;
+  таблицу версий руками не создавать (решение 4).
 - **`mailtest.MemStore` замечает отменённый контекст: каждый метод порта
   отвечает `mail.ErrUnavailable` с `context.Canceled` в цепочке — как
   `mailpg`, где отмена не доезжает до базы.** Раньше двойник контекст не

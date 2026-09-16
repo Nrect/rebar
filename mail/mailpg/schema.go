@@ -2,7 +2,6 @@ package mailpg
 
 import (
 	"context"
-	_ "embed"
 	"errors"
 	"fmt"
 	"maps"
@@ -11,18 +10,12 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// Schema — содержимое schema.sql (с маркерами goose) для потребителя, который
-// применяет миграции из кода, а не копирует файл. Побайтно равен файлу.
-//
-//go:embed schema.sql
-var Schema string
-
 const (
 	tableName = "email_outbox"
 
 	// Первая строка ошибки — что делать; расхождения перечисляются ниже неё.
-	missingTableHint = "mailpg.CheckSchema: таблицы email_outbox нет: скопируйте mailpg/schema.sql в миграции (README, «Миграция»)"
-	mismatchHint     = "mailpg.CheckSchema: таблица email_outbox расходится с mailpg/schema.sql — сверьте миграцию (README, «Миграция»)"
+	missingTableHint = "mailpg.CheckSchema: таблицы email_outbox нет: накатите mailpg.Migrations() раннером проекта (README, «Миграция»)"
+	mismatchHint     = "mailpg.CheckSchema: схема расходится с миграциями — накатите mailpg.Migrations() раннером проекта; что осталось после наката, чините своей миграцией (README, «Миграция»)"
 )
 
 // Типы из information_schema.columns.data_type.
@@ -32,7 +25,7 @@ const (
 )
 
 // expectedColumns — колонки и их data_type из information_schema.columns;
-// меняется только вместе со schema.sql (страж — TestExpectedColumns_MatchSchemaFile).
+// меняется только вместе с миграциями (страж — TestExpectedColumns_MatchMigrations).
 var expectedColumns = map[string]string{
 	"id":                  "uuid",
 	"kind":                typeText,
@@ -92,10 +85,12 @@ const checksSQL = `SELECT conname FROM pg_constraint WHERE conrelid = $1 AND con
 const indexesSQL = `SELECT indexname, indexdef LIKE 'CREATE UNIQUE INDEX %'
 FROM pg_indexes WHERE schemaname = $1 AND tablename = $2`
 
-// CheckSchema сверяет таблицу email_outbox со schema.sql, ничего не меняя:
-// колонки и их типы, CHECK-ограничения, индексы. Зовётся на старте
-// потребителя: миграцию применяет он сам, пакет только проверяет
-// (README, «Миграция»). Лишние колонки потребителя расхождением не считаются.
+// CheckSchema сверяет таблицу email_outbox с миграциями Migrations(), ничего не
+// меняя: колонки и их типы, CHECK-ограничения, индексы. Зовётся на старте
+// потребителя: миграции накатывает он сам, пакет только проверяет
+// (README, «Миграция»). Зелёный CheckSchema — условие, при котором базу со
+// старой копией схемы можно отметить накатанной (ADR-0011, решение 4). Лишние
+// колонки потребителя расхождением не считаются.
 //
 // Все расхождения — в одной ошибке (errors.Join), первая строка — что делать.
 // Сбой запроса к каталогу — mail.ErrUnavailable. Данных таблицы в ошибке нет.
