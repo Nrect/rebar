@@ -7,9 +7,9 @@
 `Retry-After: 1`. Решения и доводы — [ADR-0012](../docs/adr/0012-inbox-idempotency.md),
 решения 9–17.
 
-Состояние: ядро, двойник с контрактным набором и `idemhttp`. Адаптер Postgres
-`idempg` и метрики `idemotel` — следующие шаги; до них модуль годится для
-тестов ручек, но не для прода.
+Состояние: ядро, двойник с контрактным набором, `idemhttp` и хранилище Postgres
+`idempg`. Метрики `idemotel` — следующий шаг; до него наблюдатель —
+`idem.LogObserver`.
 
 ## Когда брать
 
@@ -58,6 +58,59 @@ cfg := idem.Config{
 	MaxResponseBytes: 64 << 10,                                            // тело и заголовки; больше — откат
 }
 ```
+
+## Хранилище Postgres
+
+Схема — миграции goose, их отдаёт `idempg.Migrations()` (`fs.FS`). Накатывает
+раннер проекта со своей таблицей версий `idem_schema_version`: без
+`WithTableName` goose пишет в общую `goose_db_version`, и номера блоков тулкита
+в ней столкнутся. Модуль goose не импортирует и схему не применяет.
+
+```go
+func migrateIdem(ctx context.Context, db *sql.DB) error {
+	p, err := goose.NewProvider(goose.DialectPostgres, db, idempg.Migrations(),
+		goose.WithTableName("idem_schema_version"))
+	if err != nil {
+		return err
+	}
+	_, err = p.Up(ctx)
+	return err
+}
+```
+
+Сборка на старте — тот же `Config`, что у двойника, и наблюдатель.
+`CheckSchema` зовут старт и `/readyz`: он сверяет колонки, ограничения и
+индексы и называет каждое расхождение. Роли приложения достаточно `SELECT`,
+`INSERT` и `DELETE` на `idem_records`.
+
+```go
+store := idempg.New(pool, cfg, idem.LogObserver(logger))
+if err := store.CheckSchema(ctx); err != nil {
+	return err // миграции не накатаны или схема расходится с ними
+}
+purge := idem.NewPurger(store, cfg) // purge.Run — задача планировщика
+```
+
+В ручке op получает транзакцию `Do`: эффект пишется в неё, и ответ ложится
+вместе с ним.
+
+```go
+res, err := store.Do(r.Context(), req, func(ctx context.Context, tx pgx.Tx) (idem.Response, error) {
+	id, err := orders.WithTx(tx).Create(ctx, in)
+	if err != nil {
+		return idem.Response{}, err // откат, записи нет: повтор исполнит op заново
+	}
+	resp, err := idemhttp.JSON(http.StatusCreated, map[string]string{"order": id})
+	resp.Location = "/orders/" + id
+	return resp, err
+})
+```
+
+Транзакция уже открыта ручкой — `store.WithTx(tx).Do(ctx, req, op)`. **Ошибку
+`Do` в `WithTx` не игнорировать:** адаптер прерывает транзакцию, и `COMMIT`
+вернёт `commit unexpectedly resulted in rollback`, а в логе базы и трассировке
+будет запрос с текстом `idempg: транзакция прервана после отказа`. Иначе эффект
+закоммитился бы без записи, и повтор исполнил бы его второй раз.
 
 ## Что нельзя ломать
 
