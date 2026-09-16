@@ -8,6 +8,12 @@
 
 ### Changed
 
+- `App.SetClock` отдаёт те же часы каждому блоку со своими часами — `session`,
+  `mail`, `outbox` (Producer и Worker), `audit`, `entitlement`, `authzpg`,
+  `payment`, `objectstore.Collector`, `scheduler` (docs/CONSUMER.md, §8, п. 1);
+  после `Start` — паника. `TestClock_HandlersTakeAppClock` сверяет и моменты
+  блоков: токен и сессию, письмо, журнал, намерение, событие, книгу и выдачи,
+  outbox, штамп планировщика, сироту по `MinAge`.
 - **Схемы блоков — их `Migrations()` (ADR-0011).** Копии `00001_auth.sql` …
   `00007_entitlement.sql` удалены. В каталоге монолита только его таблицы:
   `00001_shop_init.sql` — `shop_users`, `shop_orders`, `shop_uploads`. Таблицы
