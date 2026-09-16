@@ -100,8 +100,12 @@ jobs:
       # Интеграционные тесты (testcontainers: Mailpit, Postgres) идут здесь же:
       # у ubuntu-latest есть Docker. Без него адаптеры проверялись бы только
       # двойниками, то есть контракт атомарности — никем.
+      # Пояс не UTC, с получасовым смещением и летним временем: код, тайком
+      # зависящий от пояса машины, падает здесь (docs/CORRECTNESS.md, §8).
       - name: go test -race
         working-directory: ${{ matrix.module }}
+        env:
+          TZ: America/St_Johns
         run: go test ./... -race -count=1 -coverprofile=cover.out -covermode=atomic -timeout=600s
 
   govulncheck:
@@ -135,6 +139,16 @@ jobs:
         run: ./scripts/toolchain-lockstep.sh
       - name: общие зависимости одной версии
         run: ./scripts/deps-lockstep.sh
+
+  timeguard:
+    name: Время — UTC и параметром
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: миграции и код прода без времени мимо UTC
+        run: ./scripts/timeguard.sh
 
   # Пример — гейт тегов: модуль, который не собирается вместе с соседями,
   # тега не получает. На PR не гоняется (каталог трогают редко), на main и по
