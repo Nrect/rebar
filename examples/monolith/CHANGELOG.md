@@ -128,6 +128,9 @@
 
 ### Added
 
+- `TestOpen_PinsUTC` сторожит `postgres.WithUTC` в `shoppg.Open`: DSN просит
+  `timezone=Asia/Kathmandu`, а пул отвечает `SHOW TimeZone` = UTC; тот же DSN
+  мимо `Open` — контроль, Asia/Kathmandu.
 - `TestSettlerCommitFailure_RollsBackGrants` и
   `TestRefundCommitFailure_KeepsGrants`: отложенный триггер на `outbox_messages`
   роняет COMMIT после всех шагов хука — выдача (и отзыв) прав, заказ и событие
