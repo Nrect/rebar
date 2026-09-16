@@ -10,8 +10,8 @@
 // Одинаковость остального держит idemtest.RunDoSuite. Пример подключения —
 // example_test.go, рецепт — README.md.
 //
-// Ядро — stdlib и kit; двойник и контрактный набор — idemtest; HTTP — idemhttp.
-// Адаптер Postgres (idempg) и метрики (idemotel) — следующие шаги ADR-0012.
+// Ядро — stdlib и kit; двойник и контрактный набор — idemtest; HTTP — idemhttp;
+// хранилище Postgres — idempg. Метрики (idemotel) — следующий шаг ADR-0012.
 // Метрика idem_requests{operation,outcome} и алерты — там же, решение 16.
 //
 // Безопасность:
