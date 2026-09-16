@@ -91,31 +91,44 @@ func TestMemStore_SetClockPanicsOnNil(t *testing.T) {
 		func() { store.SetClock(nil) })
 }
 
-// ОТМЕНЁННЫЙ КОНТЕКСТ ДВОЙНИК НЕ СМОТРИТ — как fs, и это решение, записанное у
-// MemStore, а не упущение. Тест сторожит его с обеих сторон: отмена проходит
-// как обычный вызов, а не как отказ, — иначе контракт Collector.Run «отмена
-// останавливает прогон с context.Canceled» стал бы недостижимым (ядро читает
-// контекст само, а ошибку List сворачивает в ErrUnavailable без причины).
-// Расхождение с s3, который на отмене падает транспортом, — открытый долг
-// (docs/ROADMAP.md), и чинится он в ядре, а не здесь.
-func TestMemStore_IgnoresCancelledContextLikeFS(t *testing.T) {
+// ОТМЕНЁННЫЙ КОНТЕКСТ — КАК У s3: Put, Delete и List отвечают
+// objectstore.ErrUnavailable без причины в цепочке и хранилище не меняют. То,
+// что s3 решает до запроса, отмена не перебивает: пустой ключ остаётся
+// ErrBadKey, непозитивный лимит — пустой страницей, Presign — ссылкой. Пару
+// сторожит TestS3_CancelledContextIsUnavailableWithoutCause.
+func TestMemStore_CancelledContextIsUnavailableLikeS3(t *testing.T) {
 	t.Parallel()
 	store := objectstoretest.NewMemStore()
+	store.Seed("uploads/a.png", []byte("body"), time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC))
 	body := objectstoretest.PNG(32)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
-	obj, err := store.Put(ctx, objectstore.PutRequest{
-		Key: "uploads/a.png", ContentType: "image/png", Body: bytes.NewReader(body), Size: int64(len(body)),
+	_, err := store.Put(ctx, objectstore.PutRequest{
+		Key: "uploads/b.png", ContentType: "image/png", Body: bytes.NewReader(body), Size: int64(len(body)),
 	})
-	require.NoError(t, err, "Put на отменённом контексте: двойник равняется на fs")
-	assert.Equal(t, "uploads/a.png", obj.Key)
+	requireCancelledLikeS3(t, err, "Put")
+	_, err = store.List(ctx, "uploads/", "", 10)
+	requireCancelledLikeS3(t, err, "List")
+	requireCancelledLikeS3(t, store.Delete(ctx, "uploads/a.png"), "Delete")
+	assert.Equal(t, []string{"uploads/a.png"}, store.Keys(), "отменённый вызов изменил хранилище")
 
-	page, err := store.List(ctx, "uploads/", "", 10)
-	require.NoError(t, err, "List на отменённом контексте")
-	assert.Len(t, page.Objects, 1)
-	require.NoError(t, store.Delete(ctx, "uploads/a.png"), "Delete на отменённом контексте")
-	assert.Empty(t, store.Keys())
+	_, err = store.Put(ctx, objectstore.PutRequest{Body: bytes.NewReader(body), Size: int64(len(body))})
+	require.ErrorIs(t, err, objectstore.ErrBadKey, "ключ s3 проверяет до запроса")
+	page, err := store.List(ctx, "uploads/", "", 0)
+	require.NoError(t, err, "непозитивный лимит s3 решает до запроса")
+	assert.Empty(t, page.Objects)
+	_, err = store.Presign(ctx, "uploads/a.png", objectstore.MethodGet, time.Hour)
+	require.NoError(t, err, "Presign в хранилище не ходит")
+}
+
+// requireCancelledLikeS3 — отмена так, как её отдаёт s3: класс 503 и
+// objectstore.ErrUnavailable, а context.Canceled в цепочке нет.
+func requireCancelledLikeS3(t *testing.T, err error, site string) {
+	t.Helper()
+	assert.Equalf(t, errs.KindUnavailable, errs.KindOf(err), "класс ошибки на %s: %v", site, err)
+	require.ErrorIsf(t, err, objectstore.ErrUnavailable, "objectstore.ErrUnavailable на %s", site)
+	require.NotErrorIsf(t, err, context.Canceled, "причина отмены в цепочке на %s, а у s3 её нет", site)
 }
 
 // Заданный сбой приходит так, как его отдают s3 и fs: класс 503,

@@ -305,7 +305,7 @@ func TestClosedSetsAreComplete(t *testing.T) {
 	t.Parallel()
 	assert.Len(t, mail.AllStatuses, 6)
 	assert.Len(t, mail.AllFailReasons, 3)
-	assert.Len(t, mail.AllFinishOutcomes, 5)
+	assert.Len(t, mail.AllFinishOutcomes, 6)
 	assert.Len(t, mail.AllEnqueueOutcomes, 2)
 	assert.Len(t, mail.AllSuppressReasons, 3)
 	assert.Len(t, mail.AllUncertainPolicies, 2)

@@ -17,6 +17,16 @@ const finishRetrySQL = `UPDATE email_outbox SET
 	updated_at = $5
 WHERE id = $1 AND status = 'sending'`
 
+// Прогон отменён до отправки: попытка, взятая Claim, возвращается. GREATEST
+// держит email_outbox_attempts_chk; next_attempt_at, last_error и transport не
+// трогаются — срок уже наступил, и строка не теряет места в очереди.
+const finishReleasedSQL = `UPDATE email_outbox SET
+	status = 'pending',
+	locked_until = NULL,
+	attempts = GREATEST(attempts - 1, 0),
+	updated_at = $2
+WHERE id = $1 AND status = 'sending'`
+
 // Тело стирается тем же UPDATE, что ставит терминальный статус: строки
 // «терминальная, но с телом» не существует ни на секунду — и CHECK
 // email_outbox_body_cleared_chk её не примет.
@@ -35,7 +45,8 @@ const finishTerminalSQL = `UPDATE email_outbox SET
 	updated_at = $8
 WHERE id = $1 AND status = 'sending'`
 
-// terminalStatus — исход попытки в статус строки; FinishRetry сюда не входит.
+// terminalStatus — исход попытки в статус строки; FinishRetry и FinishReleased
+// сюда не входят.
 var terminalStatus = map[mail.FinishOutcome]mail.Status{
 	mail.FinishSent:       mail.StatusSent,
 	mail.FinishFailed:     mail.StatusFailed,
@@ -63,9 +74,12 @@ func (s *Store) Finish(ctx context.Context, req mail.FinishRequest) error {
 
 func finishStatement(req mail.FinishRequest) (query string, args []any, err error) {
 	now := req.Now.UTC()
-	if req.Outcome == mail.FinishRetry {
+	switch req.Outcome {
+	case mail.FinishRetry:
 		return finishRetrySQL,
 			[]any{req.ID, req.NextAttemptAt.UTC(), req.Error, req.Transport, now}, nil
+	case mail.FinishReleased:
+		return finishReleasedSQL, []any{req.ID, now}, nil
 	}
 	status, ok := terminalStatus[req.Outcome]
 	if !ok {

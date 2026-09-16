@@ -126,6 +126,21 @@ func TestDeliver_SuppressedIsNotSent(t *testing.T) {
 	assert.Empty(t, h.tr.Sent())
 }
 
+// Стоп-лист подключён, а адреса в нём нет — письмо уходит: проверка не глушит
+// всех подряд.
+func TestDeliver_NotSuppressedIsSent(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, true, nil)
+	require.NoError(t, h.svc.Suppress(context.Background(), mail.Suppression{
+		Email: "blocked@school.ru", Reason: mail.SuppressComplaint,
+	}))
+	env := h.enqueue(t, nil)
+
+	assert.Equal(t, 1, h.deliver(t))
+	assert.Equal(t, mail.StatusSent, h.row(t, env.ID).Status, "адрес вне стоп-листа не отправлен")
+	assert.Len(t, h.tr.Sent(), 1)
+}
+
 // Стоп-лист недоступен — не проверили, значит не шлём; повтор позже.
 func TestDeliver_SuppressorFailureRetries(t *testing.T) {
 	t.Parallel()
