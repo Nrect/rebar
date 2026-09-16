@@ -79,15 +79,16 @@
 //
 //	-- Продукт — то, что покупают; предмет — то, что открывается покупкой.
 //	-- Каталог нужен только затем, чтобы покупка разворачивалась в выдачи;
-//	-- иерархий, пробных периодов и скидок в нём нет.
-//	CREATE TABLE entitlement_products (
+//	-- иерархий, пробных периодов и скидок в нём нет. Префикс — проекта:
+//	-- entitlement_ принадлежит блоку (CONVENTIONS §9).
+//	CREATE TABLE shop_products (
 //	    id         uuid PRIMARY KEY,
 //	    code       text NOT NULL,
-//	    CONSTRAINT ux_entitlement_products_code UNIQUE (code)
+//	    CONSTRAINT ux_shop_products_code UNIQUE (code)
 //	);
 //
-//	CREATE TABLE entitlement_product_items (
-//	    product_id uuid NOT NULL REFERENCES entitlement_products (id) ON DELETE CASCADE,
+//	CREATE TABLE shop_product_items (
+//	    product_id uuid NOT NULL REFERENCES shop_products (id) ON DELETE CASCADE,
 //	    item_id    text NOT NULL,
 //	    PRIMARY KEY (product_id, item_id)  -- без имени: код его не называет
 //	);
@@ -118,7 +119,7 @@
 // ИМЯ ДАЁТСЯ ТОМУ, ЧТО АДРЕСУЕТ КОД. Первичный ключ выдач адресуется
 // (ON CONFLICT на повторную выдачу), CHECK предмета ck_entitlement_grants_item_id —
 // тоже (по его имени адаптер отличает негодный предмет от сбоя), поэтому имена
-// им нужны и они контракт; ключ entitlement_product_items не называет никто,
+// им нужны и они контракт; ключ таблицы предметов каталога не называет никто,
 // и безымянный он честнее — имя без потребителя пришлось бы тащить вечно.
 // Префикс ux_ у именованных PRIMARY KEY — общий с тулкитом
 // (ux_payment_events_dedup).

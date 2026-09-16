@@ -397,9 +397,10 @@ pg-адаптер — `entitlementpg` (2026-09-14; в v0.1 его не было:
 потребителя свой уже есть, а магазину пакет к старту не нужен). Он мигрирует
 ТОЛЬКО `entitlement_grants`: каталог порт `Store` не пишет — типа продукта в
 ядре нет вовсе, — а пакет, который не может записать таблицу, не вправе ею
-владеть, иначе его `Down` снёс бы каталог потребителя. Набросок
-`entitlement_products` и `entitlement_product_items` остался в `doc.go` с
-подписью «мигрирует потребитель»; схема выдач — в
+владеть, иначе его `Down` снёс бы каталог потребителя. Набросок каталога
+остался в `doc.go` с подписью «мигрирует потребитель» и префиксом проекта
+(`shop_products`, `shop_product_items`): `entitlement_` принадлежит блоку;
+схема выдач — в
 [`entitlementpg/migrations/00001_entitlement_init.sql`](../../entitlement/entitlementpg/migrations/00001_entitlement_init.sql).
 
 ## Fail-closed по трём осям
