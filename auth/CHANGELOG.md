@@ -6,6 +6,34 @@
 ## Unreleased
 
 ### Changed
+- **Ломающее: схема `authpg` переехала в миграции, `authpg.Schema` убран
+  ([ADR-0011](../docs/adr/0011-migrations-in-blocks.md)).**
+  `authpg/schema.sql` стал `authpg/migrations/00001_auth_init.sql`, каталог
+  отдаёт `authpg.Migrations() fs.FS`; строка `Schema` со снимком схемы ушла
+  вместе с файлом (решение 5), замена — `Migrations()`. Накатывает раннер
+  проекта со своей таблицей версий `auth_schema_version`: у goose —
+  `goose.NewProvider(goose.DialectPostgres, db, authpg.Migrations(),
+  goose.WithTableName("auth_schema_version"))`; модуль goose не импортирует.
+  Первая миграция идемпотентна: `CREATE TABLE IF NOT EXISTS` и
+  `CREATE INDEX IF NOT EXISTS`; `Down` — `DROP TABLE IF EXISTS`. Колонки,
+  CHECK и имена индексов прежние. Подсказки `CheckSchema` — «накатите
+  `authpg.Migrations()` раннером проекта» вместо «скопируйте
+  `authpg/schema.sql` в миграции» и «сверьте миграцию». Тесты адаптера
+  накатывают каталог; поставку каталога держит `TestMigrations_Catalog`, форму
+  первой миграции — `TestInitMigration_HoldsContract`, накат, откат и
+  повторный откат — `TestMigrations_UpDownUp`, повторный накат со строкой в
+  каждой из трёх таблиц — `TestMigrations_ReapplyOnAppliedSchema`. Они сменили
+  `TestSchemaFile_HoldsContract`, `TestSchemaFile_BothDirectionsApply` и
+  `TestSchema_EmbedEqualsFile`; `TestExpectedSchema_MatchesFile` стал
+  `TestExpectedSchema_MatchesMigrations`, зеркала CHECK
+  `TestSchemaFile_PurposeCheckMirrorsAllPurposes` и
+  `TestSchemaFile_RealmCheckMirrorsRealmForm` — `TestMigrations_…` с тем же
+  хвостом.
+  **Переход базы, где схема уже накатана копией `schema.sql`:** `CheckSchema`
+  зелёный — затем отметить первую миграцию применённой, не выполняя:
+  `GetDBVersion` провайдера заводит `auth_schema_version`, затем
+  `INSERT INTO auth_schema_version (version_id, is_applied) VALUES (1, true)`;
+  таблицу версий руками не создавать (решение 4).
 - **Ломает сборку: `session.Deps.Recipients` обязателен.** Порт
   `session.Recipients` (`Check(login string) error`) решает, годен ли логин
   получателем уведомлений; правило канала пишет потребитель, `session.New`

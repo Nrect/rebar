@@ -17,7 +17,7 @@ const (
 	tableAttempts = "auth_login_attempts"
 )
 
-// Store — session.Sessions и session.Attempts поверх таблиц schema.sql.
+// Store — session.Sessions и session.Attempts поверх таблиц auth_* (Migrations).
 type Store struct {
 	db postgres.Querier
 }
