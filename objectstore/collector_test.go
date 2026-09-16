@@ -243,10 +243,10 @@ func (stuckCursorStore) Presign(context.Context, string, objectstore.Method, tim
 func (stuckCursorStore) PublicURL(string) string { return "" }
 
 // countingStore — хранилище, которое контекст не читает, как fs: считает
-// обращения к List и отдаёт пустую страницу.
+// обращения к List и Put, отдаёт пустую страницу и принимает любой объект.
 type countingStore struct {
 	stuckCursorStore
-	lists int
+	lists, puts int
 }
 
 func (s *countingStore) List(context.Context, string, string, int) (objectstore.Page, error) {
@@ -254,13 +254,26 @@ func (s *countingStore) List(context.Context, string, string, int) (objectstore.
 	return objectstore.Page{}, nil
 }
 
+func (s *countingStore) Put(_ context.Context, req objectstore.PutRequest) (objectstore.Object, error) {
+	s.puts++
+	return objectstore.Object{Key: req.Key, Size: req.Size}, nil
+}
+
 // cancellingStore — хранилище, названный метод которого обрывает отмена
 // посреди запроса, как у s3: ctx отменяется, наружу — ErrUnavailable без
 // причины в цепочке.
 type cancellingStore struct {
 	*objectstoretest.MemStore
-	cancel             context.CancelFunc
-	cutList, cutDelete bool
+	cancel                     context.CancelFunc
+	cutList, cutPut, cutDelete bool
+}
+
+func (s *cancellingStore) Put(ctx context.Context, req objectstore.PutRequest) (objectstore.Object, error) {
+	if s.cutPut {
+		s.cancel()
+		return objectstore.Object{}, fmt.Errorf("%w: put: no response", objectstore.ErrUnavailable)
+	}
+	return s.MemStore.Put(ctx, req)
 }
 
 func (s *cancellingStore) List(ctx context.Context, prefix, cursor string, limit int) (objectstore.Page, error) {
