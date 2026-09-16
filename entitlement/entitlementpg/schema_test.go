@@ -13,14 +13,6 @@ import (
 	"github.com/nrect/rebar/postgres/pgtest"
 )
 
-// Schema — тот же файл побайтно: потребитель, применяющий миграцию из кода,
-// получает ровно то, что лежит в каталоге.
-func TestSchema_EmbedMatchesFile(t *testing.T) {
-	t.Parallel()
-
-	assert.Equal(t, readSchema(t), entitlementpg.Schema)
-}
-
 // CheckSchema называет расхождение именем того, чего не хватает.
 func TestCheckSchema(t *testing.T) {
 	t.Parallel()
@@ -63,7 +55,8 @@ func TestCheckSchema(t *testing.T) {
 
 			err := store.CheckSchema(t.Context())
 			require.Error(t, err)
-			assert.Contains(t, err.Error(), "сверьте миграцию", "первая строка — что делать")
+			assert.Contains(t, err.Error(), "накатите entitlementpg.Migrations() раннером проекта",
+				"первая строка — что делать")
 			for _, want := range tt.want {
 				assert.Contains(t, err.Error(), want)
 			}
@@ -88,7 +81,7 @@ func TestCheckSchema_MissingTable(t *testing.T) {
 
 	err := entitlementpg.New(newSchemaPool(t)).CheckSchema(t.Context())
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "скопируйте entitlementpg/schema.sql в миграции")
+	assert.Contains(t, err.Error(), "накатите entitlementpg.Migrations() раннером проекта")
 }
 
 // Все расхождения — в одной ошибке: чинить их по одному за прогон значило бы

@@ -2,7 +2,6 @@ package entitlementpg
 
 import (
 	"context"
-	_ "embed"
 	"errors"
 	"fmt"
 	"maps"
@@ -13,13 +12,7 @@ import (
 	"github.com/nrect/rebar/postgres"
 )
 
-// Schema — содержимое schema.sql (с маркерами goose) для потребителя, который
-// применяет миграции из кода, а не копирует файл. Побайтно равен файлу.
-//
-//go:embed schema.sql
-var Schema string
-
-// Имена, на которые ссылается код, — контракт schema.sql: переименование в
+// Имена, на которые ссылается код, — контракт миграций: переименование в
 // миграции потребителя ломало бы адаптер молча (CONVENTIONS §9).
 const (
 	tableName = "entitlement_grants"
@@ -31,8 +24,8 @@ const (
 
 const (
 	// Первая строка ошибки — что делать; расхождения перечисляются ниже неё.
-	missingTableHint = "entitlementpg.CheckSchema: таблицы entitlement_grants нет: скопируйте entitlementpg/schema.sql в миграции"
-	mismatchHint     = "entitlementpg.CheckSchema: таблица entitlement_grants расходится с entitlementpg/schema.sql — сверьте миграцию"
+	missingTableHint = "entitlementpg.CheckSchema: таблицы entitlement_grants нет: накатите entitlementpg.Migrations() раннером проекта"
+	mismatchHint     = "entitlementpg.CheckSchema: схема расходится с миграциями — накатите entitlementpg.Migrations() раннером проекта; что осталось после наката, чините своей миграцией"
 )
 
 // Типы из information_schema.columns.data_type.
@@ -42,8 +35,8 @@ const (
 	typeTimestamptz = "timestamp with time zone"
 )
 
-// expectedColumns — колонки и их data_type; меняется только вместе со
-// schema.sql (страж — TestExpectedColumns_MatchSchemaFile).
+// expectedColumns — колонки и их data_type; меняется только вместе с
+// миграциями (страж — TestExpectedColumns_MatchMigrations).
 var expectedColumns = map[string]string{
 	"subject_id": typeUUID,
 	"item_id":    typeText,
@@ -73,9 +66,12 @@ const constraintsSQL = `SELECT conname FROM pg_constraint WHERE conrelid = $1 AN
 const indexesSQL = `SELECT indexname, indexdef LIKE 'CREATE UNIQUE INDEX %'
 FROM pg_indexes WHERE schemaname = $1 AND tablename = $2`
 
-// CheckSchema сверяет таблицу со schema.sql, ничего не меняя: колонки и их
-// типы, именованные ограничения, индексы. Зовётся на старте потребителя;
-// лишние колонки потребителя расхождением не считаются.
+// CheckSchema сверяет таблицу с миграциями Migrations(), ничего не меняя:
+// колонки и их типы, именованные ограничения, индексы. Зовётся на старте
+// потребителя: миграции накатывает он сам, пакет только проверяет. Зелёный
+// CheckSchema — условие, при котором базу со старой копией схемы можно
+// отметить накатанной (ADR-0011, решение 4). Лишние колонки потребителя
+// расхождением не считаются.
 //
 // Все расхождения — в одной ошибке, первая строка — что делать. Сбой запроса к
 // каталогу — entitlement.ErrUnavailable. Данных таблицы в ошибке нет.

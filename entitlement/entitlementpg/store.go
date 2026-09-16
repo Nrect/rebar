@@ -8,7 +8,7 @@ import (
 	"github.com/nrect/rebar/postgres"
 )
 
-// Store — выдачи в таблице entitlement_grants (schema.sql) и entitlement.Store
+// Store — выдачи в таблице entitlement_grants (Migrations) и entitlement.Store
 // поверх неё. Часов у адаптера нет: всё время приходит параметрами порта.
 type Store struct {
 	db postgres.Querier
