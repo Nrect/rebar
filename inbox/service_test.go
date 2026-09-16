@@ -316,11 +316,47 @@ func TestPurge(t *testing.T) {
 	assert.Zero(t, deleted)
 }
 
-// purgeStore — хранилище, которое запоминает аргументы уборки.
+// ОТМЕНА ВО ВРЕМЯ УБОРКИ — НЕ ТРЕВОГА: оборванный отменой запрос адаптер отдаёт
+// сбоем в ErrUnavailable — с причиной в цепочке или без неё, — а прогон
+// возвращает причину отмены. Иначе остановка процесса посреди уборки выглядит у
+// планировщика как «хранилище недоступно».
+func TestPurge_CancelDuringStoreCallIsNotUnavailable(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{"причина в цепочке", fmt.Errorf("%w: inboxpg: purge: %w", inbox.ErrUnavailable, context.Canceled)},
+		{"без причины", fmt.Errorf("%w: inboxpg: purge: connection closed", inbox.ErrUnavailable)},
+	} {
+		ctx, cancel := context.WithCancel(t.Context())
+		store := &purgeStore{deleted: 7, err: tc.err, cancel: cancel}
+		svc := inbox.NewService(store, inboxtest.NewObserver(), testConfig(stubVerifier()))
+
+		deleted, err := svc.Purge(ctx)
+		require.ErrorIs(t, err, context.Canceled, tc.name)
+		require.NotErrorIs(t, err, inbox.ErrUnavailable, "%s: остановка выглядит сбоем хранилища", tc.name)
+		assert.Zero(t, deleted, "%s: удалено до оборванной пачки", tc.name)
+		cancel()
+	}
+
+	// Двойник отдаёт отмену в ErrUnavailable, как адаптер: прогон — причиной отмены.
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	svc := inbox.NewService(billingStore(), inboxtest.NewObserver(), testConfig(stubVerifier()))
+	_, err := svc.Purge(ctx)
+	require.ErrorIs(t, err, context.Canceled)
+	require.NotErrorIs(t, err, inbox.ErrUnavailable)
+}
+
+// purgeStore — хранилище, которое запоминает аргументы уборки; cancel, если
+// задан, отменяет контекст прогона посреди вызова, как остановка процесса.
 type purgeStore struct {
 	eventsBefore, payloadsBefore time.Time
 	limit, deleted               int
 	err                          error
+	cancel                       context.CancelFunc
 }
 
 func (s *purgeStore) Accept(context.Context, inbox.Event, time.Time) (inbox.Outcome, error) {
@@ -331,6 +367,9 @@ func (s *purgeStore) Sources() []inbox.SourceName { return []inbox.SourceName{bi
 
 func (s *purgeStore) Purge(_ context.Context, eventsBefore, payloadsBefore time.Time, limit int) (int, error) {
 	s.eventsBefore, s.payloadsBefore, s.limit = eventsBefore, payloadsBefore, limit
+	if s.cancel != nil {
+		s.cancel()
+	}
 	if s.err != nil {
 		return 3, s.err
 	}

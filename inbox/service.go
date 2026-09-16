@@ -148,10 +148,18 @@ func (s *Service) receive(ctx context.Context, name SourceName, src source, req 
 
 // Purge — уборка одной пачкой: тела старше PayloadRetention, отметки старше
 // Retention. Форма scheduler.Job.Run; недоделанное доделает следующий прогон.
+//
+// ОТМЕНА ВО ВРЕМЯ УБОРКИ — НЕ ТРЕВОГА: оборванный отменой запрос хранилище
+// отдаёт сбоем, а прогон возвращает причину отмены — иначе остановка процесса
+// выглядит у планировщика как «хранилище недоступно» (как
+// objectstore.Collector.Run).
 func (s *Service) Purge(ctx context.Context) (int, error) {
 	now := s.now()
 	deleted, err := s.store.Purge(ctx, now.Add(-s.retention), now.Add(-s.payloadTTL), s.purgeBatch)
 	if err != nil {
+		if ctx.Err() != nil {
+			return 0, ctx.Err()
+		}
 		return 0, unavailable("purge", err)
 	}
 	return deleted, nil
