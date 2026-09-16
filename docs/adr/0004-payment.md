@@ -73,7 +73,7 @@ payment/                  модуль github.com/nrect/rebar/payment
   config.go               Config с panic-валидацией
   service.go              Start, Apply, Refund, Capture, Cancel, Reconcile, SetClock
   prorate/                чистые функции пропорционального возврата
-  paymentpg/              адаптер на pgx/v5: schema.sql (goose), WithTx, CheckSchema, хук Settler
+  paymentpg/              адаптер на pgx/v5: migrations/ (goose, ADR-0011), WithTx, CheckSchema, хук Settler
   paymentotel/            счётчик вызовов провайдера, гейджи по снимку
   paymenttest/            MemStore (зовёт хук), MemProvider, ProviderServer (httptest)
   cmd/psfake/             фейк провайдера для стенда: страница «оплатить/отменить», шлёт уведомление
@@ -279,7 +279,10 @@ SKU → outbox). Порядок, зафиксированный в одном м
 | Намерение зависло в `pending` | висит вечно, деньги в подвешенном состоянии | сверка забирает состояние у провайдера, гейдж «зависшие» и алерт |
 | Чек не собрался | платёж создан, чек не пробит | отказ до создания платежа |
 
-## Схема (`payment/paymentpg/schema.sql`)
+## Схема (`payment/paymentpg/migrations`)
+
+С [ADR-0011](0011-migrations-in-blocks.md) схема — миграции внутри блока,
+первая — `migrations/00001_payment_init.sql`; «сам файл» ниже — он.
 
 Набросок схемы из этого ADR снят 2026-09-09: он разошёлся и с `ports.go`
 (`ParamsFingerprint` вместо `params_digest`, статусы `created`/`failed`/

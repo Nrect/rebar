@@ -51,7 +51,7 @@ auth/                     модуль github.com/nrect/rebar/auth
   password/               argon2id PHC, Hasher с глобальным семафором, Policy, NeedsRehash
   pwzxcvbn/               адаптер StrengthChecker
   session/                Service: регистрация, вход, сессии, одноразовые токены, Sweep
-  authpg/                 адаптер Sessions/Attempts + хелперы Tokens; schema.sql; CheckSchema
+  authpg/                 адаптер Sessions/Attempts + хелперы Tokens; migrations/ (ADR-0011); CheckSchema
   authhttp/               кука, CSRF double-submit, middleware; ошибки через kit/httperr
   authtest/               двойники всех портов, FastHasher, Clock
 
@@ -177,9 +177,11 @@ type Recipients interface { Check(login string) error }                         
 6. `AllowUnverifiedSignIn` по умолчанию `false`: нулевое значение — строгая
    регистрация.
 
-### Схема (`authpg/schema.sql`)
+### Схема (`authpg/migrations`)
 
-Три таблицы, `realm` в каждой строке и в каждом `WHERE`:
+Действующая схема — `authpg/migrations/00001_auth_init.sql`, идемпотентная в обе
+стороны ([ADR-0011](0011-migrations-in-blocks.md)). Три таблицы, `realm` в
+каждой строке и в каждом `WHERE`:
 
 ```sql
 CREATE TABLE auth_sessions (

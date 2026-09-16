@@ -540,18 +540,11 @@ func within(stop func(), budget time.Duration) bool {
 приложения и гонка реплик при выкате — цена, которую выбирает проект, а не
 библиотека ([ADR-0005](adr/0005-packaging.md), [ADR-0011](adr/0011-migrations-in-blocks.md)).
 
-**Сегодня — копия `schema.sql`.** Каждый из семи `<pkg>pg` отдаёт `schema.sql` с
-маркерами goose; проект кладёт файл в свои миграции как есть и сверяет
-`CheckSchema` на старте. Правка копии — вторая правда о схеме: её найдёт
-`CheckSchema`, но у проекта и после выката. Строку `<pkg>pg.Schema` в новом
-коде не берут: волна миграций её убирает. Образец —
-[`examples/monolith/migrations`](../examples/monolith/migrations).
+**Миграции едут внутри блока** ([ADR-0011](adr/0011-migrations-in-blocks.md)):
 
-**После волны [ADR-0011](adr/0011-migrations-in-blocks.md)** (принят, едет
-минорами блоков после тегов):
-
-- файлы едут внутри блока: `<pkg>pg.Migrations() fs.FS`, первая —
-  `00001_<pkg>_init.sql`;
+- каждый `<pkg>pg` отдаёт `Migrations() fs.FS`, первая —
+  `00001_<pkg>_init.sql`; копии `schema.sql` у проекта нет, строки
+  `<pkg>pg.Schema` — тоже. `CheckSchema` на старте сверяет схему с миграциями;
 - у каждого блока своя таблица версий по имени модуля — `mail_schema_version`,
   хотя данные лежат в `email_outbox`: блоки выпускаются независимо, и номера в
   общей таблице столкнутся. Раннер goose собирается `goose.NewProvider` с

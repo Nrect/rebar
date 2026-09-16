@@ -17,7 +17,7 @@
 | `mail/` | `github.com/nrect/rebar/mail` | транзакционная почта: outbox в Postgres потребителя, доставка с ретраями, транспорт за портом, стоп-лист; quickstart — [mail/README.md](mail/README.md) | v0.2.0 |
 | &nbsp;&nbsp;`mail/smtp/` | подпакет `mail` | транспорт SMTP на go-mail, STARTTLS обязателен по умолчанию | реализован |
 | &nbsp;&nbsp;`mail/sesv2/` | подпакет `mail` | транспорт SES v2-совместимого HTTP API (Yandex Cloud Postbox, AWS SES), SigV4 на stdlib | реализован |
-| &nbsp;&nbsp;`mail/mailpg/` | подпакет `mail` | хранилище outbox на pgx/v5: `schema.sql`, `WithTx`, `CheckSchema` на старте | реализован |
+| &nbsp;&nbsp;`mail/mailpg/` | подпакет `mail` | хранилище outbox на pgx/v5: миграции `Migrations()`, `WithTx`, `CheckSchema` на старте | реализован |
 | &nbsp;&nbsp;`mail/mailotel/` | подпакет `mail` | наблюдаемость: декоратор транспорта со счётчиком `emails_sent{type,result}` и три гейджа очереди (OpenTelemetry metric API) | реализован |
 | &nbsp;&nbsp;`mail/mailtest/` | подпакет `mail` | двойники портов для тестов потребителя и фейк SES v2 без Docker | реализован |
 | &nbsp;&nbsp;`mail/cmd/sesfake/` | подпакет `mail` | SES v2-фейк для dev/stage с релеем в Mailpit | реализован |

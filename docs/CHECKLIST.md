@@ -5,8 +5,9 @@
 
 1. [ ] `go get github.com/nrect/rebar/mail@v0.1.0` —
    [README, «Установка»](../mail/README.md#установка).
-2. [ ] Скопировать `mailpg/schema.sql` в миграции со своим номером (или
-   применить `mailpg.Schema` из кода) и на старте звать
+2. [ ] Накатить `mailpg.Migrations()` раннером проекта со своей таблицей версий
+   `mail_schema_version` (`goose.NewProvider` с `goose.WithTableName`) и на
+   старте звать
    `mailpg.New(pool).CheckSchema(ctx)`: ошибка — стоп процесса с её текстом,
    первая строка говорит, что делать; сам пакет схему не применяет —
    [README, «Миграция»](../mail/README.md#миграция).

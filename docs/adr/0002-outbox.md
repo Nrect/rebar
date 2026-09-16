@@ -85,7 +85,7 @@ outbox/                   модуль github.com/nrect/rebar/outbox
   errors.go               sentinel-ошибки, Permanent/Throttled, IsPermanent/RetryAfterOf
   importguard_test.go     белый список импортов по каталогам
   outboxtest/             MemStore, RecordingHandler, Clock
-  outboxpg/               адаптер Store на pgx/v5; schema.sql (goose); WithTx; CheckSchema
+  outboxpg/               адаптер Store на pgx/v5; migrations/ (goose, ADR-0011); WithTx; CheckSchema
   outboxotel/             декоратор реестра со счётчиком; Gauges по снимку Stats
 ```
 
@@ -327,10 +327,12 @@ dead-letter то, что умеет только новый. Если храни
 | Паника хендлера | падает воркер, встают все типы | временная ошибка строки, метка `panic`, пачка продолжается |
 | Nil-порт, негодный `Config` | падение на первом событии | паника на старте |
 
-## Схема (`outboxpg/schema.sql`, goose)
+## Схема (`outboxpg/migrations`, goose)
 
-Реализуется следующим чипом; имя таблицы — контракт. Файл с маркерами
-`-- +goose Up` / `-- +goose Down`; ниже — тело Up.
+Действующая схема — `outboxpg/migrations/00001_outbox_init.sql`, идемпотентная в
+обе стороны ([ADR-0011](0011-migrations-in-blocks.md)); имя таблицы — контракт.
+Ниже — тело Up в форме на момент принятия этого ADR, с маркерами
+`-- +goose Up` / `-- +goose Down`.
 
 ```sql
 CREATE TABLE outbox_messages (

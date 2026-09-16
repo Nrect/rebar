@@ -315,3 +315,11 @@ VERSIONING называет ломающим: у того, кто первую �
 ADR-0010, решение 2: после тяжёлых прогонов блока на выделенной машине и
 зелёного монолита на этой версии, `postgres` первым; затем копии помощников
 уступают место `pgtest.*` и бампам `require` (уточнение 4).
+
+**Состояние на 2026-09-16:** семь `<pkg>pg` переведены — `payment` пилотом,
+затем `authz`, `entitlement`, `audit`, `outbox`, `mail` и `auth`; у каждого
+тесты `TestMigrations_Catalog`, `TestInitMigration_HoldsContract`,
+`TestMigrations_UpDownUp` и `TestMigrations_ReapplyOnAppliedSchema`, а при
+слиянии арбитр ставил сверх проб чипа свои: индекс без `IF NOT EXISTS`, пустой
+`Down`, `Down` без снятия функции триггера. `ledgerpg` родился в этой форме.
+Монолит и теги — впереди.
