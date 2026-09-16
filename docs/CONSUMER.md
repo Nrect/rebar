@@ -701,8 +701,11 @@ func hasKey(r slog.Record, key string) bool {
 
 Образец — монолит: пул с `postgres.WithUTC` — `Open` в
 [`shoppg/db.go`](../examples/monolith/shoppg/db.go); часы приложения — поле
-`now` и `SetClock` в [`app.go`](../examples/monolith/app.go); лог в UTC — `New`
-в [`logotel/logger.go`](../examples/monolith/logotel/logger.go); `TZ: UTC` у
+`now` и `SetClock` в [`app.go`](../examples/monolith/app.go): те же часы
+получают все блоки со своими часами, после `Start` подмена паникует, а
+[`clock_test.go`](../examples/monolith/clock_test.go) сверяет моменты и сроки
+каждого блока на часах 2031 года; лог в UTC — `New` в
+[`logotel/logger.go`](../examples/monolith/logotel/logger.go); `TZ: UTC` у
 Postgres — [`compose.yaml`](../examples/monolith/compose.yaml).
 
 ## Короткая форма
