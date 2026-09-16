@@ -69,3 +69,32 @@ func TestLogObserver_NilLoggerUsesDefault(t *testing.T) {
 		inbox.LogObserver(nil).Received(t.Context(), billing, inbox.OutcomeAccepted, time.Millisecond)
 	})
 }
+
+// У лога рядов нет: Watch ничего не пишет.
+func TestLogObserver_WatchLogsNothing(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	inbox.LogObserver(logger).Watch(billing)
+	assert.Empty(t, buf.String())
+}
+
+// Ряды наблюдателя заводит NewService: каждый источник Config, по имени, до
+// первого Receive, и только после сверки с хранилищем.
+func TestNewService_WatchesEverySource(t *testing.T) {
+	t.Parallel()
+
+	cfg := testConfig(stubVerifier())
+	cfg.Sources["acme"] = cfg.Sources[billing]
+	store := inboxtest.NewMemStore(map[inbox.SourceName]inboxtest.Handler{billing: nopHandler(), "acme": nopHandler()})
+	obs := inboxtest.NewObserver()
+	inbox.NewService(store, obs, cfg)
+
+	assert.Equal(t, []inbox.SourceName{"acme", billing}, obs.Watched())
+	assert.Empty(t, obs.Deliveries(), "завести ряд — не доставка")
+
+	refused := inboxtest.NewObserver()
+	assert.Panics(t, func() { inbox.NewService(billingStore(), refused, cfg) })
+	assert.Empty(t, refused.Watched(), "сборка, разошедшаяся с хранилищем, рядов не заводит")
+}

@@ -66,6 +66,10 @@ func NewService(store Store, obs Observer, cfg Config) *Service {
 			ack:      Ack{ContentType: sc.Ack.ContentType, Body: bytes.Clone(sc.Ack.Body)},
 		}
 	}
+	// Ряды наблюдателя — из набора, сверенного с хранилищем: забыть источник негде.
+	for _, name := range declared {
+		obs.Watch(name)
+	}
 	return &Service{
 		store: store, obs: obs, sources: sources,
 		maxBody: cfg.MaxBodyBytes, retention: cfg.Retention, payloadTTL: cfg.PayloadRetention, purgeBatch: cfg.PurgeBatch,

@@ -166,6 +166,7 @@ func TestMemStore_KnobsAreSafeWhileServing(t *testing.T) {
 			for i := range 300 {
 				ev := event("evt-serve-" + string(rune('a'+i%26)))
 				outcome, _ := store.Accept(context.Background(), ev, clock.Now())
+				observer.Watch("billing")
 				observer.Received(context.Background(), "billing", outcome, time.Millisecond)
 				_, _ = store.Purge(context.Background(), clock.Now(), clock.Now(), 5)
 			}
@@ -179,19 +180,24 @@ func TestMemStore_KnobsAreSafeWhileServing(t *testing.T) {
 		},
 		func(int) { _ = store.CallCount("Accept") },
 		func(int) { _ = observer.Deliveries() },
+		func(int) { _ = observer.Watched() },
 		func(int) { clock.Advance(time.Microsecond) },
 	)
 }
 
-func TestObserver_DeliveriesAreCopies(t *testing.T) {
+func TestObserver_ReadsAreCopies(t *testing.T) {
 	t.Parallel()
 
 	observer := inboxtest.NewObserver()
+	observer.Watch("billing")
 	observer.Received(t.Context(), "billing", inbox.OutcomeAccepted, time.Second)
 	got := observer.Deliveries()
 	got[0].Outcome = inbox.OutcomeError
+	watched := observer.Watched()
+	watched[0] = "delivery"
 	assert.Equal(t, []inboxtest.Delivery{{Source: "billing", Outcome: inbox.OutcomeAccepted, Took: time.Second}},
 		observer.Deliveries())
+	assert.Equal(t, []inbox.SourceName{"billing"}, observer.Watched())
 }
 
 func TestClock(t *testing.T) {
