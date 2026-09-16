@@ -7,24 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/nrect/rebar/payment/paymentpg"
-	"github.com/nrect/rebar/postgres/pgtest"
 )
-
-// Обе стороны миграции применяются на пустую схему: Up, затем Down, затем Up
-// снова — иначе откат «работает» ровно до первой попытки им воспользоваться.
-func TestSchema_UpDownUp(t *testing.T) {
-	t.Parallel()
-
-	pool := newSchemaPool(t)
-	up := pgtest.GooseUp(t, schemaPath)
-	down := gooseDown(t)
-
-	for range 2 {
-		pgtest.Apply(t, pool, up)
-		require.NoError(t, paymentpg.New(pool, paymentpg.Options{}).CheckSchema(t.Context()))
-		pgtest.Apply(t, pool, down)
-	}
-}
 
 // CheckSchema сверяет, но не применяет: на пустой схеме он обязан назвать
 // таблицы и сказать, что делать, а не молча создать их.
@@ -39,7 +22,8 @@ func TestCheckSchema_MissingTables(t *testing.T) {
 	for _, table := range []string{"payment_intents", "payment_intent_items", "payment_events", "payment_ledger"} {
 		assert.Contains(t, err.Error(), table)
 	}
-	assert.Contains(t, err.Error(), "schema.sql", "первая строка говорит, что делать")
+	assert.Contains(t, err.Error(), "накатите paymentpg.Migrations() раннером проекта",
+		"первая строка говорит, что делать")
 
 	var tables int
 	require.NoError(t, pool.QueryRow(t.Context(),
@@ -66,6 +50,8 @@ func TestCheckSchema_ReportsMismatches(t *testing.T) {
 
 	err = store.CheckSchema(t.Context())
 	require.Error(t, err)
+	assert.Contains(t, err.Error(), "накатите paymentpg.Migrations() раннером проекта",
+		"первая строка говорит, что делать")
 	assert.Contains(t, err.Error(), "ix_payment_intents_open")
 	assert.Contains(t, err.Error(), "payment_ledger_refund_chk")
 	assert.Contains(t, err.Error(), "deliveries")

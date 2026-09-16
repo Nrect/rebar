@@ -2,7 +2,6 @@ package paymentpg
 
 import (
 	"context"
-	_ "embed"
 	"errors"
 	"fmt"
 	"maps"
@@ -10,12 +9,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 )
-
-// Schema — содержимое schema.sql (с маркерами goose) для потребителя, который
-// применяет миграции из кода, а не копирует файл. Побайтно равен файлу.
-//
-//go:embed schema.sql
-var Schema string
 
 // Имена таблиц. Без имени схемы: search_path выбирает потребитель.
 const (
@@ -64,8 +57,8 @@ const (
 	typeTimestamptz = "timestamp with time zone"
 )
 
-// tableSpec — что обязано быть у таблицы. Меняется только вместе со schema.sql;
-// страж расхождения — TestExpectedSchema_MatchesFile.
+// tableSpec — что обязано быть у таблицы. Меняется только вместе с миграциями;
+// страж расхождения — TestExpectedSchema_MatchesMigrations.
 type tableSpec struct {
 	columns  map[string]string
 	checks   []string
@@ -145,8 +138,8 @@ var expected = map[string]tableSpec{
 
 // Первая строка ошибки — что делать; расхождения перечисляются ниже неё.
 const (
-	missingTableHint = "paymentpg.CheckSchema: таблицы %s нет: скопируйте paymentpg/schema.sql в миграции"
-	mismatchHint     = "paymentpg.CheckSchema: схема расходится с paymentpg/schema.sql — сверьте миграцию"
+	missingTableHint = "paymentpg.CheckSchema: таблицы %s нет: накатите paymentpg.Migrations() раннером проекта"
+	mismatchHint     = "paymentpg.CheckSchema: схема расходится с миграциями — накатите paymentpg.Migrations() раннером проекта; что осталось после наката, чините своей миграцией"
 )
 
 // to_regclass ищет таблицу по search_path соединения — там же, где её найдут
@@ -169,9 +162,11 @@ FROM pg_indexes WHERE schemaname = $1 AND tablename = $2`
 const triggersSQL = `SELECT tgname, tgenabled = 'A' FROM pg_trigger
 WHERE tgrelid = $1 AND NOT tgisinternal`
 
-// CheckSchema сверяет таблицы payment_* со schema.sql, ничего не меняя:
-// колонки и их типы, именованные CHECK, индексы и триггеры книги. Зовётся на
-// старте потребителя: миграцию применяет он сам, пакет только проверяет.
+// CheckSchema сверяет таблицы payment_* с миграциями Migrations(), ничего не
+// меняя: колонки и их типы, именованные CHECK, индексы и триггеры книги.
+// Зовётся на старте потребителя: миграции накатывает он сам, пакет только
+// проверяет. Зелёный CheckSchema — условие, при котором базу со старой копией
+// схемы можно отметить накатанной (ADR-0011, решение 4).
 //
 // Автомиграции из библиотеки нет намеренно: две правды о схеме, DDL-права у
 // приложения и гонка реплик при выкате. Лишние колонки потребителя

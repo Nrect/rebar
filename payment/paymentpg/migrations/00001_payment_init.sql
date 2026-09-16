@@ -1,12 +1,17 @@
--- Схема платежей пакета payment (ADR-0004, раздел «Схема»). Файл копируется в
--- каталог миграций потребителя как есть; раннера миграций в пакете нет.
+-- Схема платежей пакета payment (ADR-0004, раздел «Схема»), первая миграция
+-- (ADR-0011). Накатывает раннер потребителя, пакет её только везёт. Выпущенный
+-- файл не правится: изменение схемы — новый файл (ADR-0011, решение 6).
+--
+-- ИДЕМПОТЕНТНА: повторный накат на базу, где схема уже стоит, проходит и
+-- возвращает триггерам книги ENABLE ALWAYS. Существующую таблицу IF NOT EXISTS
+-- не сверяет — это делает CheckSchema (ADR-0011, решение 4).
 --
 -- Имена ограничений и индексов — контракт: адаптер разбирает конфликт по имени,
 -- а не по SQLSTATE (CONVENTIONS §9). Времена только параметром: DEFAULT now()
 -- в доменной колонке — вторая правда о времени. FK на таблицы потребителя нет.
 
 -- +goose Up
-CREATE TABLE payment_intents (
+CREATE TABLE IF NOT EXISTS payment_intents (
     id                  UUID PRIMARY KEY,
     payer_id            UUID NOT NULL,
     reference           TEXT NOT NULL,
@@ -52,13 +57,13 @@ CREATE TABLE payment_intents (
 -- Одно живое намерение на ссылку потребителя: второй платёж за тот же заказ
 -- означал бы два списания за одну покупку. После терминального статуса первого
 -- ссылка освобождается. Частичный — поэтому индексом, а не ограничением.
-CREATE UNIQUE INDEX ux_payment_intents_live_reference ON payment_intents (reference)
+CREATE UNIQUE INDEX IF NOT EXISTS ux_payment_intents_live_reference ON payment_intents (reference)
     WHERE status IN ('created','pending','authorized');
 -- Очередь сверки: (created_at, id) — тот же ключ, каким устроен курсор.
-CREATE INDEX ix_payment_intents_open ON payment_intents (created_at, id)
+CREATE INDEX IF NOT EXISTS ix_payment_intents_open ON payment_intents (created_at, id)
     WHERE status IN ('created','pending','authorized');
 
-CREATE TABLE payment_intent_items (
+CREATE TABLE IF NOT EXISTS payment_intent_items (
     intent_id    UUID NOT NULL REFERENCES payment_intents(id),
     position     INT  NOT NULL,
     product_id   TEXT NOT NULL,
@@ -74,7 +79,7 @@ CREATE TABLE payment_intent_items (
 
 -- Приём событий провайдера (inbox): строка дедупа ложится в той же транзакции,
 -- что и изменение статуса, поэтому «дубль обработан наполовину» невозможен.
-CREATE TABLE payment_events (
+CREATE TABLE IF NOT EXISTS payment_events (
     provider            TEXT NOT NULL,
     provider_event_id   TEXT NOT NULL,
     -- NULL — орфан: событие с неизвестным намерением. Записывается всё равно,
@@ -99,14 +104,14 @@ CREATE TABLE payment_events (
     CONSTRAINT payment_events_currency_chk CHECK (currency = '' OR currency ~ '^[A-Z]{3}$'),
     CONSTRAINT payment_events_deliveries_chk CHECK (deliveries >= 1)
 );
-CREATE INDEX ix_payment_events_intent ON payment_events (intent_id, received_at)
+CREATE INDEX IF NOT EXISTS ix_payment_events_intent ON payment_events (intent_id, received_at)
     WHERE intent_id IS NOT NULL;
 -- Орфаны разбираются руками, и найти их надо быстро: индекс частичный, поэтому
 -- стоит ровно столько, сколько орфанов (в норме ноль).
-CREATE INDEX ix_payment_events_orphan ON payment_events (received_at) WHERE intent_id IS NULL;
+CREATE INDEX IF NOT EXISTS ix_payment_events_orphan ON payment_events (received_at) WHERE intent_id IS NULL;
 
 -- Книга: append-only, неизменяемость держат триггеры ниже, а не дисциплина кода.
-CREATE TABLE payment_ledger (
+CREATE TABLE IF NOT EXISTS payment_ledger (
     id                UUID PRIMARY KEY,
     intent_id         UUID NOT NULL REFERENCES payment_intents(id),
     kind              TEXT NOT NULL,
@@ -131,12 +136,12 @@ CREATE TABLE payment_ledger (
 );
 -- Одно зачисление на намерение: вторая линия к предикату адаптера — даже при
 -- двух прошедших CAS вторая строка зачисления физически не вставится.
-CREATE UNIQUE INDEX ux_payment_ledger_capture ON payment_ledger (intent_id) WHERE kind = 'capture';
-CREATE INDEX ix_payment_ledger_intent ON payment_ledger (intent_id, created_at, id);
-CREATE INDEX ix_payment_ledger_reverses ON payment_ledger (reverses_entry_id) WHERE kind = 'refund';
+CREATE UNIQUE INDEX IF NOT EXISTS ux_payment_ledger_capture ON payment_ledger (intent_id) WHERE kind = 'capture';
+CREATE INDEX IF NOT EXISTS ix_payment_ledger_intent ON payment_ledger (intent_id, created_at, id);
+CREATE INDEX IF NOT EXISTS ix_payment_ledger_reverses ON payment_ledger (reverses_entry_id) WHERE kind = 'refund';
 
 -- +goose StatementBegin
-CREATE FUNCTION payment_ledger_immutable() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION payment_ledger_immutable() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     RAISE EXCEPTION 'payment_ledger is append-only: % is refused', TG_OP
         USING ERRCODE = '23514', CONSTRAINT = 'payment_ledger_immutable';
@@ -145,7 +150,7 @@ $$;
 -- +goose StatementEnd
 
 -- +goose StatementBegin
-CREATE FUNCTION payment_ledger_refund_cap() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION payment_ledger_refund_cap() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
     captured BIGINT;
     refunded BIGINT;
@@ -173,28 +178,38 @@ END;
 $$;
 -- +goose StatementEnd
 
--- ENABLE ALWAYS у обоих: иначе триггер молчит под ролью владельца схемы и при
--- репликации, то есть ровно тогда, когда правят руками.
+-- ENABLE ALWAYS у всех трёх: иначе триггер молчит под ролью владельца схемы и
+-- при репликации, то есть ровно тогда, когда правят руками.
+--
+-- ALTER — БЕЗУСЛОВНО ПОСЛЕ КАЖДОГО CREATE TRIGGER: пересозданный триггер
+-- приходит в режиме ORIGIN, и 'A' возвращает только явный ALTER (ADR-0011,
+-- решение 4). CREATE OR REPLACE TRIGGER режим тоже сбрасывает. Окна без
+-- триггера нет: миграция — одна транзакция, таблица под ACCESS EXCLUSIVE.
+DROP TRIGGER IF EXISTS payment_ledger_immutable_trg ON payment_ledger;
 CREATE TRIGGER payment_ledger_immutable_trg
     BEFORE UPDATE OR DELETE ON payment_ledger
     FOR EACH ROW EXECUTE FUNCTION payment_ledger_immutable();
 ALTER TABLE payment_ledger ENABLE ALWAYS TRIGGER payment_ledger_immutable_trg;
 
 -- TRUNCATE не ловится построчным триггером, а стирает книгу целиком.
+DROP TRIGGER IF EXISTS payment_ledger_no_truncate_trg ON payment_ledger;
 CREATE TRIGGER payment_ledger_no_truncate_trg
     BEFORE TRUNCATE ON payment_ledger
     FOR EACH STATEMENT EXECUTE FUNCTION payment_ledger_immutable();
 ALTER TABLE payment_ledger ENABLE ALWAYS TRIGGER payment_ledger_no_truncate_trg;
 
+DROP TRIGGER IF EXISTS payment_ledger_refund_cap_trg ON payment_ledger;
 CREATE TRIGGER payment_ledger_refund_cap_trg
     BEFORE INSERT ON payment_ledger
     FOR EACH ROW WHEN (NEW.kind = 'refund') EXECUTE FUNCTION payment_ledger_refund_cap();
 ALTER TABLE payment_ledger ENABLE ALWAYS TRIGGER payment_ledger_refund_cap_trg;
 
 -- +goose Down
-DROP TABLE payment_ledger;
-DROP TABLE payment_events;
-DROP TABLE payment_intent_items;
-DROP TABLE payment_intents;
-DROP FUNCTION payment_ledger_refund_cap;
-DROP FUNCTION payment_ledger_immutable;
+-- Идемпотентна (ADR-0011, уточнение 1): стенды гоняют Up и Down по кругу.
+-- Индексы и триггеры уходят вместе с таблицами, функции триггеров — нет.
+DROP TABLE IF EXISTS payment_ledger;
+DROP TABLE IF EXISTS payment_events;
+DROP TABLE IF EXISTS payment_intent_items;
+DROP TABLE IF EXISTS payment_intents;
+DROP FUNCTION IF EXISTS payment_ledger_refund_cap;
+DROP FUNCTION IF EXISTS payment_ledger_immutable;
