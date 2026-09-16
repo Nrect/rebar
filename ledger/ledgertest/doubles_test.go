@@ -111,10 +111,34 @@ func TestMemStore_AccountTxFailsLikeAdapter(t *testing.T) {
 		requireUnavailable(t, err, context.Canceled, "EntryByID")
 		_, _, err = tx.ReversalOf(ctx, uuid.New())
 		requireUnavailable(t, err, context.Canceled, "ReversalOf")
-		requireUnavailable(t, tx.Insert(ctx, ledger.Entry{}), context.Canceled, "Insert")
+		requireUnavailable(t, tx.Insert(ctx, ledger.Entry{Book: "wallet", Account: account}), context.Canceled, "Insert")
 		return nil
 	})
 	requireUnavailable(t, err, context.Canceled, "фиксация")
+}
+
+// То, что адаптер решает до запроса, отмена не перебивает: потолок выборки и
+// запись чужого счёта.
+func TestMemStore_ArgumentsBeforeCancel(t *testing.T) {
+	t.Parallel()
+
+	store := ledgertest.NewMemStore(book())
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err := store.Entries(ctx, "wallet", uuid.New(), 0, 0)
+	require.ErrorIs(t, err, ledger.ErrInvalidRequest)
+	require.NotErrorIs(t, err, context.Canceled)
+
+	late, cancelLate := context.WithCancel(t.Context())
+	defer cancelLate()
+	err = store.Post(late, "wallet", uuid.New(), func(tx ledger.AccountTx, _ ledger.Account) error {
+		cancelLate()
+		insertErr := tx.Insert(late, ledger.Entry{Book: "wallet", Account: uuid.New()})
+		require.ErrorIs(t, insertErr, ledger.ErrInvalidRequest)
+		require.NotErrorIs(t, insertErr, context.Canceled)
+		return insertErr
+	})
+	require.ErrorIs(t, err, ledger.ErrInvalidRequest)
 }
 
 func TestMemStore_UnknownBook(t *testing.T) {

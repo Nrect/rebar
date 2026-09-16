@@ -145,11 +145,12 @@ func (m *MemStore) Entries(ctx context.Context, book string, account uuid.UUID, 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.calls["Entries"]++
-	if err := m.fail(ctx, "entries"); err != nil {
-		return nil, err
-	}
+	// Потолок адаптер проверяет до запроса: отмена его не перебивает.
 	if limit <= 0 {
 		return nil, fmt.Errorf("%w: ledgertest: limit must be positive, got %d", ledger.ErrInvalidRequest, limit)
+	}
+	if err := m.fail(ctx, "entries"); err != nil {
+		return nil, err
 	}
 	out := make([]ledger.Entry, 0, min(limit, 16))
 	if acct := m.accounts[accountKey{book: book, account: account}]; acct != nil {
@@ -162,14 +163,15 @@ func (m *MemStore) Entries(ctx context.Context, book string, account uuid.UUID, 
 	return out, nil
 }
 
-// fail — заданный сбой и отменённый контекст: оба в ledger.ErrUnavailable, как
-// у адаптера, у которого драйвер откажет по отменённому ctx.
+// fail — отменённый контекст и заданный сбой: оба в ledger.ErrUnavailable, как
+// у адаптера, у которого драйвер откажет по отменённому ctx. Стоит там, где у
+// адаптера первый поход в базу.
 func (m *MemStore) fail(ctx context.Context, op string) error {
-	if m.err != nil {
-		return storeError(op, m.err)
-	}
 	if err := ctx.Err(); err != nil {
 		return storeError(op, err)
+	}
+	if m.err != nil {
+		return storeError(op, m.err)
 	}
 	return nil
 }
@@ -246,8 +248,16 @@ func (a *accountTx) ReversalOf(ctx context.Context, id uuid.UUID) (ledger.Entry,
 }
 
 // Insert — вставка с проверками схемы (контракт ledger.AccountTx.Insert).
+// Чужой счёт адаптер видит до запроса: база не знает, какой счёт заблокирован.
 func (a *accountTx) Insert(ctx context.Context, e ledger.Entry) error {
-	if err := a.enter(ctx, "Insert"); err != nil {
+	if a.done.Load() {
+		return ErrTxDone
+	}
+	a.store.calls["Insert"]++
+	if e.Book != a.key.book || e.Account != a.key.account {
+		return fmt.Errorf("%w: ledgertest: entry %s belongs to another account", ledger.ErrInvalidRequest, e.ID)
+	}
+	if err := a.live(ctx, "Insert"); err != nil {
 		return err
 	}
 	e = copyEntry(e)
@@ -263,13 +273,19 @@ func (a *accountTx) Insert(ctx context.Context, e ledger.Entry) error {
 	return nil
 }
 
-// enter — закрытая транзакция, заданный сбой и отменённый контекст. Замок уже
-// у Post; после него счёт не трогает ни одного поля хранилища.
+// enter — вход в метод счёта: закрытая транзакция, затем live. Замок уже у
+// Post; после него счёт не трогает ни одного поля хранилища.
 func (a *accountTx) enter(ctx context.Context, method string) error {
 	if a.done.Load() {
 		return ErrTxDone
 	}
 	a.store.calls[method]++
+	return a.live(ctx, method)
+}
+
+// live — транзакция ещё принимает запросы: вставка не отказывала, контекст
+// не отменён, сбой не задан.
+func (a *accountTx) live(ctx context.Context, method string) error {
 	if a.aborted {
 		return errAborted(method)
 	}
@@ -290,13 +306,10 @@ func (a *accountTx) find(match func(ledger.Entry) bool) (ledger.Entry, bool) {
 	return ledger.Entry{}, false
 }
 
-// checkColumns — CHECK и внешние ключи строки: счёт, род по справочнику, знак
-// и сумма, обязательные поля рода, ключ, длины подписей, ReversesID ровно у
+// checkColumns — CHECK и внешние ключи строки: род по справочнику, знак и
+// сумма, обязательные поля рода, ключ, длины подписей, ReversesID ровно у
 // отмены.
 func (a *accountTx) checkColumns(e ledger.Entry) error {
-	if e.Book != a.key.book || e.Account != a.key.account {
-		return fmt.Errorf("%w: ledgertest: entry %s belongs to another account", ledger.ErrInvalidRequest, e.ID)
-	}
 	spec, ok := a.book.Spec(e.Kind)
 	if !ok {
 		return fmt.Errorf("%w: ledgertest: %q", ledger.ErrUnknownKind, e.Kind)
