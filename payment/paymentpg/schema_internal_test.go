@@ -1,6 +1,7 @@
 package paymentpg
 
 import (
+	"io/fs"
 	"regexp"
 	"strings"
 	"testing"
@@ -52,7 +53,7 @@ func TestChecksMirrorClosedSets(t *testing.T) {
 // Выборки очереди сверки и частичный индекс под ними обязаны говорить об одних
 // и тех же статусах: разъехавшись, они уводят из очереди целый статус, то есть
 // прячут зависшие деньги.
-func TestOpenStatuses_MatchSchemaFile(t *testing.T) {
+func TestOpenStatuses_MatchMigrations(t *testing.T) {
 	t.Parallel()
 
 	for _, index := range []string{"ux_payment_intents_live_reference", "ix_payment_intents_open"} {
@@ -65,31 +66,50 @@ func TestOpenStatuses_MatchSchemaFile(t *testing.T) {
 	}
 }
 
-// Ожидания CheckSchema живут в коде, схема — в файле: страж их расхождения.
-func TestExpectedSchema_MatchesFile(t *testing.T) {
+// Ожидания CheckSchema живут в коде, схема — в миграциях: страж их расхождения.
+func TestExpectedSchema_MatchesMigrations(t *testing.T) {
 	t.Parallel()
 
+	ddl := schemaDDL(t)
 	for table, spec := range expected {
-		assert.Contains(t, Schema, "CREATE TABLE "+table+" (", table)
+		assert.Contains(t, ddl, "CREATE TABLE "+table+" (", table)
 		for _, name := range spec.checks {
-			assert.Contains(t, Schema, "CONSTRAINT "+name+" CHECK", name)
+			assert.Contains(t, ddl, "CONSTRAINT "+name+" CHECK", name)
 		}
 		for name, unique := range spec.indexes {
 			if strings.HasSuffix(name, "_pkey") {
 				continue // имя первичного ключа Postgres даёт сам
 			}
 			assert.True(t,
-				strings.Contains(Schema, "CONSTRAINT "+name+" UNIQUE") ||
-					strings.Contains(Schema, "CONSTRAINT "+name+" PRIMARY KEY") ||
-					strings.Contains(Schema, indexKeyword(unique)+name+" ON "+table),
-				"индекса %s нет в schema.sql", name)
+				strings.Contains(ddl, "CONSTRAINT "+name+" UNIQUE") ||
+					strings.Contains(ddl, "CONSTRAINT "+name+" PRIMARY KEY") ||
+					strings.Contains(ddl, indexKeyword(unique)+name+" ON "+table),
+				"индекса %s нет в миграциях", name)
 		}
 		for _, name := range spec.triggers {
-			assert.Contains(t, Schema, "CREATE TRIGGER "+name, name)
-			assert.Contains(t, Schema, "ENABLE ALWAYS TRIGGER "+name, name)
+			assert.Contains(t, ddl, "CREATE TRIGGER "+name, name)
+			assert.Contains(t, ddl, "ENABLE ALWAYS TRIGGER "+name, name)
 		}
 	}
 	assertColumnsMatch(t)
+}
+
+// schemaDDL — каталог Migrations() текстом подряд, как его получит раннер
+// потребителя. IF NOT EXISTS снят: здесь сверяются имена, а форму команд держат
+// TestInitMigration_HoldsContract и повторный накат.
+func schemaDDL(t *testing.T) string {
+	t.Helper()
+	migrations := Migrations()
+	entries, err := fs.ReadDir(migrations, ".")
+	require.NoError(t, err)
+	var ddl strings.Builder
+	for _, entry := range entries {
+		raw, readErr := fs.ReadFile(migrations, entry.Name())
+		require.NoError(t, readErr)
+		ddl.Write(raw)
+		ddl.WriteString("\n")
+	}
+	return strings.ReplaceAll(ddl.String(), " IF NOT EXISTS ", " ")
 }
 
 // assertColumnsMatch — у каждой таблицы файла ровно те колонки, что ждёт
@@ -107,7 +127,7 @@ func assertColumnsMatch(t *testing.T) {
 		for name := range spec.columns {
 			wanted = append(wanted, name)
 		}
-		assert.ElementsMatch(t, wanted, declared, "колонки %s в schema.sql и в ожиданиях", table)
+		assert.ElementsMatch(t, wanted, declared, "колонки %s в миграциях и в ожиданиях", table)
 	}
 }
 
@@ -115,11 +135,12 @@ func assertColumnsMatch(t *testing.T) {
 // Тела функций-триггеров с их DECLARE сюда не попадают.
 func tableBody(t *testing.T, table string) string {
 	t.Helper()
-	start := strings.Index(Schema, "CREATE TABLE "+table+" (")
-	require.GreaterOrEqual(t, start, 0, "в schema.sql нет таблицы %s", table)
-	end := strings.Index(Schema[start:], "\n);")
+	ddl := schemaDDL(t)
+	start := strings.Index(ddl, "CREATE TABLE "+table+" (")
+	require.GreaterOrEqual(t, start, 0, "в миграциях нет таблицы %s", table)
+	end := strings.Index(ddl[start:], "\n);")
 	require.GreaterOrEqual(t, end, 0, "объявление %s не закрыто", table)
-	return Schema[start : start+end]
+	return ddl[start : start+end]
 }
 
 // Триггер потолка и триггер неизменяемости представляются ИМЕНАМИ ограничений:
@@ -127,8 +148,9 @@ func tableBody(t *testing.T, table string) string {
 func TestTriggerConstraintNames_AreInSchema(t *testing.T) {
 	t.Parallel()
 
+	ddl := schemaDDL(t)
 	for _, name := range []string{ckLedgerImmutable, ckLedgerRefundCap, ckLedgerRefundCurrency} {
-		assert.Contains(t, Schema, "CONSTRAINT = '"+name+"'", name)
+		assert.Contains(t, ddl, "CONSTRAINT = '"+name+"'", name)
 	}
 }
 
@@ -151,12 +173,13 @@ func constraintBody(t *testing.T, name string) string {
 // за счёт чужих литералов.
 func after(t *testing.T, headers ...string) string {
 	t.Helper()
+	ddl := schemaDDL(t)
 	for _, header := range headers {
-		idx := strings.Index(Schema, header)
+		idx := strings.Index(ddl, header)
 		if idx < 0 {
 			continue
 		}
-		body := Schema[idx:]
+		body := ddl[idx:]
 		for _, stop := range []string{"\n    CONSTRAINT", "\n);", "\nCREATE", "\n--"} {
 			if end := strings.Index(body, stop); end >= 0 {
 				body = body[:end]
@@ -164,7 +187,7 @@ func after(t *testing.T, headers ...string) string {
 		}
 		return body
 	}
-	require.FailNowf(t, "в schema.sql нет объявления", "%v", headers)
+	require.FailNowf(t, "в миграциях нет объявления", "%v", headers)
 	return ""
 }
 

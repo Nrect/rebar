@@ -35,7 +35,7 @@ type Options struct {
 	Settler Settler
 }
 
-// Store — payment.Store поверх таблиц payment_* (schema.sql).
+// Store — payment.Store поверх таблиц payment_* (Migrations).
 type Store struct {
 	// pool и tx исключают друг друга: New даёт пул, WithTx — транзакцию
 	// потребителя. Второй режим не открывает своей транзакции, иначе

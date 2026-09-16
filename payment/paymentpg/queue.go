@@ -134,7 +134,7 @@ func (s *Store) Drift(ctx context.Context, _ time.Time, limit int) ([]payment.Dr
 // openStatuses — незакрытые статусы для выборок очереди. Считаются по таблице
 // переходов ядра, а не вторым списком: список, разъехавшийся с ядром, увёл бы
 // из очереди сверки целый статус — то есть спрятал бы зависшие деньги.
-// Совпадение с частичным индексом схемы держит TestOpenStatuses_MatchSchemaFile.
+// Совпадение с частичным индексом схемы держит TestOpenStatuses_MatchMigrations.
 func openStatuses() []string {
 	out := make([]string, 0, len(payment.AllStatuses))
 	for _, st := range payment.AllStatuses {

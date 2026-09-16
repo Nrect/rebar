@@ -6,6 +6,27 @@
 ## Unreleased
 
 ### Changed
+- **Ломающее: схема `paymentpg` переехала в миграции, `paymentpg.Schema`
+  убран ([ADR-0011](../docs/adr/0011-migrations-in-blocks.md)).**
+  `paymentpg/schema.sql` стал `paymentpg/migrations/00001_payment_init.sql`,
+  каталог отдаёт `paymentpg.Migrations() fs.FS`; строка `Schema` со снимком
+  схемы ушла вместе с файлом (решение 5), замена — `Migrations()`. Накатывает
+  раннер проекта со своей таблицей версий `payment_schema_version`: у goose —
+  `goose.NewProvider(goose.DialectPostgres, db, paymentpg.Migrations(),
+  goose.WithTableName("payment_schema_version"))`; модуль goose не импортирует.
+  Первая миграция идемпотентна: `IF NOT EXISTS` у таблиц и индексов,
+  `CREATE OR REPLACE FUNCTION`, триггеры книги — `DROP TRIGGER IF EXISTS`,
+  `CREATE TRIGGER` и безусловный `ENABLE ALWAYS` следом (пересозданный триггер
+  приходит в `ORIGIN`); `Down` — `DROP … IF EXISTS`, включая функции
+  триггеров. Подсказки `CheckSchema` — «накатите `paymentpg.Migrations()`
+  раннером проекта» вместо «скопируйте `schema.sql`». Тесты адаптера
+  накатывают каталог; накат, повторный накат с данными и сброшенным режимом
+  триггеров и двойной откат держат `TestMigrations_*`.
+  **Переход базы, где схема уже накатана копией `schema.sql`:** `CheckSchema`
+  зелёный — затем отметить первую миграцию применённой, не выполняя
+  (`GetDBVersion` провайдера заводит `payment_schema_version`, затем
+  `INSERT INTO payment_schema_version (version_id, is_applied) VALUES (1, true)`;
+  таблицу версий руками не создавать — решение 4).
 - **Класс ошибки у sentinel ([ADR-0007](../docs/adr/0007-error-kind.md)).**
   Потребителю больше не нужна таблица перевода ошибок `payment`: `errs.KindOf`
   и `httperr` находят класс на самой sentinel, а правило `Translate` нужно
