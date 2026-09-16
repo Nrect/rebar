@@ -19,8 +19,9 @@ type Status string
 const (
 	StatusPending Status = "pending"
 	// StatusProcessing — взята воркером, аренда до locked_until и токен в
-	// claim_token; истёкшая аренда означает упавший посреди работы процесс,
-	// Claim заберёт строку снова и пометит Reclaimed.
+	// claim_token; истёкшая аренда означает, что исход попытки не записан
+	// (упал процесс, хендлер оборвала отмена): Claim заберёт строку снова и
+	// пометит Reclaimed.
 	StatusProcessing Status = "processing"
 	StatusDone       Status = "done"
 	// StatusFailed — dead-letter: виден, хранится, чистится только Redrive.

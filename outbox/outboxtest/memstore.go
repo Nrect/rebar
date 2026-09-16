@@ -152,7 +152,8 @@ func (m *MemStore) dueIDs(req outbox.ClaimRequest) []uuid.UUID {
 }
 
 // claimable — pending, чей срок наступил, либо processing с истёкшей арендой
-// (воркер упал). Живая аренда — строка занята другим прогоном, её не выдаём.
+// (исход попытки не записан). Живая аренда — строка занята другим прогоном,
+// её не выдаём.
 func claimable(row outbox.Envelope, now time.Time) bool {
 	switch row.Status {
 	case outbox.StatusPending:
