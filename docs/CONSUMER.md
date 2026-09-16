@@ -533,6 +533,7 @@ func within(stop func(), budget time.Duration) bool {
 | `mail.Service.Deliver` | взятая пачка в `sending` до конца `Lease`: возврат остатка не успел | следующий `Claim`, дальше — `Config.Uncertain` |
 | `outbox.Worker.Drain` | взятая пачка в `processing` до конца `Lease`: возврат остатка не успел | после `Lease` хендлер повторяется с `Reclaimed`, поэтому он обязан быть идемпотентным |
 | `payment.Reconciler.Run` | курсор в памяти теряется | новый процесс идёт с головы очереди; повтор гасят ключ провайдера, дедуп событий и CAS |
+| `ledger.Reconciler.Run` | курсор в памяти теряется | новый процесс идёт с начала книги; сверка только читает, и повторный проход безвреден |
 | `Purge` у `mail` и `outbox`, `session.Service.Sweep`, `entitlement.Service.Run`, `objectstore.Collector.Run` | недоделанная уборка | следующий прогон |
 
 ## 6. Миграции
