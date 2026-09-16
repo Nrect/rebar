@@ -301,6 +301,8 @@ func suiteCopies(t *testing.T, f storeFixture) {
 		return nil
 	})
 	f.accept(t, ev, suiteNow)
+	isTrue(t, bytes.Equal(ev.Payload, original.Payload) && bytes.Equal(ev.Digest, original.Digest),
+		"правка обработчика доехала до вызывающего")
 	ev.Payload[0] ^= 0xff
 	ev.Digest[0] ^= 0xff
 
