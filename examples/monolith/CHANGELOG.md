@@ -8,6 +8,27 @@
 
 ### Changed
 
+- **Схемы блоков — их `Migrations()` (ADR-0011).** Копии `00001_auth.sql` …
+  `00007_entitlement.sql` удалены. В каталоге монолита только его таблицы:
+  `00001_shop_init.sql` — `shop_users`, `shop_orders`, `shop_uploads`. Таблицы
+  каталога товаров (`entitlement_products`, `entitlement_product_items`) сняты:
+  код в них не ходил, витрина живёт в памяти (`catalog.go`), а мёртвая схема —
+  вторая правда о каталоге. Миграция идемпотентна в обе стороны: `IF NOT EXISTS`, внешние ключи на таблицы блоков —
+  `DROP CONSTRAINT IF EXISTS` и `ADD CONSTRAINT`, `Down` — `IF EXISTS`, второй
+  откат больше не падает. `shoppg.Migrate` — `goose.NewProvider` на каталог со
+  своей таблицей версий (`<модуль>_schema_version`, у монолита
+  `shop_schema_version`) под `lock.NewPostgresSessionLocker`; глобальный API
+  goose снят. Порядок — блоки, затем свой каталог; накат, старт и `/readyz`
+  берут блоки одним списком `schemaBlocks`. База стенда пересоздаётся.
+- Выдачи пишет `entitlementpg`: `entitlement.New` и хук зачисления — `WithTx` в
+  транзакции книги; его `CheckSchema` в общем списке. Повторная выдача больше
+  не сокращает срок, негодный предмет отвергается `ErrInvalidGrant`.
+  `shoppg.Entitlements` удалён, `shoppg.NewSettler` принимает
+  `*entitlementpg.Store`.
+- `outbox` подобран под бюджет задач: `HandlerTimeout` 5 с (было 10),
+  `BatchSize` 20 — обычная пачка и два `HandlerTimeout` на запись исхода и
+  возврат остатка укладываются в 15 с; `TestStopBudgets_FitKillDeadline`
+  проверяет и `outbox`.
 - Старт и остановка — по `docs/CONSUMER.md`, §§4–5. `App.Start` занимает порты
   до «готов», снимает первый снимок гейджей и запускает задачи на контексте,
   который сигнал не отменяет; `App.Wait` ждёт сигнала или падения сервера;
@@ -107,6 +128,21 @@
 
 ### Added
 
+- `TestSettlerCommitFailure_RollsBackGrants` и
+  `TestRefundCommitFailure_KeepsGrants`: отложенный триггер на `outbox_messages`
+  роняет COMMIT после всех шагов хука — выдача (и отзыв) прав, заказ и событие
+  откатываются вместе с книгой, повтор после снятия триггера применяется.
+  `TestSettlerFailure_RollsBackEverything` роняет хук до выдачи и не видел
+  выдачу мимо транзакции (пул вместо `WithTx`); её ловит первый новый тест,
+  отзыв мимо транзакции — второй.
+- Тесты миграций на живой базе: `TestMigrate_EmptyBase` — накат на пустую
+  базу, восемь таблиц версий без общей `goose_db_version`, сверка каждого
+  блока зелёная, включая `entitlementpg`; `TestMigrate_ReapplyAppliesNothing` —
+  повторный накат не применяет ничего ни у одного провайдера, а `Up` монолита,
+  выполненный заново мимо раннера, оставляет данные и внешние ключи;
+  `TestMigrate_DownTwiceThenUp` — откат всех каталогов в обратном порядке
+  раннером, затем секциями `Down` ещё раз, затем накат снова зелёный.
+  `TestMigrations_Catalog` — стражи номеров и секций каталога.
 - `TestStop_RunningJobWritesOutcome`: сверка платежей по расписанию задержана
   у провайдера, приходит сигнал — остановка ждёт прогон, и исход ложится в базу.
   `TestReadyz_SchemaMismatchIs503`: несошедшаяся колонка блока — 503 и Warn, а

@@ -8,11 +8,9 @@ import (
 //go:embed migrations/*.sql
 var migrations embed.FS
 
-// Migrations — каталог миграций как файловая система.
-//
-// СХЕМЫ АДАПТЕРОВ ЛЕЖАТ ЗДЕСЬ КАК ЕСТЬ, скопированные из <pkg>pg/schema.sql.
-// Правка копии — вторая правда о схеме: CheckSchema на старте сверит код с
-// базой и найдёт расхождение, но найдёт его у потребителя, а не в тулките.
+// Migrations — каталог миграций самого монолита: только его таблицы shop_* и
+// внешние ключи на таблицы блоков. Схемы блоков везут их Migrations()
+// (schemas.go): копия здесь была бы второй правдой о схеме.
 func Migrations() fs.FS {
 	sub, err := fs.Sub(migrations, "migrations")
 	if err != nil {

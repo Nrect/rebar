@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/nrect/rebar/entitlement"
+	"github.com/nrect/rebar/entitlement/entitlementpg"
 	"github.com/nrect/rebar/outbox"
 	"github.com/nrect/rebar/outbox/outboxpg"
 	"github.com/nrect/rebar/payment"
@@ -46,7 +47,7 @@ type EventOf func(in payment.Intent, entry payment.LedgerEntry) (outbox.Envelope
 // 503 на оплате (paymentpg/doc.go, «Порядок блокировок»).
 type Settler struct {
 	orders *Orders
-	grants *Entitlements
+	grants *entitlementpg.Store
 	queue  *outboxpg.Store
 	of     GrantsOf
 	paid   EventOf
@@ -57,12 +58,14 @@ var _ paymentpg.Settler = (*Settler)(nil)
 
 // NewSettler паникует на nil-зависимости: ошибка проводки падает на старте, а
 // не на первой оплате.
-func NewSettler(db *DB, queue *outboxpg.Store, of GrantsOf, paid, back EventOf) *Settler {
-	if db == nil || queue == nil || of == nil || paid == nil || back == nil {
+func NewSettler(db *DB, queue *outboxpg.Store, grants *entitlementpg.Store,
+	of GrantsOf, paid, back EventOf,
+) *Settler {
+	if db == nil || queue == nil || grants == nil || of == nil || paid == nil || back == nil {
 		panic("shoppg.NewSettler: все зависимости обязательны")
 	}
 	return &Settler{
-		orders: NewOrders(db), grants: NewEntitlements(db), queue: queue,
+		orders: NewOrders(db), grants: grants, queue: queue,
 		of: of, paid: paid, back: back,
 	}
 }

@@ -10,9 +10,9 @@ import (
 )
 
 // Бюджеты остановки: у каждого шага свой, и сумма меньше срока, после которого
-// процесс убивают (Kubernetes — 30 с). Задачам — обычная пачка mail и два
-// SendTimeout на запись исхода и возврат остатка (docs/CONSUMER.md, §5); держит
-// TestStopBudgets_FitKillDeadline.
+// процесс убивают (Kubernetes — 30 с). Задачам — обычная пачка mail или outbox
+// и два SendTimeout либо HandlerTimeout на запись исхода и возврат остатка
+// (docs/CONSUMER.md, §5); держит TestStopBudgets_FitKillDeadline.
 const (
 	httpGrace  = 10 * time.Second
 	jobsGrace  = 15 * time.Second
