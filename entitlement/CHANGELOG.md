@@ -7,17 +7,21 @@
 
 ### Added
 - `entitlementpg` — pg-адаптер порта `Store`: таблица `entitlement_grants`,
-  `New`, `WithTx`, `CheckSchema` и `schema.sql` с goose-маркерами и обеими
-  сторонами (`Schema` — тот же файл побайтно). Контрактный набор
+  `New`, `WithTx`, `CheckSchema` и `Migrations() fs.FS` — миграции goose внутри
+  блока ([ADR-0011](../docs/adr/0011-migrations-in-blocks.md)). Накатывает
+  раннер проекта со своей таблицей версий:
+  `goose.NewProvider(goose.DialectPostgres, db, entitlementpg.Migrations(),
+  goose.WithTableName("entitlement_schema_version"))`; модуль goose не
+  импортирует. Первая миграция идемпотентна в обе стороны. Контрактный набор
   `entitlementtest.RunStoreSuite` гоняется по адаптеру так же, как по
   двойнику.
 - Схема мигрирует **только выдачи**. Таблиц каталога из наброска в `doc.go` в
   ней нет: порт их не пишет, а пакет, который не может записать таблицу, не
   вправе ею владеть — `Down` адаптера снёс бы каталог потребителя. Тест держит
-  и одну таблицу в `Up`, и `Down` ровно из `DROP TABLE entitlement_grants;`.
+  и одну таблицу в `Up`, и `Down` ровно из `DROP TABLE IF EXISTS entitlement_grants;`.
 - `ck_entitlement_grants_item_id` зеркалит потолок ядра: предмет непустой и не
   длиннее `MaxItemIDLen` **байт**. Выдачи пишут и мимо ядра — из хука платежей
-  в той же транзакции. Guard-тест сверяет число в `schema.sql` с константой, а
+  в той же транзакции. Guard-тест сверяет число в миграции с константой, а
   граничный тест на кириллице — что база режет по байтам, а не по символам.
   Нарушение опознаётся **по имени ограничения** и приходит `ErrInvalidGrant`,
   а не `ErrUnavailable`: база ответила определённо, повтор не поможет. CHECK
@@ -25,7 +29,7 @@
 - Повторная выдача встаёт на `ux_entitlement_grants_subject_item` по имени
   (`ON CONFLICT … DO UPDATE`) и не роняет транзакцию потребителя, в том числе
   под гонкой; срок при этом не сокращается (см. «Changed»). Имена ограничений сверены и
-  с `schema.sql`, и с литералами: переименование в коде и в файле разом тоже
+  с миграцией, и с литералами: переименование в коде и в миграции разом тоже
   красное.
 - `Open` отдаёт пустой срез, а не `nil`, и выдачи в побайтном порядке
   предметов (`COLLATE "C"`) — как двойник, при любой сортировке базы
@@ -40,38 +44,24 @@
   `TestStore_ErrorHasNoRowData`, `TestStore_ConsumerCheckStaysUnavailable`,
   `TestStore_FailureIsUnavailable`, `TestSchemaCheck_MirrorsMaxItemIDLen`,
   `TestContractNames_ArePinned`, `TestCheckSchema` с соседями,
-  `TestSchema_AppliesBothWays`. Мутационный прогон адаптера — на выделенной
-  машине: каждый мутант ходит в базу.
+  `TestMigrations_Catalog`, `TestInitMigration_HoldsContract`,
+  `TestMigrations_UpDownUp` (накат и двойной откат),
+  `TestMigrations_ReapplyOnAppliedSchema` (повторный накат с данными).
+  Мутационный прогон адаптера — на выделенной машине: каждый мутант ходит в
+  базу.
 
 ### Changed
-- **Ломающее: схема `entitlementpg` переехала в миграции,
-  `entitlementpg.Schema` убран
-  ([ADR-0011](../docs/adr/0011-migrations-in-blocks.md)).**
-  `entitlementpg/schema.sql` стал
-  `entitlementpg/migrations/00001_entitlement_init.sql`, каталог отдаёт
-  `entitlementpg.Migrations() fs.FS`; строка `Schema` со снимком схемы ушла
-  вместе с файлом (решение 5), замена — `Migrations()`. В теге `entitlementpg`
-  ещё не выходил (в `v0.1.0` его нет): сборка ломается только у того, кто взял
-  его псевдоверсией. Накатывает раннер проекта со своей таблицей версий
-  `entitlement_schema_version`: у goose —
-  `goose.NewProvider(goose.DialectPostgres, db, entitlementpg.Migrations(),
-  goose.WithTableName("entitlement_schema_version"))`; модуль goose не
-  импортирует. Первая миграция идемпотентна: `CREATE TABLE IF NOT EXISTS`;
-  `Down` — `DROP TABLE IF EXISTS`. Колонки, CHECK и имена не менялись.
-  Подсказки `CheckSchema` — «накатите `entitlementpg.Migrations()` раннером
-  проекта» вместо «скопируйте `schema.sql`» и «сверьте миграцию». Тесты
-  адаптера накатывают каталог; поставку каталога и форму первой миграции
-  держат `TestMigrations_Catalog` и `TestInitMigration_HoldsContract`, накат и
-  двойной откат — `TestMigrations_UpDownUp`, повторный накат с данными —
-  `TestMigrations_ReapplyOnAppliedSchema`. Они сменили
-  `TestSchemaFile_HoldsContract`, `TestSchema_AppliesBothWays` и
-  `TestSchema_EmbedMatchesFile`; `TestExpectedColumns_MatchSchemaFile` стал
-  `TestExpectedColumns_MatchMigrations`.
+- **Схема `entitlementpg` — миграции внутри блока, а не `schema.sql` со
+  строкой `Schema`** ([ADR-0011](../docs/adr/0011-migrations-in-blocks.md)):
+  так адаптер и выходит в первом теге. Касается только взявших его
+  псевдоверсией: `Schema` убран, замена — `Migrations()`; подсказки
+  `CheckSchema` — «накатите `entitlementpg.Migrations()` раннером проекта».
+  Колонки, CHECK и имена не менялись.
   **Переход базы, где схема уже накатана копией `schema.sql`:** `CheckSchema`
   зелёный — затем отметить первую миграцию применённой, не выполняя
   (`GetDBVersion` провайдера заводит `entitlement_schema_version`, затем
   `INSERT INTO entitlement_schema_version (version_id, is_applied) VALUES (1, true)`;
-  таблицу версий руками не создавать — решение 4).
+  таблицу версий руками не создавать — ADR-0011, решение 4).
 - **Контракт `Store.Grant`: предмет вне `1..MaxItemIDLen` байт — `ErrInvalidGrant`,
   и выдачи не остаётся.** `entitlementtest.MemStore` принимал пустой и
   переросший предмет, а адаптер отвергает его CHECK: потребитель, пишущий
@@ -92,7 +82,7 @@
   двойнике и красным на базе. Сценарии набора шли на целых секундах в UTC и
   этого не видели: новый сценарий передаёт моменты с наносекундами в чужой
   зоне, а сравнение моментов во всём наборе теперь различает и зону.
-- `doc.go`: «Эталонная схема адаптера» ссылается на `entitlementpg/schema.sql`
+- `doc.go`: «Эталонная схема адаптера» ссылается на миграции `entitlementpg`
   вместо своей копии DDL выдач; каталог подписан как миграция потребителя, с
   причиной; «Адаптера в v0.1 нет» и пункт «pg-адаптера» заменены ссылкой на
   подпакет.
