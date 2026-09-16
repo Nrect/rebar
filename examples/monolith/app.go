@@ -19,6 +19,7 @@ import (
 	"github.com/nrect/rebar/authz"
 	"github.com/nrect/rebar/authz/authzpg"
 	"github.com/nrect/rebar/entitlement"
+	"github.com/nrect/rebar/entitlement/entitlementpg"
 	"github.com/nrect/rebar/kit/errs/httperr"
 	"github.com/nrect/rebar/kit/reqid"
 	"github.com/nrect/rebar/mail"
@@ -71,7 +72,6 @@ type App struct {
 	collector *objectstore.Collector
 
 	orders  *shoppg.Orders
-	grants  *shoppg.Entitlements
 	uploads *shoppg.Uploads
 
 	gauges       gauges
@@ -109,8 +109,7 @@ func New(ctx context.Context, cfg Config, log *slog.Logger, migrations fs.FS) (*
 	if err := a.startMoney(); err != nil {
 		return nil, err
 	}
-	// Сверка — до задач и HTTP, и тем же списком, что у /readyz.
-	a.schemaChecks = a.blockSchemas()
+	// Сверка — до задач и HTTP, и тем же списком, что у наката и /readyz.
 	if err := checkAll(ctx, a.schemaChecks); err != nil {
 		return nil, err
 	}
@@ -149,11 +148,12 @@ func (a *App) startInfra(ctx context.Context, migrations fs.FS) error {
 		return err
 	}
 	a.db = db
-	if migErr := shoppg.Migrate(ctx, db.Pool, migrations); migErr != nil {
+	blocks := schemaBlocks(db)
+	if _, migErr := shoppg.Migrate(ctx, db.Pool, catalogs(blocks, migrations)); migErr != nil {
 		return migErr
 	}
+	a.schemaChecks = schemaChecks(blocks)
 	a.orders = shoppg.NewOrders(db)
-	a.grants = shoppg.NewEntitlements(db)
 	a.uploads = shoppg.NewUploads(db)
 	return nil
 }
@@ -308,7 +308,7 @@ func (a *App) startIdentity() {
 
 	a.cookies = cookieConfig(a.cfg)
 
-	a.rights = entitlement.New(a.grants, entitlement.Config{
+	a.rights = entitlement.New(entitlementpg.New(a.db.Pool), entitlement.Config{
 		TTL: a.cfg.EntitlementTTL, MaxSubjects: 10_000, LoadTimeout: 5 * time.Second,
 	})
 	// Реестр операций пустой: маршруты примера проверяют разрешение прямо, а

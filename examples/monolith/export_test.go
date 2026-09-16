@@ -1,11 +1,15 @@
 package monolith
 
 import (
+	"context"
+	"io/fs"
 	"log/slog"
 	"net/http"
 
 	"github.com/nrect/rebar/payment"
 	"github.com/nrect/rebar/payment/paymenttest"
+
+	"github.com/nrect/rebar/examples/monolith/shoppg"
 )
 
 // ProviderName — имя провайдера, события которого принимает ручка вебхука.
@@ -25,4 +29,14 @@ func WebhookHandler(pay *payment.Service, provider *paymenttest.MemProvider, log
 // система.
 func (a *App) Addrs() (public, internal string) {
 	return a.public.Addr, a.internal.Addr
+}
+
+// Catalogs — каталоги миграций сборки в порядке наката, как их берёт New.
+func Catalogs(db *shoppg.DB, own fs.FS) []shoppg.Catalog {
+	return catalogs(schemaBlocks(db), own)
+}
+
+// SchemaChecks — сверки схемы блоков сборки, как их берут старт и /readyz.
+func SchemaChecks(db *shoppg.DB) []func(context.Context) error {
+	return schemaChecks(schemaBlocks(db))
 }

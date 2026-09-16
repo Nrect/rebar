@@ -12,6 +12,8 @@ set -a; . ./stand.env; set +a
 AUTH_SECRET="$(openssl rand -base64 48)" GOWORK=off go run ./cmd/monolith
 ```
 
+База стенда, поднятого до миграций внутри блоков (ADR-0011), пересоздаётся: `docker compose down -v`.
+
 `stand.env` — окружение этого стенда. Послабления в нём записаны словом (http
 без `Secure` у куки, Mailpit без TLS и пароля): код их по умолчанию не даёт, и
 забытая переменная предохранитель не снимает. Умолчаний нет у того, без чего
@@ -19,8 +21,11 @@ AUTH_SECRET="$(openssl rand -base64 48)" GOWORK=off go run ./cmd/monolith
 `MAIL_FROM`, `MAIL_DOMAIN`, `SMTP_HOST` и учётки SMTP (либо `SMTP_AUTH=none`);
 все забытые называются одним списком на старте.
 
-Миграции накатываются на старте (goose, каталог `migrations/`), схемы адаптеров
-там лежат как есть и сверяются `CheckSchema` — на старте и в `/readyz`.
+Миграции накатывает сам процесс на старте, раннером goose под блокировкой
+сессии: сначала блоки — их `Migrations()`, у каждого своя таблица версий
+`<модуль>_schema_version`, — затем свой каталог `migrations/` с таблицей
+`shop_schema_version`. Схему блоков сверяет `CheckSchema` — на старте и в
+`/readyz`.
 
 `DATABASE_URL` — прямо в Postgres либо через пулер в режиме `session`. В
 режиме `transaction` ключ `pglock` у сверки платежей не держится, и две

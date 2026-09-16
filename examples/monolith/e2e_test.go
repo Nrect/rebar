@@ -180,8 +180,8 @@ func settle(t *testing.T, s *stand, intent, order uuid.UUID) {
 
 	// МОМЕНТ ВЫДАЧИ — ТОТ, ЧТО ПРИШЁЛ ПАРАМЕТРОМ, а не now() адаптера: у
 	// каждой выдачи granted_at равен моменту записи книги. Без этого
-	// утверждения адаптер с DEFAULT now() прошёл бы весь сценарий, и
-	// требование эталонной схемы не сторожилось бы ничем.
+	// утверждения адаптер с DEFAULT now() прошёл бы весь сценарий, и «время
+	// параметром» (CONVENTIONS §9) не сторожилось бы здесь ничем.
 	requireCount(t, s, 2, `SELECT count(*) FROM entitlement_grants g
 		 JOIN payment_ledger l ON l.intent_id = $1 AND l.kind = 'capture'
 		 WHERE g.granted_at = l.created_at`, intent)

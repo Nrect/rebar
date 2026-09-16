@@ -3,6 +3,7 @@ package monolith
 import (
 	"time"
 
+	"github.com/nrect/rebar/entitlement/entitlementpg"
 	"github.com/nrect/rebar/outbox/outboxpg"
 	"github.com/nrect/rebar/payment"
 	"github.com/nrect/rebar/payment/paymentotel"
@@ -26,9 +27,9 @@ const currency = "RUB"
 // ошибка откатывает всё, включая строку дедупа события (payment/ports.go,
 // «Хук потребителя»).
 func (a *App) startMoney() error {
-	settler := shoppg.NewSettler(a.db, outboxpg.New(a.db.Pool), grantsOf,
-		a.eventOf(kindOrderPaid), a.eventOf(kindOrderRefunded))
-	// Схему сверяет общий список blockSchemas, а не сборка: сверка в двух местах
+	settler := shoppg.NewSettler(a.db, outboxpg.New(a.db.Pool), entitlementpg.New(a.db.Pool),
+		grantsOf, a.eventOf(kindOrderPaid), a.eventOf(kindOrderRefunded))
+	// Схему сверяет общий список schemaBlocks, а не сборка: сверка в двух местах
 	// расходится молча.
 	store := paymentpg.New(a.db.Pool, paymentpg.Options{Settler: settler})
 

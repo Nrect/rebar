@@ -14,10 +14,7 @@ import (
 
 // Имена ограничений, которые разбирает код. Это контракт схемы: переименование
 // в миграции ломает разбор молча (CONVENTIONS §9).
-const (
-	uxUsersLogin = "ux_shop_users_login"
-	uxGrants     = "ux_entitlement_grants_subject_item"
-)
+const uxUsersLogin = "ux_shop_users_login"
 
 // DB — пул и раннер транзакций потребителя. Всё, что ниже, работает либо на
 // пуле, либо на транзакции, полученной снаружи: своей транзакции адаптеры не
