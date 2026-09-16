@@ -7,29 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/nrect/rebar/authz/authzpg"
-	"github.com/nrect/rebar/postgres/pgtest"
 )
-
-// Обе стороны миграции применяются на пустую базу: файл уезжает в миграции
-// потребителя как есть.
-func TestSchema_AppliesBothWays(t *testing.T) {
-	t.Parallel()
-	pool := newSchemaPool(t)
-
-	pgtest.Apply(t, pool, pgtest.GooseUp(t, schemaPath))
-	require.NoError(t, authzpg.New(pool).CheckSchema(t.Context()))
-
-	pgtest.Apply(t, pool, gooseDown(t))
-	require.Error(t, authzpg.New(pool).CheckSchema(t.Context()), "после отката таблицы нет")
-}
-
-// Schema — тот же файл побайтно: потребитель, применяющий миграцию из кода,
-// получает ровно то, что лежит в каталоге.
-func TestSchema_EmbedMatchesFile(t *testing.T) {
-	t.Parallel()
-
-	assert.Equal(t, readSchema(t), authzpg.Schema)
-}
 
 // CheckSchema называет расхождения и не ругается на колонку потребителя.
 func TestCheckSchema(t *testing.T) {
@@ -76,7 +54,7 @@ func TestCheckSchema(t *testing.T) {
 
 			err := store.CheckSchema(t.Context())
 			require.Error(t, err)
-			assert.Contains(t, err.Error(), "сверьте миграцию", "первая строка — что делать")
+			assert.Contains(t, err.Error(), "накатите authzpg.Migrations() раннером проекта", "первая строка — что делать")
 			assert.Contains(t, err.Error(), tt.want)
 		})
 	}
@@ -100,7 +78,7 @@ func TestCheckSchema_MissingTable(t *testing.T) {
 
 	err := authzpg.New(pool).CheckSchema(t.Context())
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "скопируйте authzpg/schema.sql в миграции")
+	assert.Contains(t, err.Error(), "накатите authzpg.Migrations() раннером проекта")
 }
 
 // Все расхождения — в одной ошибке: чинить их по одному прогону значило бы

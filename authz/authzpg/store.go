@@ -11,7 +11,7 @@ import (
 	"github.com/nrect/rebar/authz"
 )
 
-// Store — назначения ролей в таблице authz_role_assignments (schema.sql) и
+// Store — назначения ролей в таблице authz_role_assignments (Migrations) и
 // authz.RoleSource поверх них.
 type Store struct {
 	db  executor

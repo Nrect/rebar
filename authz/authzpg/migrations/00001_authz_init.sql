@@ -1,5 +1,10 @@
--- Схема назначений ролей пакета authz (ADR-0003). Файл копируется в каталог
--- миграций потребителя как есть; раннера миграций в пакете нет.
+-- Схема назначений ролей пакета authz (ADR-0003), первая миграция (ADR-0011).
+-- Накатывает раннер потребителя, пакет её только везёт. Выпущенный файл не
+-- правится: изменение схемы — новый файл (ADR-0011, решение 6).
+--
+-- ИДЕМПОТЕНТНА: повторный накат на базу, где схема уже стоит, проходит.
+-- Существующую таблицу IF NOT EXISTS не сверяет — это делает CheckSchema
+-- (ADR-0011, решение 4).
 --
 -- Таблицы пользователей у пакета нет и не будет: subject_id — строка, потому
 -- что у одного потребителя это UUID, у другого — идентификатор внешнего
@@ -7,7 +12,7 @@
 -- добавляет потребитель своей миграцией, когда знает её имя.
 
 -- +goose Up
-CREATE TABLE authz_role_assignments (
+CREATE TABLE IF NOT EXISTS authz_role_assignments (
     realm      TEXT NOT NULL DEFAULT '',
     subject_id TEXT NOT NULL,
     role       TEXT NOT NULL,
@@ -26,8 +31,10 @@ CREATE TABLE authz_role_assignments (
     -- назначение, истёкшее раньше выдачи, — опечатка в дате, а не политика
     CONSTRAINT authz_role_assignments_expires_chk CHECK (expires_at IS NULL OR expires_at > granted_at)
 );
-CREATE INDEX ix_authz_role_assignments_expires ON authz_role_assignments (expires_at)
+CREATE INDEX IF NOT EXISTS ix_authz_role_assignments_expires ON authz_role_assignments (expires_at)
     WHERE expires_at IS NOT NULL;
 
 -- +goose Down
-DROP TABLE authz_role_assignments;
+-- Идемпотентна (ADR-0011, уточнение 1): стенды гоняют Up и Down по кругу.
+-- Индекс уходит вместе с таблицей.
+DROP TABLE IF EXISTS authz_role_assignments;

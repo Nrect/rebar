@@ -2,7 +2,6 @@ package authzpg
 
 import (
 	"context"
-	_ "embed"
 	"errors"
 	"fmt"
 	"maps"
@@ -11,18 +10,12 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// Schema — содержимое schema.sql (с маркерами goose) для потребителя, который
-// применяет миграции из кода, а не копирует файл. Побайтно равен файлу.
-//
-//go:embed schema.sql
-var Schema string
-
 const (
 	tableName = "authz_role_assignments"
 
 	// Первая строка ошибки — что делать; расхождения перечисляются ниже неё.
-	missingTableHint = "authzpg.CheckSchema: таблицы authz_role_assignments нет: скопируйте authzpg/schema.sql в миграции"
-	mismatchHint     = "authzpg.CheckSchema: таблица authz_role_assignments расходится с authzpg/schema.sql — сверьте миграцию"
+	missingTableHint = "authzpg.CheckSchema: таблицы authz_role_assignments нет: накатите authzpg.Migrations() раннером проекта"
+	mismatchHint     = "authzpg.CheckSchema: схема расходится с миграциями — накатите authzpg.Migrations() раннером проекта; что осталось после наката, чините своей миграцией"
 )
 
 // Типы из information_schema.columns.data_type.
@@ -31,8 +24,8 @@ const (
 	typeTimestamptz = "timestamp with time zone"
 )
 
-// expectedColumns — колонки и их data_type; меняется только вместе со
-// schema.sql (страж — TestExpectedColumns_MatchSchemaFile).
+// expectedColumns — колонки и их data_type; меняется только вместе с
+// миграциями (страж — TestExpectedColumns_MatchMigrations).
 var expectedColumns = map[string]string{
 	"realm":      typeText,
 	"subject_id": typeText,
@@ -74,11 +67,13 @@ const constraintsSQL = `SELECT conname FROM pg_constraint WHERE conrelid = $1 AN
 const indexesSQL = `SELECT indexname, indexdef LIKE 'CREATE UNIQUE INDEX %'
 FROM pg_indexes WHERE schemaname = $1 AND tablename = $2`
 
-// CheckSchema сверяет таблицу со schema.sql, ничего не меняя: колонки и их
-// типы, ограничения, индексы. Зовётся на старте потребителя: миграцию
-// применяет он сам, пакет только проверяет. Автомиграция из библиотеки дала
-// бы две правды о схеме, требовала DDL-прав у приложения и гонку реплик при
-// выкате. Лишние колонки потребителя расхождением не считаются.
+// CheckSchema сверяет таблицу с миграциями Migrations(), ничего не меняя:
+// колонки и их типы, ограничения, индексы. Зовётся на старте потребителя:
+// миграции накатывает он сам, пакет только проверяет. Зелёный CheckSchema —
+// условие, при котором базу со старой копией схемы можно отметить накатанной
+// (ADR-0011, решение 4). Автомиграция из библиотеки дала бы две правды о
+// схеме, требовала DDL-прав у приложения и гонку реплик при выкате. Лишние
+// колонки потребителя расхождением не считаются.
 //
 // Все расхождения — в одной ошибке (errors.Join), первая строка — что делать.
 // Сбой запроса к каталогу — authz.ErrUnavailable. Данных таблицы в ошибке нет.
