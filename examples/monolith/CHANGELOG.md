@@ -10,10 +10,10 @@
 
 - **Схемы блоков — их `Migrations()` (ADR-0011).** Копии `00001_auth.sql` …
   `00007_entitlement.sql` удалены. В каталоге монолита только его таблицы:
-  `00001_shop_init.sql` — `shop_*` и каталог товаров, переименованный из
-  `entitlement_products` и `entitlement_product_items` в `shop_products` и
-  `shop_product_items` (префикс `entitlement_` — блока). Миграция идемпотентна
-  в обе стороны: `IF NOT EXISTS`, внешние ключи на таблицы блоков —
+  `00001_shop_init.sql` — `shop_users`, `shop_orders`, `shop_uploads`. Таблицы
+  каталога товаров (`entitlement_products`, `entitlement_product_items`) сняты:
+  код в них не ходил, витрина живёт в памяти (`catalog.go`), а мёртвая схема —
+  вторая правда о каталоге. Миграция идемпотентна в обе стороны: `IF NOT EXISTS`, внешние ключи на таблицы блоков —
   `DROP CONSTRAINT IF EXISTS` и `ADD CONSTRAINT`, `Down` — `IF EXISTS`, второй
   откат больше не падает. `shoppg.Migrate` — `goose.NewProvider` на каталог со
   своей таблицей версий (`<модуль>_schema_version`, у монолита

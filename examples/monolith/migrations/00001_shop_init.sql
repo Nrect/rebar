@@ -1,5 +1,5 @@
--- Таблицы самого потребителя: пользователи, заказы, загруженные файлы и каталог
--- товаров. Префикс shop_ — чтобы ни одно имя не столкнулось с таблицами тулкита.
+-- Таблицы самого потребителя: пользователи, заказы, загруженные файлы.
+-- Префикс shop_ — чтобы ни одно имя не столкнулось с таблицами тулкита.
 -- Схем блоков здесь нет: их везут Migrations() блоков, и раннер накатывает их
 -- раньше этого каталога (schemas.go).
 --
@@ -53,22 +53,6 @@ CREATE TABLE IF NOT EXISTS shop_uploads (
     created_at    timestamptz NOT NULL
 );
 
--- Каталог: продукт — то, что покупают; предмет — то, что открывается покупкой.
--- Таблицы монолита, а не блока: entitlement.Store их не пишет, а префикс
--- entitlement_ принадлежит блоку. Код примера витрину держит в памяти
--- (catalog.go) и сюда не ходит.
-CREATE TABLE IF NOT EXISTS shop_products (
-    id         uuid PRIMARY KEY,
-    code       text NOT NULL,
-    CONSTRAINT ux_shop_products_code UNIQUE (code)
-);
-
-CREATE TABLE IF NOT EXISTS shop_product_items (
-    product_id uuid NOT NULL REFERENCES shop_products (id) ON DELETE CASCADE,
-    item_id    text NOT NULL,
-    PRIMARY KEY (product_id, item_id)
-);
-
 -- ADD CONSTRAINT IF NOT EXISTS в Postgres нет: повторный накат снимает ключ и
 -- ставит заново, в той же транзакции.
 ALTER TABLE auth_sessions DROP CONSTRAINT IF EXISTS fk_auth_sessions_subject;
@@ -86,8 +70,6 @@ ALTER TABLE entitlement_grants
 ALTER TABLE IF EXISTS entitlement_grants DROP CONSTRAINT IF EXISTS fk_entitlement_grants_subject;
 ALTER TABLE IF EXISTS auth_tokens DROP CONSTRAINT IF EXISTS fk_auth_tokens_subject;
 ALTER TABLE IF EXISTS auth_sessions DROP CONSTRAINT IF EXISTS fk_auth_sessions_subject;
-DROP TABLE IF EXISTS shop_product_items;
-DROP TABLE IF EXISTS shop_products;
 DROP TABLE IF EXISTS shop_uploads;
 DROP TABLE IF EXISTS shop_orders;
 DROP TABLE IF EXISTS shop_users;
