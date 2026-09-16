@@ -113,9 +113,10 @@ func TestObserver_CountsUnderCanceledContext(t *testing.T) {
 	obs.Received(ctx, billing, inbox.OutcomeError, time.Second)
 
 	ms := collect(t, reader)
-	assert.Equal(t, int64(1), counts(receivedPoints(t, ms))[pair{source: billing, outcome: inbox.OutcomeError}])
+	assert.Equal(t, int64(1), counts(receivedPoints(t, ms))[pair{source: billing, outcome: inbox.OutcomeError}],
+		"счётчик под отменённым контекстом")
 	hist := durationPoints(t, ms)
-	require.Len(t, hist, 1)
+	require.Len(t, hist, 1, "гистограмма под отменённым контекстом")
 	assert.Equal(t, uint64(1), hist[0].Count)
 }
 
