@@ -8,6 +8,10 @@
 // поэтому тесты можно писать параллельными; SchemaDSN отдаёт ту же схему
 // строкой соединения — для теста, который поднимает пул сам, как приложение.
 //
+// Каталог миграций блока накатывает ApplyUp (секции Up по возрастанию номера)
+// и откатывает ApplyDown (Down по убыванию); CheckMigrations сторожит сам
+// каталог, SchemaObjects называет, что осталось в схеме после отката.
+//
 //	func TestMain(m *testing.M) {
 //		flag.Parse() // testing.Short() до m.Run требует разобранных флагов
 //		if testing.Short() {
@@ -27,8 +31,18 @@
 //	func TestStore(t *testing.T) {
 //		pgtest.Short(t)
 //		pool := pgtest.Schema(t, db)
-//		pgtest.Apply(t, pool, pgtest.GooseUp(t, "schema.sql"))
+//		pgtest.ApplyUp(t, pool, xpg.Migrations()) // один файл — Apply с GooseUp
 //		…
+//	}
+//
+//	func TestMigrations(t *testing.T) {
+//		pgtest.CheckMigrations(t, xpg.Migrations()) // база не нужна
+//		pgtest.Short(t)
+//		pool := pgtest.Schema(t, db)
+//		pgtest.ApplyUp(t, pool, xpg.Migrations())
+//		pgtest.ApplyDown(t, pool, xpg.Migrations())
+//		pgtest.ApplyDown(t, pool, xpg.Migrations()) // Down идемпотентен
+//		assert.Empty(t, pgtest.SchemaObjects(t, pool))
 //	}
 //
 //	func TestApp(t *testing.T) {
@@ -58,9 +72,11 @@
 //     тестов остаётся ниже max_connections сервера.
 //  7. -short ПРОПУСКАЕТ БЕЗ DOCKER, PGTEST_KEEP=1 оставляет базу и контейнер
 //     уликами упавшего теста.
+//  8. КАТАЛОГ С НАХОДКАМИ НЕ НАКАТЫВАЕТСЯ: из дубля номера или файла без номера
+//     тест собрал бы не ту последовательность, что применит goose.
 //
 // Чего нет (решения, не пробелы): раннера миграций и зависимости от goose —
-// потребитель передаёт функцию Migrate или зовёт Apply с GooseUp; фикстур и
-// снапшотов — данные заводит тест, иначе они молча расходятся со схемой;
-// других СУБД.
+// ApplyUp накатывает секции без таблицы версий, маркеры goose — комментарии
+// SQL, а Migrate для Start потребитель передаёт сам; фикстур и снапшотов —
+// данные заводит тест, иначе они молча расходятся со схемой; других СУБД.
 package pgtest
