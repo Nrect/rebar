@@ -10,51 +10,14 @@ import (
 )
 
 // Бюджеты остановки: у каждого шага свой, и сумма меньше срока, после которого
-// процесс убивают (Kubernetes — 30 с). Задачам — не меньше обычного прогона:
-// у mail это BatchSize писем (docs/CONSUMER.md, §5).
+// процесс убивают (Kubernetes — 30 с). Задачам — обычная пачка mail и два
+// SendTimeout на запись исхода и возврат остатка (docs/CONSUMER.md, §5); держит
+// TestStopBudgets_FitKillDeadline.
 const (
 	httpGrace  = 10 * time.Second
 	jobsGrace  = 15 * time.Second
 	flushGrace = 3 * time.Second
 )
-
-// readHeaderTimeout — срок заголовков запроса: медленный клиент не держит
-// соединение бесконечно.
-const readHeaderTimeout = 5 * time.Second
-
-// Start занимает порты, снимает первый снимок гейджей, запускает задачи и
-// объявляет готовность — в этом порядке (docs/CONSUMER.md, §4). Занятый порт —
-// ошибка Start, а не горутины после того, как /readyz ответил 200.
-//
-// ctx — сигнальный: его отмена начинает остановку в Wait, а в задачи не
-// доходит. Остановленный Stop процесс заново не стартует.
-func (a *App) Start(ctx context.Context) error {
-	public := &http.Server{Addr: a.cfg.Addr, Handler: a.handler, ReadHeaderTimeout: readHeaderTimeout}
-	internal := &http.Server{Addr: a.cfg.InternalAddr, Handler: a.probes, ReadHeaderTimeout: readHeaderTimeout}
-	lns, err := listen(ctx, public, internal)
-	if err != nil {
-		return err
-	}
-	// Адрес — занятого порта: при :0 номер выбирает система.
-	public.Addr, internal.Addr = lns[0].Addr().String(), lns[1].Addr().String()
-	a.public, a.internal = public, internal
-
-	// ОТМЕНА КОНТЕКСТА РЕЖЕТ ПРОГОН ПОСРЕДИ РАБОТЫ: у mail это письмо посреди
-	// отправки. Задачи гасит Stop между прогонами, а не сигнал.
-	jobsCtx := context.WithoutCancel(ctx)
-	// Первый снимок — до расписания: без него первую минуту после деплоя
-	// payment_drift отдаёт ноль, а денежный алерт слеп. Сбой снимка уже записал
-	// наблюдатель, и задача повторит его на своём такте.
-	_, _ = a.jobs.RunNow(jobsCtx, jobGaugesSnapshot)
-	a.jobs.Start(jobsCtx)
-
-	a.served = make(chan error, len(lns))
-	go func() { a.served <- public.Serve(lns[0]) }()
-	go func() { a.served <- internal.Serve(lns[1]) }()
-	a.ready.Store(true)
-	a.log.InfoContext(ctx, "started", slog.String("op", "start"))
-	return nil
-}
 
 // Wait ждёт сигнала или падения сервера и останавливает процесс.
 func (a *App) Wait(ctx context.Context) error {

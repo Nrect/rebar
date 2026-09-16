@@ -14,7 +14,10 @@
   `App.Stop` гасит по шагам со своими бюджетами: `/readyz` → 503, публичный
   `Shutdown` (10 с), `scheduler.Stop` (15 с), пул — только после чистой
   остановки, служебный порт, `otelboot` и трекер (3 с). `cmd/monolith` —
-  логгер первой строкой, конфиг, `New`, `Start`, `Wait`.
+  логгер первой строкой, конфиг, `New`, `Start`, `Wait`. Почта подобрана под
+  бюджет задач: `SendTimeout` 5 с (было 10), `BatchSize` 10 (было 20) — обычная
+  пачка и два `SendTimeout` на запись исхода и возврат остатка укладываются в
+  15 с; держит `TestStopBudgets_FitKillDeadline`.
 - `/metrics`, `/healthz` и новая `/readyz` — на служебном порту `INTERNAL_ADDR`
   (по умолчанию `127.0.0.1:9090`), с публичного роутера сняты. `/readyz`
   сверяет схему блоков тем же списком, что и старт (`blockSchemas`), причину
@@ -109,7 +112,8 @@
   `TestReadyz_SchemaMismatchIs503`: несошедшаяся колонка блока — 503 и Warn, а
   служебные ручки на публичном порту не отвечают. `TestStart_BusyPortRefuses`,
   `TestJobs_FailureIsLogged`, `TestLogs_HTTPErrorCarriesIDs`, `TestLoad_*` —
-  безопасные умолчания и список обязательных; тесты `logotel`.
+  безопасные умолчания и список обязательных; `TestStopBudgets_FitKillDeadline`
+  — сумма бюджетов остановки и бюджет задач под пачку `mail`; тесты `logotel`.
 - Стражи таблицы ошибок: `TestTranslate_SentinelsReachHTTP` — итоговые статус
   и слаг каждой sentinel, которую монолит отдаёт наружу, через настоящий
   ответчик; `TestTranslate_NoRedundantRule` — правило со статусом класса без

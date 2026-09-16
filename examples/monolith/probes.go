@@ -25,14 +25,6 @@ func (a *App) probeMux() http.Handler {
 	return mux
 }
 
-// healthz — жив ли процесс. База сюда не ходит: readiness и liveness это
-// разные вопросы, и упавшая база не повод перезапускать процесс.
-func healthz(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(`{"status":"ok"}`))
-}
-
 // readyz — можно ли слать трафик: процесс между стартом и остановкой, и схема
 // каждого блока сходится. Ответ — только код; причину пишем Warn, а не Error:
 // проба повторяется и засыпала бы трекер одним инцидентом.

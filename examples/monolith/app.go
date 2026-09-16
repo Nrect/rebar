@@ -82,7 +82,7 @@ type App struct {
 	handler      http.Handler
 	probes       http.Handler
 
-	// Процесс: порты и готовность заводит Start, гасит Stop (process.go).
+	// Процесс: порты и готовность заводит Start, гасит Stop.
 	ready    atomic.Bool
 	public   *http.Server
 	internal *http.Server
@@ -184,6 +184,44 @@ func (a *App) CookieNames() (sessionCookie, csrfCookie string) {
 // Unconfigured именно по имени (mail/unconfigured.go).
 func (a *App) Transport() mail.TransportName { return a.letters.Transport() }
 
+// readHeaderTimeout — срок заголовков запроса: медленный клиент не держит
+// соединение бесконечно.
+const readHeaderTimeout = 5 * time.Second
+
+// Start занимает порты, снимает первый снимок гейджей, запускает задачи и
+// объявляет готовность — в этом порядке (docs/CONSUMER.md, §4). Занятый порт —
+// ошибка Start, а не горутины после того, как /readyz ответил 200.
+//
+// ctx — сигнальный: его отмена начинает остановку в Wait, а в задачи не
+// доходит. Остановленный Stop процесс заново не стартует.
+func (a *App) Start(ctx context.Context) error {
+	public := &http.Server{Addr: a.cfg.Addr, Handler: a.handler, ReadHeaderTimeout: readHeaderTimeout}
+	internal := &http.Server{Addr: a.cfg.InternalAddr, Handler: a.probes, ReadHeaderTimeout: readHeaderTimeout}
+	lns, err := listen(ctx, public, internal)
+	if err != nil {
+		return err
+	}
+	// Адрес — занятого порта: при :0 номер выбирает система.
+	public.Addr, internal.Addr = lns[0].Addr().String(), lns[1].Addr().String()
+	a.public, a.internal = public, internal
+
+	// ОТМЕНА КОНТЕКСТА РЕЖЕТ ПРОГОН ПОСРЕДИ РАБОТЫ: у mail это письмо посреди
+	// отправки. Задачи гасит Stop между прогонами, а не сигнал.
+	jobsCtx := context.WithoutCancel(ctx)
+	// Первый снимок — до расписания: без него первую минуту после деплоя
+	// payment_drift отдаёт ноль, а денежный алерт слеп. Сбой снимка уже записал
+	// наблюдатель, и задача повторит его на своём такте.
+	_, _ = a.jobs.RunNow(jobsCtx, jobGaugesSnapshot)
+	a.jobs.Start(jobsCtx)
+
+	a.served = make(chan error, len(lns))
+	go func() { a.served <- public.Serve(lns[0]) }()
+	go func() { a.served <- internal.Serve(lns[1]) }()
+	a.ready.Store(true)
+	a.log.InfoContext(ctx, "started", slog.String("op", "start"))
+	return nil
+}
+
 // Jobs — планировщик фоновых задач.
 func (a *App) Jobs() *scheduler.Scheduler { return a.jobs }
 
@@ -232,14 +270,17 @@ func mailConfig(cfg Config) mail.Config {
 		MaxAttempts:     5,
 		Backoff:         mail.Backoff{Base: time.Second, Max: time.Minute},
 		Lease:           30 * time.Second,
-		SendTimeout:     10 * time.Second,
-		BatchSize:       20,
-		MinSendGap:      time.Millisecond,
-		Retention:       7 * 24 * time.Hour,
-		MaxBodyBytes:    64 * 1024,
-		// Выбран с учётом остановки: процесс, убитый после jobsGrace, оставит до
-		// BatchSize писем в sending, и после Lease они уйдут сами; дубль — только
-		// у письма, которое отправлялось в момент убийства (docs/CONSUMER.md, §5).
+		// SendTimeout и BatchSize подобраны под jobsGrace: обычная пачка и два
+		// SendTimeout на запись исхода и возврат остатка укладываются в бюджет
+		// остановки (TestStopBudgets_FitKillDeadline).
+		SendTimeout:  5 * time.Second,
+		BatchSize:    10,
+		MinSendGap:   time.Millisecond,
+		Retention:    7 * 24 * time.Hour,
+		MaxBodyBytes: 64 * 1024,
+		// Выбран с учётом остановки: процесс, убитый после jobsGrace, оставит под
+		// арендой взятую пачку, и после Lease она уйдёт сама; дубль — только у
+		// письма, которое отправлялось в момент убийства (docs/CONSUMER.md, §5).
 		Uncertain: mail.UncertainRetry,
 	}
 }

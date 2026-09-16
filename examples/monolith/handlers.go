@@ -25,6 +25,14 @@ func (a *App) mount(mux *http.ServeMux) {
 	mux.Handle("GET /lesson/{id}", a.authenticated(http.HandlerFunc(a.lesson)))
 }
 
+// healthz — жив ли процесс. База сюда не ходит: readiness и liveness это
+// разные вопросы, и упавшая база не повод перезапускать процесс.
+func healthz(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(`{"status":"ok"}`))
+}
+
 // authenticated — обвязка сессии. Отказ уезжает через тот же ответчик, что и
 // всё остальное: две точки записи ошибки расходятся первой же правкой.
 func (a *App) authenticated(next http.Handler) http.Handler {
