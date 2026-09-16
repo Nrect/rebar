@@ -146,6 +146,29 @@ func TestReceive_HandlerErrorIsAlways503(t *testing.T) {
 	}
 }
 
+// Чужая недоступность того же класса — outbox.ErrUnavailable из Enqueue в
+// транзакции приёма — тоже уходит внутрь inbox.ErrUnavailable: контракт «класс
+// unavailable снаружи любой причины» держит errors.Is у потребителя, а не только
+// статус 503. Тот же случай у уборки: помощник обёртки у них один.
+func TestReceive_ForeignUnavailableIsWrapped(t *testing.T) {
+	t.Parallel()
+
+	foreign := errs.Kinded(errs.KindUnavailable, "other: store is down")
+	h := newHarness(t)
+	h.handler.set(func(context.Context, inbox.Event) error { return foreign })
+	receipt, err := h.receive(t, signed("evt_foreign", typePaid, nil))
+
+	assert.Equal(t, inbox.OutcomeError, receipt.Outcome)
+	require.ErrorIs(t, err, inbox.ErrUnavailable, "чужая недоступность обработчика отдана без inbox.ErrUnavailable в цепочке")
+	require.ErrorIs(t, err, foreign, "причина в цепочке")
+	assert.Equal(t, errs.KindUnavailable, errs.KindOf(err))
+
+	svc := inbox.NewService(&purgeStore{err: foreign}, inboxtest.NewObserver(), testConfig(stubVerifier()))
+	_, err = svc.Purge(t.Context())
+	require.ErrorIs(t, err, inbox.ErrUnavailable, "чужая недоступность хранилища в уборке отдана без inbox.ErrUnavailable в цепочке")
+	require.ErrorIs(t, err, foreign, "причина уборки в цепочке")
+}
+
 // Класс отказа верификатора решает ядро; неуверенность — в сторону повтора.
 func TestReceive_VerifierErrorsTakeCoreClass(t *testing.T) {
 	t.Parallel()
