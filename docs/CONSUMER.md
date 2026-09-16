@@ -656,8 +656,9 @@ func hasKey(r slog.Record, key string) bool {
 1. **Часы приложения — одна функция `func() time.Time { return time.Now().UTC() }`.**
    Ручки и хуки берут момент из неё или из события блока, а не зовут
    `time.Now()`: иначе тест проекта на просрочку спит, а момент заказа и момент
-   платежа идут из разных часов. Та же функция уходит в `SetClock` блоков в
-   тестах.
+   платежа идут из разных часов. В тестах та же функция уходит в `SetClock`
+   блоков — до начала обслуживания: сеттер часов у блока без замка, и вызов
+   под нагрузкой — гонка.
 2. **Схема проекта — `timestamptz`, время — параметром.** `now()` и
    `DEFAULT now()` в своих миграциях нет по той же причине, что у блоков; пул —
    `postgres.WithUTC` (§4). Прочитанное из базы — `.UTC()` сразу после `Scan`:
@@ -698,9 +699,11 @@ func hasKey(r slog.Record, key string) bool {
    как CI тулкита: зависимость от пояса машины падает там, а не у клиента в
    другом часовом поясе.
 
-Образец: пул с `postgres.WithUTC` — `Open` в
-[`examples/monolith/shoppg/db.go`](../examples/monolith/shoppg/db.go). Логи в
-UTC, часы приложения и `TZ` в compose монолит пока не ставит — код выше.
+Образец — монолит: пул с `postgres.WithUTC` — `Open` в
+[`shoppg/db.go`](../examples/monolith/shoppg/db.go); часы приложения — поле
+`now` и `SetClock` в [`app.go`](../examples/monolith/app.go); лог в UTC — `New`
+в [`logotel/logger.go`](../examples/monolith/logotel/logger.go); `TZ: UTC` у
+Postgres — [`compose.yaml`](../examples/monolith/compose.yaml).
 
 ## Короткая форма
 
