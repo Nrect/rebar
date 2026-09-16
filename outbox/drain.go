@@ -17,6 +17,13 @@ import (
 // не должна морозить гейдж последнего успеха крона («крон умер» при живом
 // кроне). Ошибка прогона — только сбой Claim, сбой Finish (включая
 // ErrClaimLost) и отмена ctx.
+//
+// ОТМЕНА ctx РЕЖЕТ ПАЧКУ ПОСРЕДИ ПРОГОНА. Ответ хендлера — nil, ErrSkip,
+// Permanent или Throttled — пишется мимо отмены; строки, до хендлера которых
+// прогон не дошёл, возвращаются в очередь без потраченной попытки
+// (FinishReleased) — обе записи не дольше HandlerTimeout каждая. Под арендой
+// остаётся только строка, чей хендлер оборвала сама отмена (ошибка без класса
+// при отменённом ctx): эффект мог случиться, после Lease она придёт с Reclaimed.
 func (w *Worker) Drain(ctx context.Context) (int, error) {
 	now := w.now()
 	token := w.newToken()
@@ -36,12 +43,16 @@ func (w *Worker) Drain(ctx context.Context) (int, error) {
 func (w *Worker) drainBatch(ctx context.Context, now time.Time, token uuid.UUID, batch []Envelope) (int, error) {
 	processed := 0
 	for i, env := range batch {
-		req, stop := w.next(ctx, now, token, env)
-		if stop != nil {
-			released, relErr := w.releaseRest(ctx, token, batch[i:])
-			return processed + released, errors.Join(stop, relErr)
+		h, err := w.handlerFor(ctx, env)
+		if err != nil {
+			return w.stop(ctx, token, processed, batch[i:], err)
 		}
-		if err := w.store.Finish(ctx, req); err != nil {
+		req, err := w.outcome(ctx, now, token, env, h)
+		if err != nil {
+			// Хендлер оборвала отмена: строка остаётся под арендой.
+			return w.stop(ctx, token, processed, batch[i+1:], err)
+		}
+		if err = w.finish(ctx, req); err != nil {
 			// Исход записать не удалось: работать дальше значит плодить
 			// эффекты, чей исход тоже некуда записать.
 			return processed, fmt.Errorf("%w: finish: %w", ErrUnavailable, err)
@@ -51,31 +62,39 @@ func (w *Worker) drainBatch(ctx context.Context, now time.Time, token uuid.UUID,
 	return processed, nil
 }
 
-// next — исход строки либо причина остановить пачку ДО старта хендлера.
-func (w *Worker) next(ctx context.Context, now time.Time, token uuid.UUID, env Envelope) (FinishRequest, error) {
+// stop — пачку остановили: остаток возвращается в очередь, а причина уходит
+// наверх вместе со сбоем возврата, если он был.
+func (w *Worker) stop(ctx context.Context, token uuid.UUID, processed int, rest []Envelope, cause error) (int, error) {
+	released, err := w.releaseRest(ctx, token, rest)
+	return processed + released, errors.Join(cause, err)
+}
+
+// handlerFor — хендлер строки либо причина остановить пачку ДО его старта.
+func (w *Worker) handlerFor(ctx context.Context, env Envelope) (Handler, error) {
 	if err := ctx.Err(); err != nil {
-		return FinishRequest{}, err
+		return nil, err
 	}
 	h, known := w.reg.handler(env.Kind)
 	if !known {
 		// Claim фильтрует по реестру, значит хранилище отдало лишнее. Строку
 		// возвращаем, а не уводим в dead-letter: её умеет другой инстанс.
-		return FinishRequest{}, fmt.Errorf("%w: store returned unrequested kind %q", ErrUnavailable, env.Kind)
+		return nil, fmt.Errorf("%w: store returned unrequested kind %q", ErrUnavailable, env.Kind)
 	}
-	return w.outcome(ctx, now, token, env, h), nil
+	return h, nil
 }
 
-// outcome — решение по одной строке.
-func (w *Worker) outcome(ctx context.Context, now time.Time, token uuid.UUID, env Envelope, h Handler) FinishRequest {
+// outcome — решение по одной строке. Ошибка — исхода нет: хендлер оборвала
+// отмена прогона.
+func (w *Worker) outcome(ctx context.Context, now time.Time, token uuid.UUID, env Envelope, h Handler) (FinishRequest, error) {
 	req := FinishRequest{ID: env.ID, Token: token, Now: now}
 	if env.NotAfter != nil && !now.Before(*env.NotAfter) {
 		// Срок вышел, пока строка ждала: хендлер не зовётся вовсе.
 		req.Outcome = FinishExpired
-		return req
+		return req, nil
 	}
 	err := w.invoke(ctx, h, env.delivery())
 	req.Now = w.now()
-	return w.classify(req, env, err)
+	return w.classify(ctx, req, env, err)
 }
 
 // invoke — хендлер под собственным таймаутом и recover.
@@ -99,30 +118,38 @@ func (w *Worker) invoke(ctx context.Context, h Handler, d Delivery) (err error) 
 // classify — ошибка хендлера в исход строки. Порядок значим: skip раньше
 // классов (это не отказ), permanent раньше throttling, throttling раньше
 // счётчика попыток — провайдер, назвавший срок, не должен жечь лимит.
-func (w *Worker) classify(req FinishRequest, env Envelope, err error) FinishRequest {
+//
+// ОБРЫВ ОТМЕНОЙ — ПОСЛЕ КЛАССОВ. Класс хендлер назвал сам, и это ответ, даже
+// если прогон уже отменён; ошибка без класса при отменённом ctx от обрыва
+// неотличима. Её исход не пишем: повтор стёр бы Reclaimed, а исчерпанная
+// попытка увела бы строку в dead-letter, — строка ждёт конца аренды.
+func (w *Worker) classify(ctx context.Context, req FinishRequest, env Envelope, err error) (FinishRequest, error) {
 	if err == nil {
 		req.Outcome = FinishDone
-		return req
+		return req, nil
 	}
 	if errors.Is(err, ErrSkip) {
 		req.Outcome = FinishSkipped
-		return req
+		return req, nil
 	}
 	req.Error = truncateError(err.Error())
 	if IsPermanent(err) {
 		req.Outcome, req.FailReason = FinishFailed, FailPermanent
-		return req
+		return req, nil
 	}
 	if after, ok := RetryAfterOf(err); ok {
-		return w.throttle(req, env, after)
+		return w.throttle(req, env, after), nil
+	}
+	if ctx.Err() != nil {
+		return req, ctx.Err()
 	}
 	if env.Attempts >= w.cfg.MaxAttempts { // Attempts уже увеличен Claim'ом
 		req.Outcome, req.FailReason = FinishFailed, FailExhausted
-		return req
+		return req, nil
 	}
 	req.Outcome = FinishRetry
 	req.NextAttemptAt = req.Now.Add(w.cfg.Backoff.Delay(env.Attempts))
-	return req
+	return req, nil
 }
 
 // throttle — хендлер назвал срок повтора. Потолок Backoff.Max: «приходи через
@@ -144,17 +171,17 @@ func (w *Worker) throttle(req FinishRequest, env Envelope, after time.Duration) 
 	return req
 }
 
-// releaseRest — пачка останавливается до старта хендлера: строки возвращаются
-// в pending немедленно и без потраченной попытки. Быстрая остановка (выкат,
-// SIGTERM) не должна жечь лимит попыток и отправлять работу в dead-letter.
+// releaseRest — пачка остановлена: строки, до хендлера которых прогон не
+// дошёл, возвращаются в pending немедленно и без потраченной попытки. Быстрая
+// остановка (выкат, SIGTERM) не должна жечь лимит попыток и отправлять работу
+// в dead-letter.
 //
 // КОНТЕКСТ ОТВЯЗЫВАЕТСЯ ОТ ОТМЕНЫ: по отменённому ctx драйвер откажется
 // писать, и «освобождение» стало бы тихим no-op — строки висели бы под
 // арендой с потраченной попыткой ровно в том сценарии, ради которого
-// released и заведён. Бюджет отвязанного контекста — HandlerTimeout: он и так
-// потолок ожидания одной строки.
+// released и заведён.
 func (w *Worker) releaseRest(ctx context.Context, token uuid.UUID, rest []Envelope) (int, error) {
-	relCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), w.cfg.HandlerTimeout)
+	relCtx, cancel := w.detached(ctx)
 	defer cancel()
 
 	released := 0
@@ -166,4 +193,18 @@ func (w *Worker) releaseRest(ctx context.Context, token uuid.UUID, rest []Envelo
 		released++
 	}
 	return released, nil
+}
+
+// finish пишет исход МИМО ОТМЕНЫ ctx: отмена, пришедшая после ответа
+// хендлера, не должна стоить повтора его эффекта.
+func (w *Worker) finish(ctx context.Context, req FinishRequest) error {
+	finishCtx, cancel := w.detached(ctx)
+	defer cancel()
+	return w.store.Finish(finishCtx, req)
+}
+
+// detached — контекст записи мимо отмены прогона. Срок — HandlerTimeout,
+// потолок шага строки: без него повисшая база держала бы остановку без предела.
+func (w *Worker) detached(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), w.cfg.HandlerTimeout)
 }
