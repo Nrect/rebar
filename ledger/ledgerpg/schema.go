@@ -383,17 +383,21 @@ func (s *Store) checkBook(ctx context.Context, name string, want bookSpec) ([]er
 		floor int64
 	)
 	err := s.db().QueryRow(ctx, bookSQL, name).Scan(&unit, &floor)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return []error{fmt.Errorf("%s: книги %s нет — справочник пишет миграция потребителя", tableBooks, name)}, nil
-	}
-	if err != nil {
+	missing := errors.Is(err, pgx.ErrNoRows)
+	if err != nil && !missing {
 		return nil, storeError("check schema: book", err)
 	}
 	var problems []error
-	if unit != want.unit {
+	// Строка о недостающем называет значения реестра: миграцию справочника пишут
+	// по сообщению, вместе с родами книги ниже.
+	if missing {
+		problems = append(problems, fmt.Errorf("%s: книги %s нет, в реестре единица %s, граница %d",
+			tableBooks, name, want.unit, want.floor))
+	}
+	if !missing && unit != want.unit {
 		problems = append(problems, fmt.Errorf("%s: у книги %s единица %s, в реестре %s", tableBooks, name, unit, want.unit))
 	}
-	if floor != want.floor {
+	if !missing && floor != want.floor {
 		problems = append(problems, fmt.Errorf("%s: у книги %s граница %d, в реестре %d", tableBooks, name, floor, want.floor))
 	}
 	kinds, err := s.kindsOf(ctx, name)
@@ -440,7 +444,7 @@ func kindProblems(book string, want []ledger.KindSpec, actual map[string]kindRow
 		wantRow := kindRow{sign: string(spec.Sign), reference: string(spec.Reference), attribution: string(spec.Attribution)}
 		got, ok := actual[spec.Name]
 		if !ok {
-			problems = append(problems, fmt.Errorf("%s: рода %s/%s нет", tableKinds, book, spec.Name))
+			problems = append(problems, fmt.Errorf("%s: рода %s/%s нет, в реестре %s", tableKinds, book, spec.Name, wantRow))
 			continue
 		}
 		if got != wantRow {

@@ -76,14 +76,16 @@ func suiteSchemaRefusals(t *testing.T, f fixture) {
 	}
 }
 
-// suiteSchemaReversals — одна отмена на запись и запрет отмены отмены держит
-// схема, а не только ядро. Остатка хватает, чтобы граница не сработала раньше.
+// suiteSchemaReversals — одна отмена на запись, запрет отмены отмены и гасимую
+// запись на своём счёте держит схема, а не только ядро (уточнение арбитра 5).
+// Остатка хватает, чтобы граница не сработала раньше.
 func suiteSchemaReversals(t *testing.T, f fixture) {
 	t.Helper()
-	account := uuid.New()
+	account, stranger := uuid.New(), uuid.New()
 	base := f.post(t, topup(account, 1000, "schema-rev-base"))
 	f.post(t, topup(account, 5000, "schema-rev-cushion"))
 	rev := f.reverse(t, reversal(account, base.ID, byOperator, "schema-rev"))
+	theirs := f.post(t, topup(stranger, 1000, "schema-rev-theirs"))
 
 	err := f.insert(t, account, func(head ledger.Account) ledger.Entry {
 		e := f.rawEntry(account, head, ledger.KindReversal, -base.AmountMinor, "schema-rev-again")
@@ -98,5 +100,16 @@ func suiteSchemaReversals(t *testing.T, f fixture) {
 		return e
 	})
 	errIs(t, err, ledger.ErrNotReversible, "отмена отмены мимо ядра")
+
+	// Запись есть в книге, но на другом счёте: сумма, цепь и граница сходятся,
+	// отбить обязан именно поиск гасимой записи на своём счёте.
+	err = f.insert(t, account, func(head ledger.Account) ledger.Entry {
+		e := f.rawEntry(account, head, ledger.KindReversal, -theirs.AmountMinor, "schema-rev-foreign")
+		e.ReversesID = &theirs.ID
+		return e
+	})
+	errIs(t, err, ledger.ErrEntryNotFound, "отмена записи другого счёта мимо ядра")
 	f.chain(t, account, 3)
+	f.chain(t, stranger, 1)
+	equal(t, f.head(t, stranger).BalanceMinor, int64(1000), "остаток чужого счёта")
 }

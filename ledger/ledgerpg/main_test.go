@@ -105,12 +105,18 @@ func seedBook(t *testing.T, pool *pgxpool.Pool, book ledger.Book) {
 	}
 }
 
-// service — книга поверх хранилища со своим ключом и часами на моменте БД.
+// service — кошелёк поверх хранилища.
 func service(t *testing.T, store ledger.Store) *ledger.Service {
+	t.Helper()
+	return serviceFor(t, store, wallet())
+}
+
+// serviceFor — книга поверх хранилища со своим ключом и часами на моменте БД.
+func serviceFor(t *testing.T, store ledger.Store, book ledger.Book) *ledger.Service {
 	t.Helper()
 	key, err := secrets.GenerateKey()
 	require.NoError(t, err)
-	svc := ledger.NewService(store, ledger.Config{Book: wallet(), Keys: map[secrets.KeyID][]byte{1: key}, ActiveKey: 1})
+	svc := ledger.NewService(store, ledger.Config{Book: book, Keys: map[secrets.KeyID][]byte{1: key}, ActiveKey: 1})
 	svc.SetClock(ledgertest.NewClock(pgtest.Now()).Now)
 	return svc
 }

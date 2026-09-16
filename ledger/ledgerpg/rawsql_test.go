@@ -23,14 +23,18 @@ func TestRawSQL_RefusedByDatabase(t *testing.T) {
 
 	store, pool := newStore(t, wallet())
 	svc := service(t, store)
-	account := uuid.New()
+	account, stranger := uuid.New(), uuid.New()
 	in := mustPost(t, svc, topup(account, 1000, "raw-in"))
+	mustPost(t, svc, topup(stranger, 100, "raw-theirs-1"))
+	theirs := mustPost(t, svc, topup(stranger, 200, "raw-theirs-2"))
 
 	gap := nextEntry(t, store, account, kindTopup, 10, "raw-gap")
 	gap.Seq++
 	below := nextEntry(t, store, account, kindSpend, -1001, "raw-below")
 	lied := nextEntry(t, store, account, kindTopup, 10, "raw-lied")
 	lied.BalanceAfterMinor = 1_000_000
+	foreign := nextEntry(t, store, account, ledger.KindReversal, -theirs.AmountMinor, "raw-foreign")
+	foreign.ReversesID = &theirs.ID
 
 	cases := []struct {
 		name       string
@@ -48,6 +52,11 @@ func TestRawSQL_RefusedByDatabase(t *testing.T) {
 		{"голова на запись, которой нет в журнале",
 			execSQL(`UPDATE ledger_accounts SET seq = seq + 1, balance_minor = 1000000, last_hash = $2 WHERE account = $1`,
 				account, randomHash(t)),
+			"23514", "ledger_accounts_guard"},
+		// Запись в журнале есть, но другого счёта: номер, остаток и подпись сходятся.
+		{"голова на запись другого счёта",
+			execSQL(`UPDATE ledger_accounts SET seq = seq + 1, balance_minor = $2, last_hash = $3 WHERE account = $1`,
+				account, theirs.BalanceAfterMinor, theirs.EntryHash),
 			"23514", "ledger_accounts_guard"},
 		{"удаление счёта", execSQL(`DELETE FROM ledger_accounts WHERE account = $1`, account),
 			"23514", "ledger_accounts_guard"},
@@ -68,6 +77,8 @@ func TestRawSQL_RefusedByDatabase(t *testing.T) {
 		}, "40001", "ledger_entries_head_moved"},
 		{"остаток после не сходится с суммой", insertSQL(lied), "40001", "ledger_entries_chain"},
 		{"запись ниже границы книги", insertSQL(below), "23514", "ledger_entries_floor"},
+		// Уточнение арбитра 5: гасимая запись есть в книге, но на другом счёте.
+		{"отмена записи другого счёта той же книги", insertSQL(foreign), "23503", "ledger_entries_reversal_target"},
 	}
 	for _, tc := range cases {
 		tx := beginTx(t, pool)
@@ -79,6 +90,11 @@ func TestRawSQL_RefusedByDatabase(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(1000), head.BalanceMinor, "остаток не изменился")
 	requireChain(t, svc, account, 1)
+	strangerHead, err := store.Account(t.Context(), bookName, stranger)
+	require.NoError(t, err)
+	assert.Equal(t, ledger.Account{Seq: 2, BalanceMinor: 300, LastHash: theirs.EntryHash}, strangerHead,
+		"голова чужого счёта не изменилась")
+	requireChain(t, svc, stranger, 2)
 }
 
 func execSQL(query string, args ...any) func(ctx context.Context, tx pgx.Tx) error {

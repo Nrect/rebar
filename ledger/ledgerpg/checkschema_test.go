@@ -129,14 +129,21 @@ func TestCheckSchema_ReportsEveryMismatchByName(t *testing.T) {
 			want: []string{
 				"ledger_kinds: у рода wallet/topup в справочнике знак any, основание required, причина и автор optional, " +
 					"в реестре знак credit, основание required, причина и автор optional",
-				"ledger_kinds: рода wallet/adjustment нет",
+				"ledger_kinds: рода wallet/adjustment нет, в реестре знак any, основание optional, причина и автор required",
 				"ledger_kinds: рода wallet/bonus нет в реестре книги",
 			},
 		},
 		{
 			name: "книги нет в справочнике",
 			ddl:  []string{`DELETE FROM ledger_kinds`, `DELETE FROM ledger_books`},
-			want: []string{"ledger_books: книги wallet нет — справочник пишет миграция потребителя"},
+			// Миграцию справочника пишут по сообщению: книга и все её роды со значениями.
+			want: []string{
+				"ledger_books: книги wallet нет, в реестре единица RUB, граница 0",
+				"ledger_kinds: рода wallet/topup нет, в реестре знак credit, основание required, причина и автор optional",
+				"ledger_kinds: рода wallet/spend нет, в реестре знак debit, основание required, причина и автор optional",
+				"ledger_kinds: рода wallet/adjustment нет, в реестре знак any, основание optional, причина и автор required",
+				"ledger_kinds: рода wallet/reversal нет, в реестре знак any, основание optional, причина и автор required",
+			},
 		},
 	}
 	for _, tt := range tests {

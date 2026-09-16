@@ -19,6 +19,7 @@ import (
 	"github.com/nrect/rebar/kit/errs"
 	"github.com/nrect/rebar/ledger"
 	"github.com/nrect/rebar/ledger/ledgerpg"
+	"github.com/nrect/rebar/postgres"
 )
 
 // lazyPool — пул, который не соединяется, пока его не позовут: конструктору
@@ -127,6 +128,79 @@ func TestStore_AccountTxFailsLikeDouble(t *testing.T) {
 	})
 	require.ErrorIs(t, err, ledger.ErrUnavailable)
 	require.ErrorIs(t, err, context.Canceled, "фиксация")
+}
+
+// Счёт — пара книги и счёта: у кошелька и баллов покупателя один uuid. Выборки
+// адаптера и проверки триггера сужены обоими ключами — иначе повтор по ключу
+// взял бы запись другой книги, отмена погасила бы чужое, а голову счёта подпёрла
+// бы чужая запись.
+func TestStore_ScopesByBookAndAccount(t *testing.T) {
+	t.Parallel()
+
+	// У баллов граница ниже, и их справочник заведён первым: выборка рода без
+	// книги взяла бы их строку.
+	points := wallet()
+	points.Name, points.Unit, points.Floor = "points", "points", -1000
+	store, pool := newStore(t, points, wallet())
+	walletSvc, pointsSvc := service(t, store), serviceFor(t, store, points)
+	customer, stranger := uuid.New(), uuid.New()
+
+	w1 := mustPost(t, walletSvc, topup(customer, 1000, "shared"))
+	p1 := mustPost(t, pointsSvc, topup(customer, 50, "shared"))
+	assert.NotEqual(t, w1.ID, p1.ID, "тот же ключ в другой книге — другое движение")
+	assert.Equal(t, w1.ID, mustPost(t, walletSvc, topup(customer, 1000, "shared")).ID, "повтор отдаёт запись своей книги")
+	s1 := mustPost(t, walletSvc, topup(stranger, 1000, "shared"))
+	// Кошелёк уходит на номер 2, пока баллы на 1: запись головы сужена книгой.
+	mustPost(t, walletSvc, topup(customer, 1, "second"))
+	mustPost(t, pointsSvc, topup(customer, 5, "second"))
+	p3 := mustPost(t, pointsSvc, topup(customer, 7, "third"))
+
+	for _, tc := range []struct {
+		svc     *ledger.Service
+		account uuid.UUID
+		balance int64
+		entries int
+	}{
+		{walletSvc, customer, 1001, 2}, {pointsSvc, customer, 62, 3}, {walletSvc, stranger, 1000, 1},
+	} {
+		balance, err := tc.svc.Balance(t.Context(), tc.account)
+		require.NoError(t, err)
+		assert.Equal(t, tc.balance, balance)
+		requireChain(t, tc.svc, tc.account, tc.entries)
+	}
+
+	// Чужую запись ядро не находит у себя и до базы не доходит.
+	for _, tc := range []struct {
+		name  string
+		entry uuid.UUID
+	}{{"запись другой книги", p1.ID}, {"запись другого счёта", s1.ID}} {
+		_, err := walletSvc.Reverse(t.Context(), ledger.ReverseRequest{
+			Account: customer, EntryID: tc.entry, By: bySupport, Reason: testReason, Actor: testActor,
+			IdempotencyKey: "reverse " + tc.name,
+		})
+		require.ErrorIs(t, err, ledger.ErrEntryNotFound, tc.name)
+		var clean *postgres.Error
+		assert.NotErrorAs(t, err, &clean, "%s: отказ ядра до запроса, а не базы", tc.name)
+	}
+
+	// Мимо ядра книгу держит база.
+	foreign := nextEntry(t, store, customer, ledger.KindReversal, -p1.AmountMinor, "raw-other-book")
+	foreign.ReversesID = &p1.ID
+	tx := beginTx(t, pool)
+	requireRefused(t, insertRaw(t.Context(), tx, foreign), "23503", "ledger_entries_reversal_target", "отмена записи другой книги")
+	require.NoError(t, tx.Rollback(t.Context()))
+
+	tx = beginTx(t, pool)
+	_, err := tx.Exec(t.Context(), `UPDATE ledger_accounts SET seq = seq + 1, balance_minor = $3, last_hash = $4
+		WHERE book = $1 AND account = $2`, bookName, customer, p3.BalanceAfterMinor, p3.EntryHash)
+	requireRefused(t, err, "23514", "ledger_accounts_guard", "голова кошелька на запись баллов")
+	require.NoError(t, tx.Rollback(t.Context()))
+
+	below := nextEntry(t, store, customer, kindSpend, -1002, "raw-below-wallet")
+	tx = beginTx(t, pool)
+	requireRefused(t, insertRaw(t.Context(), tx, below), "23514", "ledger_entries_floor", "списание кошелька ниже его границы")
+	require.NoError(t, tx.Rollback(t.Context()))
+	requireChain(t, walletSvc, customer, 2)
 }
 
 // mutation — запрос, меняющий строки; блокировка FOR NO KEY UPDATE к ним не
