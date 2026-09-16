@@ -6,9 +6,65 @@
 ## Unreleased
 
 ### Added
+- **Адаптер `inboxpg` — второй из трёх шагов модуля ([ADR-0012](../docs/adr/0012-inbox-idempotency.md),
+  решения 2, 5, 6 и 15).** `inbox.Store` на `pgx/v5`; зависимость на `postgres`
+  v0.2.0 — граница ошибки, разрешённая адаптерам хранилища (ADR-0005).
+  - `New(pool, handlers)` — та же карта, что у `inboxtest.NewMemStore`, с
+    `Handler.Handle(ctx, tx, ev)`: тест и прод отличаются конструктором.
+    Паника на nil-пуле, пустой карте, негодном имени источника и
+    nil-обработчике; `WithTx(tx)` — паника на nil. `Sources`, `CheckSchema`,
+    `Migrations`.
+  - `Accept` — одна транзакция: `pg_try_advisory_xact_lock` без ожидания (не
+    взяли — `in_flight`, ни одной записи), отметка через
+    `ON CONFLICT ON CONSTRAINT ux_inbox_events_dedup DO NOTHING` (конфликт —
+    `duplicate` или `conflict` по отпечатку, обработчик не зовётся), тело,
+    обработчик, коммит. Ошибка обработчика — как есть; сбой базы и отменённый
+    контекст — `inbox.ErrUnavailable` через `postgres.Sanitize`; обработчик,
+    вернувший `nil` в прерванной транзакции, — тоже `ErrUnavailable`. Порядок
+    проверок — как у двойника; пустое тело хранится пустым, а не `NULL`.
+  - Ключ блокировки — первые восемь байт SHA-256 от `rebar/inbox/lock/v1`,
+    источника и ключа события, у каждого поля префикс длины; золотые значения
+    посчитаны на Python. Блокировка общая на базу: две схемы с `inbox` в одной
+    базе делят ключи, и одновременная доставка одного ключа в обе даёт одной
+    лишний `in_flight`.
+  - `WithTx`: любая ошибка `Accept` и `Purge` оставляет транзакцию проекта
+    прерванной — адаптер исполняет запрос, падающий с кодом 25P02 и текстом
+    «inboxpg: транзакция прервана после отказа» (`postgres.IsRetryable` его не
+    повторяет), а прерванную базой не трогает. `COMMIT` после этого Postgres
+    принимает как `ROLLBACK`: pgx отдаёт `pgx.ErrTxCommitRollback`, причина
+    видна трассировщику pgx и в журнале сервера. `duplicate`, `conflict` и
+    `in_flight` транзакцию не рвут.
+  - `Purge` — одной транзакцией тела старше `payloadsBefore`, затем отметки
+    старше `eventsBefore` с телами каскадом; не больше `limit` на каждом шаге,
+    старые первыми, равные — по ключу; счёт — тела и отметки без каскада.
+    Непозитивный `limit` — ошибка до запроса.
+  - Схема — `migrations/00001_inbox_init.sql`
+    ([ADR-0011](../docs/adr/0011-migrations-in-blocks.md)), раннер проекта со
+    своей таблицей версий: у goose — `goose.NewProvider(goose.DialectPostgres,
+    db, inboxpg.Migrations(), goose.WithTableName("inbox_schema_version"))`;
+    модуль goose не импортирует. `inbox_events` (CHECK источника, ключа, типа,
+    отпечатка и момента — те же формы, что у ядра; ключ дедупа
+    `ux_inbox_events_dedup`; индекс уборки) и `inbox_payloads` (внешний ключ
+    `inbox_payloads_event_fkey` с `ON DELETE CASCADE`, потолок 1 МиБ, индекс
+    уборки). `UPDATE` отбивают триггеры `ENABLE ALWAYS` отказом 23514 с именем
+    `inbox_append_only`, `DELETE` проходит. Миграция идемпотентна: `IF NOT
+    EXISTS`, на каждый триггер `DROP TRIGGER IF EXISTS`, `CREATE TRIGGER` и
+    безусловный `ENABLE ALWAYS`; `Down` снимает и функцию.
+  - `CheckSchema` называет каждое расхождение по имени: колонки и типы, ключи,
+    CHECK, каскад внешнего ключа, индексы, триггер вне режима `ENABLE ALWAYS`
+    (`tgenabled = 'A'`) и его функцию; первая строка — что делать.
+  - Тесты на живой базе: `inboxtest.RunStoreSuite` по двойнику и адаптеру,
+    `TestStore_Accept_IsAtomic` (ошибка обработчика, проглоченная ошибка базы,
+    сбой самого `COMMIT`), `TestStore_Accept_Race`,
+    `TestStore_WithTx_AbortsOnError` (восемь отказов), золотой ключ и он же в
+    `pg_locks`, граница ошибки по типу, CHECK против валидаторов ядра по
+    каждому байту ASCII, миграции — накат, двойной откат и повторный накат со
+    сбросом режимов триггеров. Помощники `pgtest.ApplyUp`, `ApplyDown` и
+    `CheckMigrations` ещё не выпущены тегом: их копия — `pgtestcopy_test.go`
+    (`TODO(ADR-0011)`), как у `paymentpg`.
 - **Ядро приёма чужих событий ([ADR-0012](../docs/adr/0012-inbox-idempotency.md)),
-  первый из трёх шагов модуля.** Адаптер Postgres (`inboxpg`) и метрики
-  (`inboxotel`) — следующие шаги; до адаптера модуль в прод не подключается.
+  первый из трёх шагов модуля.** Адаптер Postgres (`inboxpg`) — второй шаг
+  (выше), метрики (`inboxotel`) — третий.
   - Порт `Verifier` — подлинность пишет проект; ядро даёт `CheckTimestamp`
     (паника на допуске не больше нуля: у Stripe ноль выключает проверку
     свежести) и `AddrIn` (IPv4 внутри IPv6 и зона приводятся, пустой, негодный
