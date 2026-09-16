@@ -8,6 +8,7 @@ use (
 	./authz
 	./entitlement
 	./examples/monolith
+	./idem
 	./kit
 	./ledger
 	./mail

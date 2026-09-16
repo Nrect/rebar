@@ -571,7 +571,7 @@ func (m *MemStore) Do(ctx context.Context, req idem.Request,
 | `idem.ErrKeyReused` | `conflict` | как `payment.ErrIdempotencyKeyReused` |
 | `idem.ErrInFlight` | `conflict` | ответ несёт `Retry-After` |
 | `idem.ErrUnavailable` | `unavailable` | база |
-| `idem.ErrNotRecordable`, `idem.ErrResponseTooLarge`, `idem.ErrInvalidScope` | `//errs:nokind` | ответ, его размер и область строит код потребителя — правило разведения ADR-0007 |
+| `idem.ErrNotRecordable`, `idem.ErrResponseTooLarge`, `idem.ErrInvalidScope`, `idem.ErrInvalidRequest` | `//errs:nokind` | ответ, его размер, область и сборку запроса делает код потребителя — правило разведения ADR-0007; `ErrInvalidRequest` — уточнение 8 |
 
 ### 14. Двойники и наборы
 
@@ -899,6 +899,39 @@ ROADMAP оценивал `inbox` в 2–3 дня, `idem` — в 2. Здесь б
 7. **Тело события хранится с обязательным коротким сроком:** нулевой срок —
    паника конструктора, таблица тел не попадает ни в логи, ни в метки, и это
    пункт «Безопасность:».
+
+При слиянии ядра `idem` (2026-09-16) — решения по местам, которые ADR не
+назвал или назвал мягче, чем требует «повтор байт в байт»:
+
+8. **`idem.ErrInvalidRequest`, `//errs:nokind`:** операция вне
+   `Config.Operations`, ключ не из `ParseKey`, метод не `POST` и не `PATCH` —
+   дефект сборки ручки, а не ввод клиента; `ErrInvalidScope` остаётся только за
+   областью. В таблицу решения 13 добавляется.
+9. **`ParseKey(fieldLines ...string)`** принимает строки поля так, как их отдаёт
+   `http.Header.Values`: строк нет — `ErrKeyMissing`, больше одной —
+   `ErrKeyInvalid`. «;» и «,» внутри кавычек — часть ключа (строка Structured
+   Fields), в голом значении — параметры и список, отказ.
+10. **`CheckResponse` строже решения 9:** не записываются статус вне 200–499
+    (и 1xx), тело без `Content-Type` (иначе тип угадает `net/http`), тело у 204
+    и 304 (его не отправят), заголовки не из печатного ASCII или с пробелом по
+    краю. `MaxResponseBytes` считает тело вместе с `Content-Type` и `Location`.
+11. **Исход наблюдателю отдаёт `Do` хранилища** — ровно раз на вызов, кроме
+    запроса, отвергнутого `CheckRequest`: его операция в метку не годится.
+    Поэтому наблюдатель — параметр конструктора `idemtest.NewMemStore` и
+    `idempg.New`, nil — паника; у `idempg.Store` есть `SetClock` (решение 2.7).
+    Фабрика `RunDoSuite` получает `Config`, наблюдателя и часы.
+12. **Ошибка `op` отдаётся как есть,** без `ErrUnavailable`: это ошибка домена
+    потребителя, и её класс доходит до клиента. У `inbox` наоборот — ошибка
+    обработчика всегда 503 (решение 7): там клиент — отправитель, которому нужен
+    повтор.
+13. **Уборка — константы** `PurgeBatchSize = 1000` и `PurgeBatchesPerRun = 100`,
+    а не поле `Config`; отмена — причина отмены, а не `ErrUnavailable`, в том
+    числе пришедшая посреди вызова `Purge` (форма `objectstore.Collector`).
+14. **Запись старше `Retention` отвечает до уборки:** `Do` срок не проверяет —
+    иначе ему понадобились бы `UPDATE` или `DELETE`.
+15. **`Replay` сравнивает только отпечаток:** операция входит в него, поэтому
+    поля операции в `idem.Record` нет; в колонку `operation` адаптер пишет
+    операцию запроса.
 
 Порядок работ — по триггерам ROADMAP: первым берётся модуль, чей триггер
 сработает раньше.
