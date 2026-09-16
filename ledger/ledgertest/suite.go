@@ -62,7 +62,7 @@ var storeScenarios = []storeScenario{
 	{name: "N одновременных попыток одного ключа — одна запись", run: suiteKeyRace},
 	{name: "моменты — как из timestamptz: UTC и микросекунды", run: suiteMoments},
 	{name: "схема отвергает вставку мимо ядра", run: suiteSchemaRefusals},
-	{name: "схема держит одну отмену и запрет отмены отмены", run: suiteSchemaReversals},
+	{name: "схема держит одну отмену, запрет отмены отмены и гасимую запись на своём счёте", run: suiteSchemaReversals},
 	{name: "ошибка fn не оставляет вставок, счёт вне fn не живёт", run: suiteRollback},
 	{name: "отказ вставки обрывает транзакцию fn", run: suiteAbortedTx},
 	{name: "чтение по курсору и потолку; непозитивный потолок — ошибка", run: suiteReads},
