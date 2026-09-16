@@ -128,6 +128,13 @@
 
 ### Added
 
+- `TestSettlerCommitFailure_RollsBackGrants` и
+  `TestRefundCommitFailure_KeepsGrants`: отложенный триггер на `outbox_messages`
+  роняет COMMIT после всех шагов хука — выдача (и отзыв) прав, заказ и событие
+  откатываются вместе с книгой, повтор после снятия триггера применяется.
+  `TestSettlerFailure_RollsBackEverything` роняет хук до выдачи и не видел
+  выдачу мимо транзакции (пул вместо `WithTx`); её ловит первый новый тест,
+  отзыв мимо транзакции — второй.
 - Тесты миграций на живой базе: `TestMigrate_EmptyBase` — накат на пустую
   базу, восемь таблиц версий без общей `goose_db_version`, сверка каждого
   блока зелёная, включая `entitlementpg`; `TestMigrate_ReapplyAppliesNothing` —

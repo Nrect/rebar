@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -60,6 +61,106 @@ func TestSettlerFailure_RollsBackEverything(t *testing.T) {
 	requireCount(t, s, 1, "SELECT count(*) FROM shop_orders WHERE id = $1 AND paid_at IS NOT NULL", order)
 	requireCount(t, s, 2, "SELECT count(*) FROM entitlement_grants")
 	requireCount(t, s, 1, "SELECT count(*) FROM outbox_messages WHERE kind = 'order.paid'")
+}
+
+// commitRefusal — текст отказа отложенного триггера refuseCommit.
+const commitRefusal = "фиксация отбита тестом"
+
+// TestSettlerCommitFailure_RollsBackGrants — зачисление падает на COMMIT, когда
+// хук уже пометил заказ, выдал права и положил событие: не остаётся ничего, а
+// повтор вебхука после починки применяет оплату.
+//
+// TestSettlerFailure_RollsBackEverything роняет хук на первом шаге, до выдачи,
+// и права, выданные мимо транзакции зачисления (пул вместо WithTx), не видит.
+func TestSettlerCommitFailure_RollsBackGrants(t *testing.T) {
+	s := newStand(t)
+	signIn(t, s, registerAndConfirm(t, s))
+	intent, order := checkout(t, s)
+	refuseCommit(t, s)
+
+	status, body := s.postJSON(t, "/webhook", providerBody(intent))
+	require.Equal(t, http.StatusServiceUnavailable, status, "сбой фиксации — 503, провайдер повторит: %s", raw(body))
+	requireRefusalLogged(t, s)
+
+	requireCount(t, s, 0, "SELECT count(*) FROM entitlement_grants")
+	requireCount(t, s, 0, "SELECT count(*) FROM outbox_messages")
+	requireCount(t, s, 0, "SELECT count(*) FROM payment_ledger")
+	requireCount(t, s, 0, "SELECT count(*) FROM payment_events")
+	requireCount(t, s, 1, "SELECT count(*) FROM shop_orders WHERE id = $1 AND paid_at IS NULL", order)
+
+	allowCommit(t, s)
+	status, body = s.postJSON(t, "/webhook", providerBody(intent))
+	require.Equal(t, http.StatusOK, status, "повтор после снятия триггера: %s", raw(body))
+	require.Equal(t, "applied", body["outcome"])
+	requireCount(t, s, 2, "SELECT count(*) FROM entitlement_grants")
+	requireCount(t, s, 1, "SELECT count(*) FROM shop_orders WHERE id = $1 AND paid_at IS NOT NULL", order)
+}
+
+// TestRefundCommitFailure_KeepsGrants — возврат падает на COMMIT, когда хук уже
+// отозвал права и положил событие: права на месте, записи возврата нет; повтор
+// с тем же ключом после починки права отзывает.
+//
+// Отзыв мимо транзакции (пул вместо WithTx) пережил бы откат: доступ снят, а
+// возврата в книге нет.
+func TestRefundCommitFailure_KeepsGrants(t *testing.T) {
+	s := newStand(t)
+	signIn(t, s, registerAndConfirm(t, s))
+	intent, _ := checkout(t, s)
+	status, body := s.postJSON(t, "/webhook", providerBody(intent))
+	require.Equal(t, http.StatusOK, status, "оплата до возврата: %s", raw(body))
+	requireCount(t, s, 2, "SELECT count(*) FROM entitlement_grants")
+
+	refund := payment.RefundRequest{
+		IntentID: intent, AmountMinor: 149000, ActorID: uuid.New(),
+		IdempotencyKey: "refund-" + intent.String(),
+	}
+	refuseCommit(t, s)
+	_, _, err := s.app.Refund(t.Context(), refund)
+	require.ErrorIs(t, err, payment.ErrUnavailable, "сбой фиксации возврата — недоступность")
+	require.ErrorContains(t, err, commitRefusal, "отбита фиксация, а не шаг до хука")
+	requireCount(t, s, 2, "SELECT count(*) FROM entitlement_grants")
+	requireCount(t, s, 0, "SELECT count(*) FROM payment_ledger WHERE kind = 'refund'")
+	requireCount(t, s, 0, "SELECT count(*) FROM outbox_messages WHERE kind = 'order.refunded'")
+
+	allowCommit(t, s)
+	_, reason, err := s.app.Refund(t.Context(), refund)
+	require.NoError(t, err, "повтор возврата с тем же ключом")
+	require.Equal(t, payment.ReasonRefunded, reason)
+	requireCount(t, s, 0, "SELECT count(*) FROM entitlement_grants")
+	requireCount(t, s, 1, "SELECT count(*) FROM payment_ledger WHERE kind = 'refund'")
+	requireCount(t, s, 1, "SELECT count(*) FROM outbox_messages WHERE kind = 'order.refunded'")
+}
+
+// refuseCommit ставит на outbox_messages отложенный триггер: вставка проходит, а
+// транзакция падает на COMMIT — после ВСЕХ шагов хука, в каком бы порядке они ни
+// шли. Эффект хука, записанный мимо транзакции, переживает откат.
+func refuseCommit(t *testing.T, s *stand) {
+	t.Helper()
+	_, err := s.pool(t).Exec(t.Context(), `
+		CREATE OR REPLACE FUNCTION refuse_commit() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN RAISE EXCEPTION '`+commitRefusal+`'; END $$;
+		CREATE CONSTRAINT TRIGGER refuse_commit_trg AFTER INSERT ON outbox_messages
+			DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION refuse_commit()`)
+	require.NoError(t, err, "отложенный триггер")
+}
+
+// allowCommit снимает триггер refuseCommit.
+func allowCommit(t *testing.T, s *stand) {
+	t.Helper()
+	_, err := s.pool(t).Exec(t.Context(), `DROP TRIGGER refuse_commit_trg ON outbox_messages`)
+	require.NoError(t, err, "снятие триггера")
+}
+
+// requireRefusalLogged — 503 дала фиксация, а не шаг до хука: хук отработал
+// целиком, и откатывать было что.
+func requireRefusalLogged(t *testing.T, s *stand) {
+	t.Helper()
+	for _, rec := range s.logs.records(t, "http error") {
+		if text, ok := rec["error"].(string); ok && strings.Contains(text, commitRefusal) {
+			return
+		}
+	}
+	t.Fatalf("в логе нет 5xx с отказом фиксации %q", commitRefusal)
 }
 
 // TestSettlerSlugError_KeepsWebhookRetryable — SlugError хука зачисления не

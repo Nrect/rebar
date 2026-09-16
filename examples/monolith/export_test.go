@@ -25,6 +25,12 @@ func WebhookHandler(pay *payment.Service, provider *paymenttest.MemProvider, log
 	return http.HandlerFunc(a.webhook)
 }
 
+// Refund — возврат платёжным сервисом сборки, с тем же хуком, что у вебхука:
+// ручки возврата у примера нет.
+func (a *App) Refund(ctx context.Context, req payment.RefundRequest) (payment.RefundResult, payment.Reason, error) {
+	return a.pay.Refund(ctx, req)
+}
+
 // Addrs — адреса портов, занятых Start: тест занимает :0, и номер выбирает
 // система.
 func (a *App) Addrs() (public, internal string) {
