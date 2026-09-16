@@ -50,12 +50,15 @@ func (m *MemAttempts) SetRecordErr(err error) {
 }
 
 // Count — сколько попыток по ключу начиная с since включительно.
-func (m *MemAttempts) Count(_ context.Context, realm auth.Realm, loginKey string, since time.Time) (int, error) {
+func (m *MemAttempts) Count(ctx context.Context, realm auth.Realm, loginKey string, since time.Time) (int, error) {
 	m.Hit("Count")
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
 		return 0, storeError("count attempts", m.err)
+	}
+	if err := canceled(ctx, "count attempts"); err != nil {
+		return 0, err
 	}
 	var n int
 	for _, a := range m.rows {
@@ -67,7 +70,7 @@ func (m *MemAttempts) Count(_ context.Context, realm auth.Realm, loginKey string
 }
 
 // Record пишет попытку.
-func (m *MemAttempts) Record(_ context.Context, a session.Attempt) error {
+func (m *MemAttempts) Record(ctx context.Context, a session.Attempt) error {
 	m.Hit("Record")
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -77,17 +80,23 @@ func (m *MemAttempts) Record(_ context.Context, a session.Attempt) error {
 	if m.recordErr != nil {
 		return storeError("record attempt", m.recordErr)
 	}
+	if err := canceled(ctx, "record attempt"); err != nil {
+		return err
+	}
 	m.rows = append(m.rows, a)
 	return nil
 }
 
 // Purge убирает попытки старше before и возвращает их число.
-func (m *MemAttempts) Purge(_ context.Context, realm auth.Realm, before time.Time) (int, error) {
+func (m *MemAttempts) Purge(ctx context.Context, realm auth.Realm, before time.Time) (int, error) {
 	m.Hit("Purge")
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
 		return 0, storeError("purge attempts", m.err)
+	}
+	if err := canceled(ctx, "purge attempts"); err != nil {
+		return 0, err
 	}
 	kept := make([]session.Attempt, 0, len(m.rows))
 	for _, a := range m.rows {

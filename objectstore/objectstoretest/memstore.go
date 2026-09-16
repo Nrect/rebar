@@ -3,7 +3,6 @@ package objectstoretest
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -15,12 +14,6 @@ import (
 
 	"github.com/nrect/rebar/objectstore"
 )
-
-// ErrDoubleBroken — ошибка двойника, не домена: так тест не примет свою
-// оплошность за проверяемый инвариант (CONVENTIONS §3). В ErrUnavailable не
-// завёрнута: у адаптеров такого состояния нет, и поломка стенда не должна
-// выглядеть сбоем хранилища.
-var ErrDoubleBroken = errors.New("objectstoretest: double was used incorrectly")
 
 // baseURL — база ссылок двойника. Домен .invalid не резолвится никогда: тест,
 // который случайно пойдёт по этой ссылке, упадёт, а не сходит наружу.
@@ -34,6 +27,18 @@ type row struct {
 // MemStore — objectstore.Store в памяти: та же проверка ключа, что у
 // адаптеров, перезапись по ключу, идемпотентное удаление и пагинация с
 // курсором. Потокобезопасен целиком, включая настройку.
+//
+// ОТМЕНЁННЫЙ КОНТЕКСТ ДВОЙНИК НЕ СМОТРИТ — как fs, и это решение, а не
+// упущение: адаптеры модуля расходятся, и совпасть с обоими нельзя. s3 на
+// отмене падает транспортом (ErrUnavailable без причины в цепочке), fs
+// контекст не читает вовсе. Выбран fs, потому что равнение на s3 упирается в
+// ядро: Collector.Run на отказе List отдаёт ErrUnavailable без причины, и его
+// собственный контракт «отмена останавливает прогон с context.Canceled»
+// (TestCollector_StopsOnCancelledContext) держится ровно на том, что List
+// отмену пропускает и её замечает сам Collector. Двойник, начавший падать,
+// сделал бы этот контракт недостижимым ни для одной реализации. Пока причина
+// отмены не сохранена в ядре, двойник остаётся голым (docs/ROADMAP.md,
+// «Признанные долги»).
 type MemStore struct {
 	mu   sync.Mutex
 	rows map[string]row
@@ -60,9 +65,15 @@ func (m *MemStore) SetErr(err error) {
 
 // SetClock — часы двойника: ими проставляется Object.ModifiedAt, тесты ядра
 // идут на управляемых (CONVENTIONS §5). Зовутся под замком двойника, изнутри
-// Put, и трогать двойник не вправе; nil вместо часов — поломка стенда, и Put
-// ответит ErrDoubleBroken.
+// Put, и трогать двойник не вправе.
+//
+// nil — паника здесь, на настройке, а не отложенный отказ первого Put: это
+// настройка, а настройка падает громко и на старте (CONVENTIONS §2). Так же
+// устроены objectstore.Collector.SetClock и objectstore/s3.Store.SetClock.
 func (m *MemStore) SetClock(now func() time.Time) {
+	if now == nil {
+		panic("objectstoretest.MemStore.SetClock: now must not be nil")
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.now = now
@@ -88,9 +99,6 @@ func (m *MemStore) Put(_ context.Context, req objectstore.PutRequest) (objectsto
 	defer m.mu.Unlock()
 	if m.err != nil {
 		return objectstore.Object{}, storeError("put", m.err)
-	}
-	if m.now == nil {
-		return objectstore.Object{}, fmt.Errorf("%w: MemStore.SetClock got nil", ErrDoubleBroken)
 	}
 	obj := objectstore.Object{
 		Key:         req.Key,

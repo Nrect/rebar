@@ -255,6 +255,32 @@ func TestMemStore_InjectedErrorIsUnavailable(t *testing.T) {
 	requireUnavailable(t, store.Finish(ctx, mail.FinishRequest{ID: uuid.New()}), errUnavailable, "Finish по SetFinishErr")
 }
 
+// Отменённый контекст двойник замечает так же, как mailpg: класс 503,
+// mail.ErrUnavailable и context.Canceled в цепочке. Двойник, не глядящий на
+// контекст, зеленил бы у потребителя отмену запроса, которая в проде красная.
+func TestMemStore_CancelledContextIsUnavailable(t *testing.T) {
+	t.Parallel()
+	store := mailtest.NewMemStore()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := store.Enqueue(ctx, envelope("verify:a", storeBase))
+	requireUnavailable(t, err, context.Canceled, "Enqueue")
+	_, err = store.Claim(ctx, storeBase, storeLease, 1)
+	requireUnavailable(t, err, context.Canceled, "Claim")
+	requireUnavailable(t, store.Finish(ctx, mail.FinishRequest{ID: uuid.New()}), context.Canceled, "Finish")
+	_, err = store.Stats(ctx, storeBase)
+	requireUnavailable(t, err, context.Canceled, "Stats")
+	_, err = store.Purge(ctx, storeBase, 1)
+	requireUnavailable(t, err, context.Canceled, "Purge")
+
+	// Непозитивный лимит mailpg решает до похода в базу — отмены он там не
+	// видит, и двойник тоже.
+	claimed, err := store.Claim(ctx, storeBase, storeLease, 0)
+	require.NoError(t, err, "Claim с непозитивным лимитом: пустая выборка и на отменённом контексте")
+	assert.Empty(t, claimed)
+}
+
 // requireUnavailable — все три стороны сразу: класс, sentinel модуля и
 // причина. Проверка одной чинила бы её ценой другой.
 func requireUnavailable(t *testing.T, err, cause error, site string) {

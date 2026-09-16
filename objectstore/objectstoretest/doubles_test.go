@@ -2,6 +2,7 @@ package objectstoretest_test
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"sync"
 	"testing"
@@ -79,20 +80,42 @@ func TestDoubles_AreRaceFree(t *testing.T) {
 	assert.Equal(t, workers, owned.Calls())
 }
 
-// Ошибка двойника отличима от доменной: тест не примет свою оплошность за
-// проверяемый инвариант.
-func TestMemStore_OwnErrorIsDistinguishable(t *testing.T) {
+// nil-часы падают на настройке, а не отложенным отказом первого Put: это
+// настройка (CONVENTIONS §2), и падать ей положено на старте, как у
+// objectstore.Collector.SetClock и objectstore/s3.Store.SetClock.
+func TestMemStore_SetClockPanicsOnNil(t *testing.T) {
 	t.Parallel()
 	store := objectstoretest.NewMemStore()
-	store.SetClock(nil)
-	body := objectstoretest.PNG(32)
 
-	_, err := store.Put(t.Context(), objectstore.PutRequest{
+	assert.PanicsWithValue(t, "objectstoretest.MemStore.SetClock: now must not be nil",
+		func() { store.SetClock(nil) })
+}
+
+// ОТМЕНЁННЫЙ КОНТЕКСТ ДВОЙНИК НЕ СМОТРИТ — как fs, и это решение, записанное у
+// MemStore, а не упущение. Тест сторожит его с обеих сторон: отмена проходит
+// как обычный вызов, а не как отказ, — иначе контракт Collector.Run «отмена
+// останавливает прогон с context.Canceled» стал бы недостижимым (ядро читает
+// контекст само, а ошибку List сворачивает в ErrUnavailable без причины).
+// Расхождение с s3, который на отмене падает транспортом, — открытый долг
+// (docs/ROADMAP.md), и чинится он в ядре, а не здесь.
+func TestMemStore_IgnoresCancelledContextLikeFS(t *testing.T) {
+	t.Parallel()
+	store := objectstoretest.NewMemStore()
+	body := objectstoretest.PNG(32)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	obj, err := store.Put(ctx, objectstore.PutRequest{
 		Key: "uploads/a.png", ContentType: "image/png", Body: bytes.NewReader(body), Size: int64(len(body)),
 	})
+	require.NoError(t, err, "Put на отменённом контексте: двойник равняется на fs")
+	assert.Equal(t, "uploads/a.png", obj.Key)
 
-	require.ErrorIs(t, err, objectstoretest.ErrDoubleBroken)
-	assert.NotErrorIs(t, err, objectstore.ErrUnavailable, "поломка стенда не должна выглядеть сбоем хранилища")
+	page, err := store.List(ctx, "uploads/", "", 10)
+	require.NoError(t, err, "List на отменённом контексте")
+	assert.Len(t, page.Objects, 1)
+	require.NoError(t, store.Delete(ctx, "uploads/a.png"), "Delete на отменённом контексте")
+	assert.Empty(t, store.Keys())
 }
 
 // Заданный сбой приходит так, как его отдают s3 и fs: класс 503,

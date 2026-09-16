@@ -40,19 +40,29 @@ func (s *Sink) SetErr(err error) {
 // Write добавляет событие в конец. Карта подробностей копируется: карта
 // вызывающего живёт своей жизнью, а журнал после записи не меняется. Момент
 // хранится так, как его хранит timestamptz у auditpg: в UTC и до микросекунд.
-func (s *Sink) Write(_ context.Context, ev audit.Event) error {
+func (s *Sink) Write(ctx context.Context, ev audit.Event) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	// Сбой так, как его отдаёт auditpg: голая причина дала бы потребителю,
 	// пишущему в транзакции действия, 500 там, где прод отвечает 503
-	// (ADR-0007, «Двойники»).
+	// (ADR-0007, «Двойники»). Отменённый контекст — оттуда же: у auditpg
+	// вставка не доезжает до базы, и наружу идёт та же ErrUnavailable.
 	if s.err != nil {
-		return fmt.Errorf("%w: audittest: write: %w", audit.ErrUnavailable, s.err)
+		return writeError(s.err)
+	}
+	if err := ctx.Err(); err != nil {
+		return writeError(err)
 	}
 	stored := copyEvent(ev)
 	stored.At = dbMoment(stored.At)
 	s.events = append(s.events, stored)
 	return nil
+}
+
+// writeError — отказ Write так, как его отдаёт auditpg (storeError): в
+// audit.ErrUnavailable с причиной в цепочке.
+func writeError(err error) error {
+	return fmt.Errorf("%w: audittest: write: %w", audit.ErrUnavailable, err)
 }
 
 // Events — копии записанного в порядке записи.
