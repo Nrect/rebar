@@ -44,12 +44,13 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// newSink — схема на тест плюс накат из schema.sql: тестируется артефакт,
-// который уедет в миграции потребителя, а не его копия в коде.
+// newSink — схема на тест плюс адаптер над ней. Схема накатывается каталогом
+// миграций, чтобы тестировался артефакт, который уедет раннеру потребителя, а
+// не его копия в коде.
 func newSink(t *testing.T) (*auditpg.Sink, *pgxpool.Pool) {
 	t.Helper()
 	pool := newSchemaPool(t)
-	pgtest.Apply(t, pool, pgtest.GooseUp(t, schemaPath))
+	applyUp(t, pool)
 	return auditpg.New(pool), pool
 }
 

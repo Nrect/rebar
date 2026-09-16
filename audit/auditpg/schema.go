@@ -2,7 +2,6 @@ package auditpg
 
 import (
 	"context"
-	_ "embed"
 	"errors"
 	"fmt"
 	"maps"
@@ -11,18 +10,12 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// Schema — содержимое schema.sql (с маркерами goose) для потребителя, который
-// применяет миграции из кода, а не копирует файл. Побайтно равен файлу.
-//
-//go:embed schema.sql
-var Schema string
-
 const (
 	tableName = "audit_events"
 
 	// Первая строка ошибки — что делать; расхождения перечисляются ниже неё.
-	missingTableHint = "auditpg.CheckSchema: таблицы audit_events нет: скопируйте auditpg/schema.sql в миграции"
-	mismatchHint     = "auditpg.CheckSchema: таблица audit_events расходится с auditpg/schema.sql — сверьте миграцию"
+	missingTableHint = "auditpg.CheckSchema: таблицы audit_events нет: накатите auditpg.Migrations() раннером проекта"
+	mismatchHint     = "auditpg.CheckSchema: схема расходится с миграциями — накатите auditpg.Migrations() раннером проекта; что осталось после наката, чините своей миграцией"
 )
 
 // Типы из information_schema.columns.data_type.
@@ -32,7 +25,7 @@ const (
 )
 
 // expectedColumns — колонки и их data_type из information_schema.columns;
-// меняется только вместе со schema.sql (страж — TestExpectedColumns_MatchSchemaFile).
+// меняется только вместе с миграциями (страж — TestExpectedColumns_MatchMigrations).
 var expectedColumns = map[string]string{
 	"id":          "uuid",
 	"occurred_at": typeTimestamptz,
@@ -83,10 +76,12 @@ FROM pg_indexes WHERE schemaname = $1 AND tablename = $2`
 const triggersSQL = `SELECT tgname, tgenabled = 'A'
 FROM pg_trigger WHERE tgrelid = $1 AND NOT tgisinternal`
 
-// CheckSchema сверяет таблицу audit_events со schema.sql, ничего не меняя:
-// колонки и их типы, CHECK-ограничения, индексы и триггер неизменяемости.
-// Зовётся на старте потребителя: миграцию применяет он сам, пакет только
-// проверяет. Лишние колонки потребителя расхождением не считаются.
+// CheckSchema сверяет таблицу audit_events с миграциями Migrations(), ничего
+// не меняя: колонки и их типы, CHECK-ограничения, индексы и триггер
+// неизменяемости. Зовётся на старте потребителя: миграции накатывает он сам,
+// пакет только проверяет. Зелёный CheckSchema — условие, при котором базу со
+// старой копией схемы можно отметить накатанной (ADR-0011, решение 4). Лишние
+// колонки потребителя расхождением не считаются.
 //
 // Все расхождения — в одной ошибке (errors.Join), первая строка — что делать.
 // Сбой запроса к каталогу — audit.ErrUnavailable. Данных таблицы в ошибке нет.

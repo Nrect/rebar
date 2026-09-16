@@ -10,7 +10,6 @@ import (
 
 	"github.com/nrect/rebar/audit"
 	"github.com/nrect/rebar/audit/auditpg"
-	"github.com/nrect/rebar/postgres/pgtest"
 )
 
 func TestCheckSchema_FullSchemaPasses(t *testing.T) {
@@ -20,7 +19,7 @@ func TestCheckSchema_FullSchemaPasses(t *testing.T) {
 	require.NoError(t, sink.CheckSchema(context.Background()))
 }
 
-// Первая строка ошибки — что делать: скопировать schema.sql в миграции.
+// Первая строка ошибки — что делать: накатить Migrations() раннером проекта.
 func TestCheckSchema_MissingTableTellsWhatToDo(t *testing.T) {
 	t.Parallel()
 	pool := newSchemaPool(t)
@@ -29,7 +28,7 @@ func TestCheckSchema_MissingTableTellsWhatToDo(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "таблицы audit_events нет")
-	assert.Contains(t, err.Error(), "schema.sql")
+	assert.Contains(t, err.Error(), "накатите auditpg.Migrations() раннером проекта")
 	assert.NotErrorIs(t, err, audit.ErrUnavailable, "расхождение схемы — не временный сбой")
 }
 
@@ -105,7 +104,7 @@ func TestCheckSchema_ReportsEveryMismatchByName(t *testing.T) {
 
 			require.Error(t, err)
 			lines := strings.Split(err.Error(), "\n")
-			assert.Contains(t, lines[0], "расходится с auditpg/schema.sql", "первая строка — что делать")
+			assert.Contains(t, lines[0], "накатите auditpg.Migrations() раннером проекта", "первая строка — что делать")
 			for _, want := range tt.want {
 				assert.Contains(t, lines[1:], want)
 			}
@@ -140,21 +139,4 @@ func TestCheckSchema_CatalogFailureIsUnavailable(t *testing.T) {
 	err := sink.CheckSchema(context.Background())
 
 	require.ErrorIs(t, err, audit.ErrUnavailable)
-}
-
-// Обе стороны миграции применяются на пустую базу: Down обязан снимать и
-// таблицу, и функцию триггера, иначе повторный накат упадёт.
-func TestSchema_UpAndDownApplyToEmptyDatabase(t *testing.T) {
-	t.Parallel()
-	pool := newSchemaPool(t)
-	ctx := context.Background()
-
-	up := pgtest.GooseUp(t, schemaPath)
-	down := gooseDown(t)
-
-	for range 2 {
-		pgtest.Apply(t, pool, up)
-		require.NoError(t, auditpg.New(pool).CheckSchema(ctx))
-		pgtest.Apply(t, pool, down)
-	}
 }

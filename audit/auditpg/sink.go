@@ -10,7 +10,7 @@ import (
 	"github.com/nrect/rebar/audit"
 )
 
-// Sink — audit.Sink поверх таблицы audit_events (schema.sql).
+// Sink — audit.Sink поверх таблицы audit_events (Migrations).
 type Sink struct {
 	db executor
 }
