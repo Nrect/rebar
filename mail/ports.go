@@ -35,11 +35,15 @@ const (
 	FinishFailed     FinishOutcome = "failed"
 	FinishExpired    FinishOutcome = "expired"
 	FinishSuppressed FinishOutcome = "suppressed"
+	// FinishReleased — прогон отменён ДО отправки: → pending немедленно, аренда
+	// снята, попытка, взятая Claim, возвращена (не ниже нуля); next_attempt_at,
+	// last_error и transport не меняются.
+	FinishReleased FinishOutcome = "released"
 )
 
 // AllFinishOutcomes — полный список; держит guard-тест.
 var AllFinishOutcomes = []FinishOutcome{
-	FinishSent, FinishRetry, FinishFailed, FinishExpired, FinishSuppressed,
+	FinishSent, FinishRetry, FinishFailed, FinishExpired, FinishSuppressed, FinishReleased,
 }
 
 // FinishRequest — что записать по итогам попытки.

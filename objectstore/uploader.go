@@ -52,8 +52,14 @@ func (u *Uploader) SetIDs(newID func() uuid.UUID) { u.newID = newID }
 //
 // Ошибки: ErrEmptyBody, ErrTooLarge, ErrSVGRejected, ErrUnsupportedType,
 // ErrUnavailable. Ни одна не несёт имени файла и ключа.
+//
+// ОТМЕНА ctx — ПРИЧИНА ОТМЕНЫ, А НЕ ErrUnavailable. Клиент, ушедший посреди
+// загрузки, обрывает чтение тела или Put, а s3 отдаёт оборванный запрос сбоем
+// транспорта — и уход клиента выглядел бы 503 «хранилище недоступно».
+// Отменённая загрузка в хранилище не ходит. Класса у отмены нет:
+// context.Canceled переводит вызывающий (ADR-0007, «Чего НЕТ»).
 func (u *Uploader) Upload(ctx context.Context, req UploadRequest) (Object, error) {
-	body, err := u.readBody(req)
+	body, err := u.readBody(ctx, req)
 	if err != nil {
 		return Object{}, err
 	}
@@ -73,6 +79,9 @@ func (u *Uploader) Upload(ctx context.Context, req UploadRequest) (Object, error
 		return Object{}, fmt.Errorf("%w: %s", ErrUnsupportedType, contentType)
 	}
 
+	if ctx.Err() != nil {
+		return Object{}, ctx.Err()
+	}
 	obj, err := u.store.Put(ctx, PutRequest{
 		Key:         buildKey(u.cfg.Prefix, u.newID(), ext),
 		ContentType: string(contentType),
@@ -81,7 +90,7 @@ func (u *Uploader) Upload(ctx context.Context, req UploadRequest) (Object, error
 	})
 	if err != nil {
 		// Ошибка адаптера может нести ключ и путь — наружу уходит класс.
-		return Object{}, fmt.Errorf("%w: put", ErrUnavailable)
+		return Object{}, stopped(ctx, fmt.Errorf("%w: put", ErrUnavailable))
 	}
 	return obj, nil
 }
@@ -92,7 +101,7 @@ func (u *Uploader) Upload(ctx context.Context, req UploadRequest) (Object, error
 // не тронув тело вовсе; всё остальное читается через io.LimitReader на
 // MaxSize+1, и превышение узнаётся по лишнему байту. Проверка после чтения —
 // это проверка после того, как память уже занята (ADR-0006, инвариант 1).
-func (u *Uploader) readBody(req UploadRequest) ([]byte, error) {
+func (u *Uploader) readBody(ctx context.Context, req UploadRequest) ([]byte, error) {
 	if req.Body == nil {
 		return nil, ErrEmptyBody
 	}
@@ -103,7 +112,7 @@ func (u *Uploader) readBody(req UploadRequest) ([]byte, error) {
 	// тексте лежит путь, то есть имя файла пользователя.
 	body, err := io.ReadAll(io.LimitReader(req.Body, u.cfg.MaxSize+1))
 	if err != nil {
-		return nil, fmt.Errorf("%w: body is unreadable", ErrUnavailable)
+		return nil, stopped(ctx, fmt.Errorf("%w: body is unreadable", ErrUnavailable))
 	}
 	if int64(len(body)) > u.cfg.MaxSize {
 		return nil, fmt.Errorf("%w: body is over %d bytes", ErrTooLarge, u.cfg.MaxSize)

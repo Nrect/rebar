@@ -243,7 +243,10 @@ message"`, — и это проверяется тестом модуля (`Test
   называла `Presign` путём с голой ошибкой. Так же аноним в
   `authztest.RolesOf` получает пустой ответ до `SetErr`, как в `authzpg`.
 - **Отменённый контекст — как у адаптера**: `outboxpg`, `entitlementpg` и
-  `authzpg` отдают его в `ErrUnavailable`, и их двойники тоже.
+  `authzpg` отдают его в `ErrUnavailable`, и их двойники тоже. С 2026-09-16 так
+  же `mailtest`, `paymenttest`, `audittest` и `authtest` — по своим pg-адаптерам,
+  а `objectstoretest` — по `s3`: `ErrUnavailable` без причины в цепочке, потому
+  что ошибка транспорта `s3` причину не несёт — в ней адрес с ключом объекта.
 - **Порт без адаптера в модуле — причина голой**: `Identities`, `Tokens`,
   `Notifier`, `Auditor`, `Suppressor`, `Owned`, `Handler`, `Provider`, хуки
   `Settler`. Порт пишет потребитель, класс его сбоя — решение потребителя, а

@@ -46,6 +46,44 @@ var storeScenarios = []storeScenario{
 	{name: "часы позади строк: возраст ноль, а не отрицательный", run: suiteStatsClockBehindRows},
 	{name: "Purge при равных updated_at удаляет первые по id", run: suitePurgeTiesByID},
 	{name: "отменённый контекст — ErrUnavailable", run: suiteCanceledContext},
+	{name: "released возвращает попытку и место в очереди", run: suiteReleased},
+}
+
+// RELEASED ВОЗВРАЩАЕТ ПОПЫТКУ, А НЕ ТРАТИТ ЕЁ. Прогон, отменённый до отправки,
+// отдаёт строку в pending немедленно: попытка, взятая Claim, возвращается, а
+// срок, прошлая ошибка и Reclaimed — нет. Реализация, записавшая released как
+// retry, жгла бы лимит попыток на каждой остановке процесса.
+func suiteReleased(t *testing.T, store mail.Store) {
+	t.Helper()
+	at := suiteMoment(0)
+	env := mustEnqueue(t, store, suiteEnvelope(at))
+	mustClaim(t, store, at)
+	retryAt := at.Add(time.Minute)
+	mustFinish(t, store, mail.FinishRequest{
+		ID: env.ID, Outcome: mail.FinishRetry, Now: at, NextAttemptAt: retryAt,
+		Error: "временный сбой", Transport: suiteTransport,
+	})
+	mustClaim(t, store, retryAt)
+	releasedAt := retryAt.Add(time.Second)
+	mustFinish(t, store, mail.FinishRequest{ID: env.ID, Outcome: mail.FinishReleased, Now: releasedAt})
+
+	again := mustClaim(t, store, releasedAt)
+	if len(again) != 1 {
+		t.Fatalf("освобождённая строка не вернулась в очередь немедленно: получено %d", len(again))
+	}
+	got := again[0]
+	if got.Attempts != 2 {
+		t.Errorf("попыток %d после released и нового Claim, ожидалось 2: попытка, взятая Claim, не возвращена", got.Attempts)
+	}
+	if got.Reclaimed {
+		t.Error("освобождённая строка пришла с Reclaimed: аренда не снята")
+	}
+	if got.LastError != "временный сбой" {
+		t.Errorf("LastError = %q после released, ожидалась прежняя ошибка попытки", got.LastError)
+	}
+	checkStoredMoments(t, "Claim после released",
+		storedMoment{what: "NextAttemptAt", got: got.NextAttemptAt, want: retryAt},
+	)
 }
 
 // ОТМЕНЁННЫЙ КОНТЕКСТ — ОШИБКА, А НЕ ТИХИЙ УСПЕХ. У mailpg отмена не доезжает
