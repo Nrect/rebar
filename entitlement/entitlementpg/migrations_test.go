@@ -47,7 +47,7 @@ func TestInitMigration_HoldsContract(t *testing.T) {
 	for _, want := range []string{
 		// Идемпотентная форма: накат проходит и там, где схема уже стоит.
 		"CREATE TABLE IF NOT EXISTS entitlement_grants",
-		// Имена, по которым адаптер разбирает конфликт.
+		// Имена-контракт: арбитр ON CONFLICT и CHECK предмета.
 		"CONSTRAINT ux_entitlement_grants_subject_item PRIMARY KEY (subject_id, item_id)",
 		"CONSTRAINT ck_entitlement_grants_item_id",
 	} {
