@@ -1,9 +1,11 @@
 package ledgerpg
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -169,6 +171,54 @@ func (s *Store) Entries(ctx context.Context, book string, account uuid.UUID, aft
 		return nil, storeError("entries", err)
 	}
 	return entries, nil
+}
+
+// Обход сверки — два чтения по индексам (ключ счёта и ux_ledger_entries_seq),
+// каждое до limit, и слияние в Go. uuid Postgres сравнивает побайтно — тот же
+// порядок, что у bytes.Compare.
+const (
+	accountsSQL = `SELECT account FROM ledger_accounts
+WHERE book = $1 AND account > $2 ORDER BY account LIMIT $3`
+	entryAccountsSQL = `SELECT DISTINCT account FROM ledger_entries
+WHERE book = $1 AND account > $2 ORDER BY account LIMIT $3`
+)
+
+// Accounts — счета книги после after по возрастанию, не больше limit
+// (контракт ledger.Store.Accounts).
+//
+// СЧЕТА И ИЗ ЖУРНАЛА ТОЖЕ: восстановление, потерявшее строки ledger_accounts,
+// оставляет записи без головы — остаток таких счетов читается нулём. Обход по
+// одной таблице счетов их не видел бы, и сверка молчала бы ровно там, где
+// деньги пропали.
+func (s *Store) Accounts(ctx context.Context, book string, after uuid.UUID, limit int) ([]uuid.UUID, error) {
+	if limit <= 0 {
+		return nil, fmt.Errorf("%w: ledgerpg: limit must be positive, got %d", ledger.ErrInvalidRequest, limit)
+	}
+	opened, err := s.accountIDs(ctx, accountsSQL, book, after, limit)
+	if err != nil {
+		return nil, err
+	}
+	posted, err := s.accountIDs(ctx, entryAccountsSQL, book, after, limit)
+	if err != nil {
+		return nil, err
+	}
+	// Первые limit объединения лежат среди первых limit каждой выборки.
+	ids := slices.Concat(opened, posted)
+	slices.SortFunc(ids, func(a, b uuid.UUID) int { return bytes.Compare(a[:], b[:]) })
+	ids = slices.Compact(ids)
+	return ids[:min(limit, len(ids))], nil
+}
+
+func (s *Store) accountIDs(ctx context.Context, query, book string, after uuid.UUID, limit int) ([]uuid.UUID, error) {
+	rows, err := s.db().Query(ctx, query, book, after, limit)
+	if err != nil {
+		return nil, storeError("accounts", err)
+	}
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+	if err != nil {
+		return nil, storeError("accounts", err)
+	}
+	return ids, nil
 }
 
 // Точка сохранения своя, SQL-ом, а не вложенной pgx.Tx: та закрывается и на

@@ -89,8 +89,9 @@ func (m *MemStore) SetErr(err error) {
 	m.err = err
 }
 
-// CallCount — сколько раз звали метод порта (Post, Account, Entries, EntryByKey,
-// EntryByID, ReversalOf, Insert): для утверждений «до хранилища не дошли».
+// CallCount — сколько раз звали метод порта (Post, Account, Entries, Accounts,
+// EntryByKey, EntryByID, ReversalOf, Insert): для утверждений «до хранилища не
+// дошли».
 func (m *MemStore) CallCount(method string) int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -163,6 +164,28 @@ func (m *MemStore) Entries(ctx context.Context, book string, account uuid.UUID, 
 	return out, nil
 }
 
+// Accounts — счета книги после after по возрастанию байтов uuid, не больше
+// limit. Записей без строки счёта у двойника не бывает: запись живёт в счёте.
+func (m *MemStore) Accounts(ctx context.Context, book string, after uuid.UUID, limit int) ([]uuid.UUID, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.calls["Accounts"]++
+	if limit <= 0 {
+		return nil, fmt.Errorf("%w: ledgertest: limit must be positive, got %d", ledger.ErrInvalidRequest, limit)
+	}
+	if err := m.fail(ctx, "accounts"); err != nil {
+		return nil, err
+	}
+	ids := make([]uuid.UUID, 0, min(limit, len(m.accounts)))
+	for key := range m.accounts {
+		if key.book == book && bytes.Compare(key.account[:], after[:]) > 0 {
+			ids = append(ids, key.account)
+		}
+	}
+	slices.SortFunc(ids, func(a, b uuid.UUID) int { return bytes.Compare(a[:], b[:]) })
+	return ids[:min(limit, len(ids))], nil
+}
+
 // fail — отменённый контекст и заданный сбой: оба в ledger.ErrUnavailable, как
 // у адаптера, у которого драйвер откажет по отменённому ctx. Стоит там, где у
 // адаптера первый поход в базу.
@@ -183,14 +206,16 @@ func (m *MemStore) head(key accountKey) ledger.Account {
 	return ledger.Account{}
 }
 
+// commit — счёт заводится и без вставок: адаптер заводит строку счёта при
+// блокировке, и она фиксируется вместе с транзакцией Post.
 func (m *MemStore) commit(key accountKey, pending []ledger.Entry) {
-	if len(pending) == 0 {
-		return
-	}
 	acct := m.accounts[key]
 	if acct == nil {
 		acct = &account{}
 		m.accounts[key] = acct
+	}
+	if len(pending) == 0 {
+		return
 	}
 	acct.entries = append(acct.entries, pending...)
 	acct.head = headAfter(pending[len(pending)-1])

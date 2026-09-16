@@ -33,6 +33,26 @@ type Store interface {
 	// не больше limit. Непозитивный limit — ErrInvalidRequest: пустая выборка
 	// молча остановила бы проверку цепи.
 	Entries(ctx context.Context, book string, account uuid.UUID, afterSeq int64, limit int) ([]Entry, error)
+
+	// Accounts — счета книги с id больше after по возрастанию байтов uuid, не
+	// больше limit: обход сверки. В выборке и счёт, по которому Post прошёл без
+	// вставки, и записи без строки счёта: голова такого счёта нулевая, и сверка
+	// обязана его увидеть. Непозитивный limit — ErrInvalidRequest.
+	Accounts(ctx context.Context, book string, after uuid.UUID, limit int) ([]uuid.UUID, error)
+}
+
+// Observer — куда сверка отдаёт расхождения: ledgerotel или LogObserver.
+//
+// ОБЯЗАТЕЛЕН: сверка, которая нашла подделку и никому не сказала, — ровно тот
+// молчащий сторож, из-за которого она стала условием выпуска (решение 5).
+// Реализация потокобезопасна и не паникует: её зовут прогоны планировщика.
+type Observer interface {
+	// Watch — книга взята на сверку; NewReconciler зовёт его до первого
+	// прогона. Ряд метрики, родившийся сразу единицей, increase() не видит, а
+	// у алерта сверки порог 1.
+	Watch(book string)
+	// Found — расхождения одного счёта за проход; без расхождений не зовётся.
+	Found(ctx context.Context, f Finding)
 }
 
 // AccountTx — счёт под блокировкой Post; вне fn не живёт и параллельных

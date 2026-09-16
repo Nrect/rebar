@@ -13,7 +13,7 @@ import (
 	"github.com/nrect/rebar/ledger/ledgertest"
 )
 
-// Кошелёк: пополнение, списание сверх остатка и отмена пополнения.
+// Кошелёк: пополнение, списание сверх остатка, отмена пополнения и сверка.
 //
 // В проде хранилище — адаптер Postgres, и движение идёт в транзакции
 // бизнес-факта: svc.WithStore(store.WithTx(tx)).Post(ctx, req). Отличие теста
@@ -61,14 +61,21 @@ func Example() {
 	if err != nil {
 		panic(err)
 	}
-	check, err := svc.Verify(ctx, customer, ledger.Position{}, 100)
+	fmt.Println(rev.Kind, rev.AmountMinor, "остаток", balance)
+
+	// Сверка — задача планировщика рядом с движениями:
+	// scheduler.Job{Name: "wallet_reconcile", Interval: 10 * time.Minute, Run: rec.Run}.
+	// Наблюдатель в проде — ledgerotel.NewObserver(meter) с алертами из его
+	// doc.go либо ledger.LogObserver(logger).
+	found := ledgertest.NewObserver()
+	rec := ledger.NewReconciler(svc, found, ledger.ReconcileConfig{Accounts: 200, Page: 500})
+	checked, err := rec.Run(ctx)
 	if err != nil {
 		panic(err)
 	}
-	fmt.Println(rev.Kind, rev.AmountMinor, "остаток", balance)
-	fmt.Println("проверено записей:", check.Checked, "расхождений:", len(check.Mismatches))
+	fmt.Println("сверка: проверено записей", checked, "расхождений", len(found.Findings()))
 	// Output:
 	// списание сверх остатка: true
 	// reversal -1000 остаток 0
-	// проверено записей: 2 расхождений: 0
+	// сверка: проверено записей 2 расхождений 0
 }
