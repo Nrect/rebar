@@ -31,6 +31,14 @@ func TestDeliver_FinishFailureStopsBatch(t *testing.T) {
 }
 
 // Отмена ctx останавливает пачку; взятые строки дождутся истечения аренды.
+//
+// ОТМЕНА ПОСРЕДИ ОТПРАВКИ СТОИТ ДУБЛЯ, И ЭТО ПОВЕДЕНИЕ ПРОДА, А НЕ ДВОЙНИКА.
+// Письмо ушло, а Finish идёт по тому же отменённому контексту и до базы не
+// доезжает: mailpg отвечает ErrUnavailable, строка остаётся в sending и после
+// истечения аренды уедет второй раз. Раньше тест ждал здесь записанный исход —
+// он был зелёным только потому, что двойник контекст не смотрел (CHANGELOG
+// mailtest, «замечает отменённый контекст»). Отмена МЕЖДУ строками дубля не
+// стоит: её ловит waitTurn до отправки.
 func TestDeliver_ContextCancelStopsBatch(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t, false, nil)
@@ -48,16 +56,17 @@ func TestDeliver_ContextCancelStopsBatch(t *testing.T) {
 
 	processed, err := h.svc.Deliver(ctx)
 	require.ErrorIs(t, err, context.Canceled)
-	assert.Equal(t, 1, processed, "исход первой строки записан")
-	assert.Equal(t, 1, sends)
+	require.ErrorIs(t, err, mail.ErrUnavailable, "исход записать не удалось — это сбой прогона")
+	assert.Equal(t, 0, processed, "исход отправленной строки записать не удалось")
+	assert.Equal(t, 1, sends, "вторая строка не отправлена")
 
 	// Порядок Claim задаёт хранилище; какая именно строка осталась — не важно.
 	statuses := map[mail.Status]int{}
 	for _, row := range h.store.Rows() {
 		statuses[row.Status]++
 	}
-	assert.Equal(t, map[mail.Status]int{mail.StatusSent: 1, mail.StatusSending: 1}, statuses,
-		"взятая строка ждёт истечения аренды")
+	assert.Equal(t, map[mail.Status]int{mail.StatusSending: 2}, statuses,
+		"обе строки ждут истечения аренды: у отправленной исход не записан")
 }
 
 // Пауза между письмами — квота провайдера (Postbox: письмо в секунду).

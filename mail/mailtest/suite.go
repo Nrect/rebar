@@ -64,7 +64,7 @@ func suiteCanceledContext(t *testing.T, store mail.Store) {
 	_, err = store.Claim(ctx, suiteMoment(0), suiteLease, 10)
 	checkCanceled(t, "Claim", err)
 	checkCanceled(t, "Finish", store.Finish(ctx, mail.FinishRequest{
-		ID: env.ID, Outcome: mail.FinishSent, Now: suiteMoment(0), Transport: "suite",
+		ID: env.ID, Outcome: mail.FinishSent, Now: suiteMoment(0), Transport: suiteTransport,
 	}))
 	_, err = store.Stats(ctx, suiteMoment(0))
 	checkCanceled(t, "Stats", err)
@@ -99,7 +99,7 @@ func suitePurgeTiesByID(t *testing.T, store mail.Store) {
 	mustClaim(t, store, sentAt)
 	slices.SortFunc(rows, func(a, b mail.Envelope) int { return bytes.Compare(b.ID[:], a.ID[:]) })
 	for _, row := range rows {
-		mustFinish(t, store, mail.FinishRequest{ID: row.ID, Outcome: mail.FinishSent, Now: sentAt, Transport: "suite"})
+		mustFinish(t, store, mail.FinishRequest{ID: row.ID, Outcome: mail.FinishSent, Now: sentAt, Transport: suiteTransport})
 	}
 
 	deleted, err := store.Purge(t.Context(), sentAt.Add(time.Microsecond), 3)
@@ -217,7 +217,7 @@ func suitePurgeInMicroseconds(t *testing.T, store mail.Store) {
 	sentAt := suiteMoment(0)
 	env := mustEnqueue(t, store, suiteEnvelope(sentAt))
 	mustClaim(t, store, sentAt)
-	mustFinish(t, store, mail.FinishRequest{ID: env.ID, Outcome: mail.FinishSent, Now: sentAt, Transport: "suite"})
+	mustFinish(t, store, mail.FinishRequest{ID: env.ID, Outcome: mail.FinishSent, Now: sentAt, Transport: suiteTransport})
 
 	for _, tt := range []struct {
 		before time.Time
@@ -239,6 +239,9 @@ func suitePurgeInMicroseconds(t *testing.T, store mail.Store) {
 
 // suiteLease — аренда набора.
 const suiteLease = time.Minute
+
+// suiteTransport — имя транспорта в исходах набора.
+const suiteTransport = "suite"
 
 // suiteEnvelope — конверт в том виде, в каком его отдаёт mail.Service.Prepare.
 func suiteEnvelope(now time.Time, mods ...func(*mail.Envelope)) mail.Envelope {
