@@ -39,7 +39,9 @@
     `not_recordable`, `too_large`, `error`.
   - `Pruner` и `Purger` — уборка старше `Retention` пачками по
     `PurgeBatchSize`, не больше `PurgeBatchesPerRun` пачек за `Run`;
-    `SetClock`.
+    `SetClock`. Отмена между пачками — причина отмены, а не `ErrUnavailable`;
+    отмена, пришедшая во время `Purge`, — тоже причина отмены, хотя
+    хранилище отдаёт оборванный запрос своим сбоем.
   - Классы ошибок (ADR-0007):
 
     | Sentinel | Класс | Почему |

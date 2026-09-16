@@ -46,7 +46,9 @@ func (p *Purger) SetClock(now func() time.Time) {
 
 // Run удаляет записи старше срока пачками и возвращает число удалённых.
 // Незакоммиченных записей уборка не видит. Отмена между пачками — причина
-// отмены, а не ErrUnavailable: остановка не выглядит сбоем хранилища.
+// отмены, а не ErrUnavailable: остановка не выглядит сбоем хранилища. Отмена,
+// пришедшая во время Purge, — тоже причина отмены, хотя хранилище отдаёт
+// оборванный запрос своим сбоем.
 func (p *Purger) Run(ctx context.Context) (int, error) {
 	before := p.now().Add(-p.retention)
 	deleted := 0
@@ -56,7 +58,7 @@ func (p *Purger) Run(ctx context.Context) (int, error) {
 		}
 		n, err := p.pruner.Purge(ctx, before, PurgeBatchSize)
 		if err != nil {
-			return deleted, storeError("purge", err)
+			return deleted, stopped(ctx, storeError("purge", err))
 		}
 		deleted += n
 		if n < PurgeBatchSize {
@@ -64,6 +66,15 @@ func (p *Purger) Run(ctx context.Context) (int, error) {
 		}
 	}
 	return deleted, nil
+}
+
+// stopped — ошибка, на которой встал прогон: при отменённом ctx — причина
+// отмены, а не сбой хранилища (форма objectstore.Collector).
+func stopped(ctx context.Context, failure error) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return failure
 }
 
 // storeError — сбой хранилища в ErrUnavailable; уже завёрнутый не

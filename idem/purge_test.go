@@ -2,6 +2,7 @@ package idem_test
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -109,6 +110,37 @@ func TestPurger_RunStopsOnCancel(t *testing.T) {
 	_, err = newPurger(t, idle).Run(cancelled)
 	require.ErrorIs(t, err, context.Canceled)
 	assert.Empty(t, idle.calls, "по отменённому контексту хранилище не зовётся")
+}
+
+// Отмена, пришедшая во время Purge, — тоже причина отмены: хранилище
+// заворачивает оборванный DELETE в ErrUnavailable, и без проверки остановка
+// процесса выглядела бы тревогой «хранилище недоступно».
+func TestPurger_RunCancelledDuringPurge(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	calls := 0
+	pruner := pruneFunc(func(callCtx context.Context, _ time.Time, limit int) (int, error) {
+		calls++
+		if calls == 1 {
+			return limit, nil
+		}
+		cancel()
+		return 0, fmt.Errorf("%w: %w", idem.ErrUnavailable, callCtx.Err())
+	})
+	deleted, err := newPurger(t, pruner).Run(ctx)
+	require.ErrorIs(t, err, context.Canceled)
+	require.NotErrorIs(t, err, idem.ErrUnavailable, "отмена во время Purge выдана за сбой хранилища")
+	assert.Equal(t, idem.PurgeBatchSize, deleted, "удалено до оборванной пачки")
+	assert.Equal(t, 2, calls)
+}
+
+// pruneFunc — idem.Pruner из функции.
+type pruneFunc func(ctx context.Context, before time.Time, limit int) (int, error)
+
+func (f pruneFunc) Purge(ctx context.Context, before time.Time, limit int) (int, error) {
+	return f(ctx, before, limit)
 }
 
 // Граница считается на каждом прогоне от часов, а не при сборке.
