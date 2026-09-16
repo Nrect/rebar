@@ -22,7 +22,8 @@ func TestApp_SetClockPanicsOnNil(t *testing.T) {
 // ними не сойдётся, а сверка — Equal, а не «примерно сейчас».
 func TestClock_HandlersTakeAppClock(t *testing.T) {
 	s := newStand(t)
-	require.Same(t, time.UTC, s.app.Now().Location(), "часы по умолчанию — в UTC")
+	now := s.app.Now()
+	require.True(t, inUTC(now), "часы по умолчанию — не time.UTC, а %q", now.Location())
 
 	// 789 нс сверх микросекунды отличают усечение от округления.
 	moment := time.Date(2031, time.March, 9, 2, 30, 15, 123456789, time.UTC)
@@ -39,6 +40,10 @@ func TestClock_HandlersTakeAppClock(t *testing.T) {
 	requireStoredMoment(t, s, moment, "SELECT occurred_at FROM payment_events WHERE intent_id = $1", intent)
 	requireStoredMoment(t, s, moment, "SELECT created_at FROM shop_uploads WHERE object_key = $1", str(t, body, "key"))
 }
+
+// inUTC — пояс сверяется указателем, а не именем: time.Local при TZ=UTC тоже
+// называется «UTC».
+func inUTC(moment time.Time) bool { return moment.Location() == time.UTC }
 
 // requireStoredMoment — момент в базе равен want так, как его хранит
 // timestamptz: то же мгновение до микросекунд. Зону база не хранит, а pgx отдаёт
