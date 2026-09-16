@@ -118,9 +118,12 @@ EXISTS` сверяет только имя: индекс с тем же имен
 сбрасывает режим триггера с `ENABLE ALWAYS` на `ORIGIN` (`tgenabled` `A` → `O`).
 Для `audit_events` и `payment_ledger` это снятая защита: append-only замолкает
 на реплике — ровно там, где правят руками. Поэтому только `DROP TRIGGER IF
-EXISTS` + `CREATE TRIGGER` + безусловный `ALTER TABLE … ENABLE ALWAYS TRIGGER`,
-всё в одной транзакции: между DROP и COMMIT таблица под `ACCESS EXCLUSIVE`, и
-окна без триггера нет.
+EXISTS` + `CREATE TRIGGER` + `ALTER TABLE … ENABLE ALWAYS TRIGGER`, всё в одной
+транзакции: между DROP и COMMIT таблица под `ACCESS EXCLUSIVE`, и окна без
+триггера нет. `ENABLE ALWAYS` здесь не подстраховка, а обязательная строка:
+заново созданный триггер приходит в режиме `ORIGIN`, и `A` возвращает только
+явный `ALTER` — проверено арбитром на PostgreSQL 16, `A` → `O` и после
+`CREATE OR REPLACE`, и после `DROP`+`CREATE`.
 
 **Решение — оба пути, в таком порядке.** Первая миграция пишется
 идемпотентной: её применяют стенды, и она чинит режим триггера, если его
@@ -213,7 +216,8 @@ VERSIONING называет ломающим: у того, кто первую �
    разъезжаются, и находит это потребитель.
 7. **`tgenabled = 'A'` после наката** — у `audit` и `payment`. Наличия триггера
    мало: `CREATE OR REPLACE TRIGGER` оставляет триггер на месте и выключает его
-   на реплике (решение 4).
+   на реплике, а `DROP`+`CREATE` без явного `ALTER … ENABLE ALWAYS` создаёт его
+   в `ORIGIN` (решение 4).
 
 ### 8. Порядок волны
 
