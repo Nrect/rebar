@@ -1,8 +1,6 @@
 package outboxpg_test
 
 import (
-	"os"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -10,70 +8,7 @@ import (
 
 	"github.com/nrect/rebar/outbox"
 	"github.com/nrect/rebar/outbox/outboxpg"
-	"github.com/nrect/rebar/postgres/pgtest"
 )
-
-// Schema — то, что потребитель применит из кода: обязан совпадать с файлом,
-// который он же может скопировать в миграции.
-func TestSchema_EmbedEqualsFile(t *testing.T) {
-	t.Parallel()
-	raw, err := os.ReadFile("schema.sql")
-	require.NoError(t, err)
-	assert.Equal(t, string(raw), outboxpg.Schema)
-}
-
-// Схема — артефакт для goose потребителя: имена, на которые опирается код,
-// проверяются в файле, а не в его копии.
-func TestSchemaFile_HoldsContract(t *testing.T) {
-	t.Parallel()
-	// Секцию Up всегда берёт pgtest.GooseUp — исправленный разбор, который не
-	// теряет тело функции на StatementBegin. Здесь схема делится по маркеру
-	// обратной секции: в ней нет ни триггеров, ни тел функций, и обе половины
-	// нужны целиком, вместе с директивами.
-	up, down, ok := strings.Cut(outboxpg.Schema, pgtest.GooseDownMarker)
-	require.True(t, ok, "в schema.sql нет маркера %s", pgtest.GooseDownMarker)
-
-	for _, want := range []string{
-		"CREATE TABLE outbox_messages",
-		"ux_outbox_messages_dedup", // имя индекса — часть контракта Store.Enqueue
-		"ix_outbox_messages_due",
-		"ix_outbox_messages_terminal",
-		"ix_outbox_messages_failed",
-		"ix_outbox_messages_aggregate",
-		"outbox_messages_claim_chk",
-		"outbox_messages_fail_chk",
-	} {
-		assert.Contains(t, up, want)
-	}
-	assert.NotContains(t, up, "DROP TABLE")
-	assert.Contains(t, down, "DROP TABLE outbox_messages")
-	assert.NotContains(t, down, "CREATE TABLE")
-
-	// Имя схемы не зашито и FK на таблицы потребителя нет: search_path
-	// выбирает потребитель, а его таблицу пользователей пакет не знает.
-	assert.NotContains(t, outboxpg.Schema, "public.")
-	assert.NotContains(t, outboxpg.Schema, "REFERENCES")
-	assert.NotContains(t, outboxpg.Schema, "DEFAULT now()",
-		"время приходит параметром: иначе тесты на управляемых часах проверяют одно, а база пишет другое")
-}
-
-// Обе стороны миграции применяются на пустую базу: потребитель обязан уметь
-// откатиться и накатить заново.
-func TestSchemaFile_BothDirectionsApply(t *testing.T) {
-	t.Parallel()
-	pool := newSchemaPool(t)
-
-	pgtest.Apply(t, pool, pgtest.GooseUp(t, "schema.sql"))
-	require.NoError(t, outboxpg.New(pool).CheckSchema(t.Context()))
-
-	_, down, ok := strings.Cut(outboxpg.Schema, pgtest.GooseDownMarker)
-	require.True(t, ok)
-	pgtest.Apply(t, pool, down)
-	require.Error(t, outboxpg.New(pool).CheckSchema(t.Context()), "после Down таблицы нет")
-
-	pgtest.Apply(t, pool, pgtest.GooseUp(t, "schema.sql"))
-	require.NoError(t, outboxpg.New(pool).CheckSchema(t.Context()))
-}
 
 func TestCheckSchema_FullSchemaPasses(t *testing.T) {
 	t.Parallel()
@@ -82,7 +17,7 @@ func TestCheckSchema_FullSchemaPasses(t *testing.T) {
 	require.NoError(t, store.CheckSchema(t.Context()))
 }
 
-// Первая строка ошибки — что делать: скопировать schema.sql в миграции.
+// Первая строка ошибки — что делать: накатить миграции раннером проекта.
 func TestCheckSchema_MissingTableTellsWhatToDo(t *testing.T) {
 	t.Parallel()
 	pool := newSchemaPool(t)
@@ -91,8 +26,8 @@ func TestCheckSchema_MissingTableTellsWhatToDo(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "таблицы outbox_messages нет")
-	assert.Contains(t, err.Error(), "schema.sql")
-	assert.Contains(t, err.Error(), "Миграция")
+	assert.Contains(t, err.Error(), "накатите outboxpg.Migrations() раннером проекта",
+		"первая строка говорит, что делать")
 	assert.NotErrorIs(t, err, outbox.ErrUnavailable, "расхождение схемы — не временный сбой")
 }
 
@@ -155,7 +90,8 @@ func TestCheckSchema_ReportsEveryMismatchByName(t *testing.T) {
 			err := store.CheckSchema(t.Context())
 
 			require.Error(t, err)
-			assert.Contains(t, err.Error(), "расходится с outboxpg/schema.sql")
+			assert.Contains(t, err.Error(), "накатите outboxpg.Migrations() раннером проекта",
+				"первая строка говорит, что делать")
 			for _, want := range tt.want {
 				assert.Contains(t, err.Error(), want)
 			}

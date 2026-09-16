@@ -2,7 +2,6 @@ package outboxpg
 
 import (
 	"context"
-	_ "embed"
 	"errors"
 	"fmt"
 	"maps"
@@ -11,18 +10,12 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// Schema — содержимое schema.sql (с маркерами goose) для потребителя, который
-// применяет миграции из кода, а не копирует файл. Побайтно равен файлу.
-//
-//go:embed schema.sql
-var Schema string
-
 const (
 	tableName = "outbox_messages"
 
 	// Первая строка ошибки — что делать; расхождения перечисляются ниже неё.
-	missingTableHint = "outboxpg.CheckSchema: таблицы outbox_messages нет: скопируйте outboxpg/schema.sql в миграции (README, «Миграция»)"
-	mismatchHint     = "outboxpg.CheckSchema: таблица outbox_messages расходится с outboxpg/schema.sql — сверьте миграцию (README, «Миграция»)"
+	missingTableHint = "outboxpg.CheckSchema: таблицы outbox_messages нет: накатите outboxpg.Migrations() раннером проекта"
+	mismatchHint     = "outboxpg.CheckSchema: схема расходится с миграциями — накатите outboxpg.Migrations() раннером проекта; что осталось после наката, чините своей миграцией"
 )
 
 // Типы из information_schema.columns.data_type.
@@ -35,7 +28,7 @@ const (
 )
 
 // expectedColumns — колонки и их data_type из information_schema.columns;
-// меняется только вместе со schema.sql (страж — TestExpectedColumns_MatchSchemaFile).
+// меняется только вместе с миграциями (страж — TestExpectedColumns_MatchMigrations).
 var expectedColumns = map[string]string{
 	"id":             typeUUID,
 	"kind":           typeText,
@@ -62,7 +55,7 @@ var expectedColumns = map[string]string{
 
 // expectedChecks — именованные CHECK: без них база не держит инварианты аренды
 // и dead-letter. Безымянные CHECK колонок (status, kind, attempts) проверяет
-// guard-тест по файлу схемы: их имена генерирует Postgres, и контрактом они
+// guard-тест по миграциям: их имена генерирует Postgres, и контрактом они
 // быть не могут.
 var expectedChecks = []string{"outbox_messages_claim_chk", "outbox_messages_fail_chk"}
 
@@ -89,11 +82,13 @@ const checksSQL = `SELECT conname FROM pg_constraint WHERE conrelid = $1 AND con
 const indexesSQL = `SELECT indexname, indexdef LIKE 'CREATE UNIQUE INDEX %'
 FROM pg_indexes WHERE schemaname = $1 AND tablename = $2`
 
-// CheckSchema сверяет таблицу outbox_messages со schema.sql, НИЧЕГО НЕ МЕНЯЯ:
-// колонки и их типы, именованные CHECK, индексы. Зовётся на старте
-// потребителя: миграцию применяет он сам своим раннером — автомиграция из
-// библиотеки даёт две правды о схеме, требует DDL-прав у приложения и гонку
+// CheckSchema сверяет таблицу outbox_messages с миграциями Migrations(),
+// НИЧЕГО НЕ МЕНЯЯ: колонки и их типы, именованные CHECK, индексы. Зовётся на
+// старте потребителя: миграции накатывает он сам своим раннером — автомиграция
+// из библиотеки даёт две правды о схеме, требует DDL-прав у приложения и гонку
 // реплик при выкате. Лишние колонки потребителя расхождением не считаются.
+// Зелёный CheckSchema — условие, при котором базу со старой копией схемы можно
+// отметить накатанной (ADR-0011, решение 4).
 //
 // Все расхождения — в одной ошибке (errors.Join), первая строка — что делать.
 // Сбой запроса к каталогу — outbox.ErrUnavailable. Данных таблицы в ошибке нет.
