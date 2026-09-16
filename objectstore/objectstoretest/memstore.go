@@ -28,17 +28,11 @@ type row struct {
 // адаптеров, перезапись по ключу, идемпотентное удаление и пагинация с
 // курсором. Потокобезопасен целиком, включая настройку.
 //
-// ОТМЕНЁННЫЙ КОНТЕКСТ ДВОЙНИК НЕ СМОТРИТ — как fs, и это решение, а не
-// упущение: адаптеры модуля расходятся, и совпасть с обоими нельзя. s3 на
-// отмене падает транспортом (ErrUnavailable без причины в цепочке), fs
-// контекст не читает вовсе. Выбран fs, потому что равнение на s3 упирается в
-// ядро: Collector.Run на отказе List отдаёт ErrUnavailable без причины, и его
-// собственный контракт «отмена останавливает прогон с context.Canceled»
-// (TestCollector_StopsOnCancelledContext) держится ровно на том, что List
-// отмену пропускает и её замечает сам Collector. Двойник, начавший падать,
-// сделал бы этот контракт недостижимым ни для одной реализации. Пока причина
-// отмены не сохранена в ядре, двойник остаётся голым (docs/ROADMAP.md,
-// «Признанные долги»).
+// ОТМЕНЁННЫЙ КОНТЕКСТ — КАК У s3, АДАПТЕРА ПРОДА: Put, Delete и List отвечают
+// objectstore.ErrUnavailable без причины в цепочке. fs, адаптер стенда,
+// контекст не читает, и на него двойник не равняется: тест потребителя зелен
+// тогда, когда зелен прод. Collector.Run причину отмены берёт у ctx сам
+// (TestCollector_CancelDuringPortCallIsNotUnavailable).
 type MemStore struct {
 	mu   sync.Mutex
 	rows map[string]row
@@ -80,7 +74,7 @@ func (m *MemStore) SetClock(now func() time.Time) {
 }
 
 // Put кладёт объект, перезаписывая существующий под тем же ключом.
-func (m *MemStore) Put(_ context.Context, req objectstore.PutRequest) (objectstore.Object, error) {
+func (m *MemStore) Put(ctx context.Context, req objectstore.PutRequest) (objectstore.Object, error) {
 	if err := objectstore.CheckKey(req.Key); err != nil {
 		return objectstore.Object{}, err
 	}
@@ -100,6 +94,9 @@ func (m *MemStore) Put(_ context.Context, req objectstore.PutRequest) (objectsto
 	if m.err != nil {
 		return objectstore.Object{}, storeError("put", m.err)
 	}
+	if err := canceled(ctx, "put"); err != nil {
+		return objectstore.Object{}, err
+	}
 	obj := objectstore.Object{
 		Key:         req.Key,
 		Size:        int64(len(body)),
@@ -112,7 +109,7 @@ func (m *MemStore) Put(_ context.Context, req objectstore.PutRequest) (objectsto
 }
 
 // Delete удаляет объект; отсутствие объекта — не ошибка, как и у адаптеров.
-func (m *MemStore) Delete(_ context.Context, key string) error {
+func (m *MemStore) Delete(ctx context.Context, key string) error {
 	if err := objectstore.CheckKey(key); err != nil {
 		return err
 	}
@@ -121,6 +118,9 @@ func (m *MemStore) Delete(_ context.Context, key string) error {
 	if m.err != nil {
 		return storeError("delete", m.err)
 	}
+	if err := canceled(ctx, "delete"); err != nil {
+		return err
+	}
 	delete(m.rows, key)
 	return nil
 }
@@ -128,7 +128,7 @@ func (m *MemStore) Delete(_ context.Context, key string) error {
 // List отдаёт объекты по префиксу в порядке ключа, начиная строго после
 // cursor. Непозитивный limit — пустая страница без ошибки: пограничный
 // аргумент двойник обязан переживать так же, как адаптер (PATTERNS §7).
-func (m *MemStore) List(_ context.Context, prefix, cursor string, limit int) (objectstore.Page, error) {
+func (m *MemStore) List(ctx context.Context, prefix, cursor string, limit int) (objectstore.Page, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
@@ -136,6 +136,9 @@ func (m *MemStore) List(_ context.Context, prefix, cursor string, limit int) (ob
 	}
 	if limit <= 0 {
 		return objectstore.Page{}, nil
+	}
+	if err := canceled(ctx, "list"); err != nil {
+		return objectstore.Page{}, err
 	}
 	keys := make([]string, 0, len(m.rows))
 	for key := range m.rows {
@@ -209,6 +212,17 @@ func (m *MemStore) Seed(key string, body []byte, modifiedAt time.Time) {
 		},
 		body: bytes.Clone(body),
 	}
+}
+
+// canceled — отменённый контекст так, как его отдаёт s3: запрос не ушёл, и
+// наружу идёт objectstore.ErrUnavailable БЕЗ причины — транспортную ошибку s3
+// не заворачивает, в ней адрес с ключом. Стоит там, где s3 идёт в сеть: ключ,
+// тело и непозитивный лимит он решает раньше, и отмена их не перебивает.
+func canceled(ctx context.Context, op string) error {
+	if ctx.Err() != nil {
+		return fmt.Errorf("%w: objectstoretest: %s: no response", objectstore.ErrUnavailable, op)
+	}
+	return nil
 }
 
 // storeError — сбой так, как его отдают s3 и fs: в objectstore.ErrUnavailable

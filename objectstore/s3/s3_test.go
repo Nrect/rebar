@@ -2,6 +2,7 @@ package s3_test
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
@@ -214,6 +215,30 @@ func TestS3_TransportErrorHidesURL(t *testing.T) {
 	require.ErrorIs(t, err, objectstore.ErrUnavailable)
 	assert.NotContains(t, err.Error(), "ivanov")
 	assert.NotContains(t, err.Error(), srv.URL)
+}
+
+// ОТМЕНЁННЫЙ КОНТЕКСТ — СБОЙ ТРАНСПОРТА БЕЗ ПРИЧИНЫ. Запрос не уходит, а
+// *url.Error с адресом и ключом не заворачивается, поэтому context.Canceled в
+// цепочке нет. На это равняется objectstoretest.MemStore, а Collector.Run
+// причину отмены берёт у ctx сам: тест покраснел — сверить обоих.
+func TestS3_CancelledContextIsUnavailableWithoutCause(t *testing.T) {
+	t.Parallel()
+	store := newStore(t, func(http.ResponseWriter, *http.Request) {
+		t.Error("запрос ушёл по отменённому контексту")
+	})
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	_, putErr := store.Put(ctx, objectstore.PutRequest{
+		Key: testKey, ContentType: "image/png", Body: bytes.NewReader(objectstoretest.PNG(64)), Size: 64,
+	})
+	deleteErr := store.Delete(ctx, testKey)
+	_, listErr := store.List(ctx, "uploads", "", 10)
+
+	for name, err := range map[string]error{"Put": putErr, "Delete": deleteErr, "List": listErr} {
+		require.ErrorIsf(t, err, objectstore.ErrUnavailable, "%s", name)
+		assert.NotErrorIsf(t, err, context.Canceled, "%s: причина отмены в цепочке — сверить objectstoretest.MemStore", name)
+	}
 }
 
 func TestS3_PresignChecksMethodAndTTL(t *testing.T) {
