@@ -240,16 +240,7 @@ func (a *App) startQueues() error {
 	a.letters = mail.NewService(mailpg.New(a.db.Pool), transport, nil, mailConfig(a.cfg))
 
 	queue := outboxpg.New(a.db.Pool)
-	cfg := outbox.Config{
-		Kinds:           outboxKinds(),
-		MaxAttempts:     5,
-		Backoff:         outbox.Backoff{Base: time.Second, Max: time.Minute},
-		Lease:           30 * time.Second,
-		HandlerTimeout:  10 * time.Second,
-		BatchSize:       20,
-		Retention:       7 * 24 * time.Hour,
-		MaxPayloadBytes: 16 * 1024,
-	}
+	cfg := outboxConfig()
 	a.producer = outbox.NewProducer(queue, cfg)
 
 	worker, err := a.newWorker(queue, cfg)
@@ -258,6 +249,23 @@ func (a *App) startQueues() error {
 	}
 	a.worker = worker
 	return nil
+}
+
+// outboxConfig — политика очереди событий сборки.
+func outboxConfig() outbox.Config {
+	return outbox.Config{
+		Kinds:       outboxKinds(),
+		MaxAttempts: 5,
+		Backoff:     outbox.Backoff{Base: time.Second, Max: time.Minute},
+		Lease:       30 * time.Second,
+		// HandlerTimeout и BatchSize подобраны под jobsGrace: обычная пачка и два
+		// HandlerTimeout на запись исхода и возврат остатка укладываются в бюджет
+		// остановки (TestStopBudgets_FitKillDeadline).
+		HandlerTimeout:  5 * time.Second,
+		BatchSize:       20,
+		Retention:       7 * 24 * time.Hour,
+		MaxPayloadBytes: 16 * 1024,
+	}
 }
 
 // mailConfig — политика почты сборки; её же берёт тест совпадения Recipients с

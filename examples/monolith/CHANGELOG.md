@@ -25,6 +25,10 @@
   не сокращает срок, негодный предмет отвергается `ErrInvalidGrant`.
   `shoppg.Entitlements` удалён, `shoppg.NewSettler` принимает
   `*entitlementpg.Store`.
+- `outbox` подобран под бюджет задач: `HandlerTimeout` 5 с (было 10),
+  `BatchSize` 20 — обычная пачка и два `HandlerTimeout` на запись исхода и
+  возврат остатка укладываются в 15 с; `TestStopBudgets_FitKillDeadline`
+  проверяет и `outbox`.
 - Старт и остановка — по `docs/CONSUMER.md`, §§4–5. `App.Start` занимает порты
   до «готов», снимает первый снимок гейджей и запускает задачи на контексте,
   который сигнал не отменяет; `App.Wait` ждёт сигнала или падения сервера;
