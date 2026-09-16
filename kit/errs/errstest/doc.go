@@ -1,17 +1,21 @@
 // Package errstest — guard-тесты, которые потребитель ставит у себя один раз
 // и забывает: единственная точка ответа, реестр слагов, полнота таблицы
-// статусов, класс у каждой sentinel.
+// статусов, класс у каждой sentinel и имя пакета в её тексте.
 //
 //	func TestErrorFormat(t *testing.T) { errstest.NoDirectHTTPErrors(t, "..") }
 //	func TestSlugs(t *testing.T)       { errstest.CheckSlugRegistry(t, apislug.All) }
 //	func TestKinds(t *testing.T)       { errstest.KindStatusTable(t) }
 //	func TestSentinels(t *testing.T)   { errstest.EveryErrorHasKind(t, ".") }
+//	func TestSentinelNames(t *testing.T) { errstest.EverySentinelNamesItsPackage(t, ".") }
 //
 // Sentinel без класса, у которой класс зависит от вызывающего, объявляет отказ
 // с доводом строкой над объявлением:
 //
 //	//errs:nokind класс зависит от источника блоба: из куки — 400, из таблицы — 500
 //	var ErrMalformed = errors.New("secrets: blob is malformed")
+//
+// Отказ снимает класс и НЕ снимает префикс: текст остаётся «secrets: …»,
+// иначе префикс исчезнет ровно в тот день, когда sentinel класс получит.
 //
 // Безопасность:
 //
@@ -25,9 +29,13 @@
 //     забытой sentinel; обход дерева ловит и новую, без правки теста.
 //  5. ОТКАЗ ОТ КЛАССА — ТОЛЬКО С ДОВОДОМ И НА ОДНОМ ОБЪЯВЛЕНИИ. //errs:nokind
 //     без причины и при классе — находки; каталог целиком прячет лишь allow.
+//  6. ТЕКСТ SENTINEL НАЧИНАЕТСЯ С ИМЕНИ ПАКЕТА. KindError равны по классу И
+//     ТЕКСТУ: без префикса errors.Is(err, mail.ErrUnavailable) сработал бы на
+//     outbox.ErrUnavailable — молча, между модулями и в проде. Своего отказа
+//     у правила нет: префикс автор пишет сам и всегда может.
 //
 // Чего в пакете нет: двойников (портов у errs нет — хватает
-// httptest.ResponseRecorder), проверки текстов, линтера как отдельного бинаря
-// и загрузки типов: класс sentinel узнаётся по форме объявления, а непонятная
-// форма у Err… — находка, а не пропуск.
+// httptest.ResponseRecorder), проверки текстов помимо префикса пакета, линтера
+// как отдельного бинаря и загрузки типов: класс sentinel и её текст узнаются
+// по форме объявления, а непонятная форма у Err… — находка, а не пропуск.
 package errstest
