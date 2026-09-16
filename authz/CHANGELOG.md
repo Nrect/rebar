@@ -6,6 +6,31 @@
 ## Unreleased
 
 ### Changed
+- **Ломающее: схема `authzpg` переехала в миграции, `authzpg.Schema` убран
+  ([ADR-0011](../docs/adr/0011-migrations-in-blocks.md)).**
+  `authzpg/schema.sql` стал `authzpg/migrations/00001_authz_init.sql`, каталог
+  отдаёт `authzpg.Migrations() fs.FS`; строка `Schema` со снимком схемы ушла
+  вместе с файлом (решение 5), замена — `Migrations()`. Накатывает раннер
+  проекта со своей таблицей версий `authz_schema_version`: у goose —
+  `goose.NewProvider(goose.DialectPostgres, db, authzpg.Migrations(),
+  goose.WithTableName("authz_schema_version"))`; модуль goose не импортирует.
+  Первая миграция идемпотентна: `CREATE TABLE IF NOT EXISTS` и
+  `CREATE INDEX IF NOT EXISTS`; `Down` — `DROP TABLE IF EXISTS`. Подсказки
+  `CheckSchema`: «таблицы authz_role_assignments нет: накатите
+  `authzpg.Migrations()` раннером проекта» (было «скопируйте
+  `authzpg/schema.sql` в миграции») и «схема расходится с миграциями —
+  накатите `authzpg.Migrations()` раннером проекта; что осталось после наката,
+  чините своей миграцией» (было «таблица authz_role_assignments расходится с
+  `authzpg/schema.sql` — сверьте миграцию»). Тесты адаптера накатывают каталог;
+  поставку каталога держит `TestMigrations_Catalog`, формы команд —
+  `TestInitMigration_HoldsContract`, накат, откат и повторный откат —
+  `TestMigrations_UpDownUp`, повторный накат с данными —
+  `TestMigrations_ReapplyOnAppliedSchema`.
+  **Переход базы, где схема уже накатана копией `schema.sql`:** `CheckSchema`
+  зелёный — затем отметить первую миграцию применённой, не выполняя:
+  `GetDBVersion` провайдера заводит `authz_schema_version`, затем
+  `INSERT INTO authz_schema_version (version_id, is_applied) VALUES (1, true)`;
+  таблицу версий руками не создавать (решение 4).
 - **Класс ошибки у sentinel ([ADR-0007](../docs/adr/0007-error-kind.md)).**
   Потребителю больше не нужна таблица перевода ошибок `authz`: `errs.KindOf`
   и `httperr` находят класс на самой sentinel. Страж

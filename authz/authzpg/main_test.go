@@ -40,12 +40,13 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// newStore — схема на тест плюс накат из schema.sql: тестируется артефакт,
-// который уедет в миграции потребителя, а не его копия в коде.
+// newStore — схема на тест плюс адаптер над ней. Схема накатывается каталогом
+// миграций, чтобы тестировался артефакт, который уедет раннеру потребителя, а
+// не его копия в коде.
 func newStore(t *testing.T) (*authzpg.Store, *pgxpool.Pool) {
 	t.Helper()
 	pool := newSchemaPool(t)
-	pgtest.Apply(t, pool, pgtest.GooseUp(t, schemaPath))
+	applyUp(t, pool)
 	return authzpg.New(pool), pool
 }
 
