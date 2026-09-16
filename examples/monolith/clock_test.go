@@ -8,6 +8,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/nrect/rebar/authz"
+	"github.com/nrect/rebar/authz/authzpg"
+	"github.com/nrect/rebar/entitlement"
+	"github.com/nrect/rebar/entitlement/entitlementpg"
+
 	"github.com/nrect/rebar/examples/monolith"
 )
 
@@ -86,6 +91,41 @@ func TestClock_HandlersTakeAppClock(t *testing.T) {
 	_, err := s.pool(t).Exec(t.Context(), "DELETE FROM shop_uploads WHERE object_key = $1", key)
 	require.NoError(t, err)
 	require.Equal(t, 1, s.runJob(t, "objectstore_collect"), "сирота старше MinAge по часам приложения")
+}
+
+// TestClock_ExpiryByAppClock — сроки выдачи и роли сверяются часами приложения:
+// их получили entitlement.Service и authzpg.Store. Срок — посередине между
+// настоящим временем и часами 2031 года: по часам приложения он истёк, по
+// настоящим нет, и от минуты прогона тест не зависит.
+func TestClock_ExpiryByAppClock(t *testing.T) {
+	s := newStand(t)
+	moment := time.Date(2031, time.March, 9, 2, 30, 15, 123456789, time.UTC)
+	s.app.SetClock(func() time.Time { return moment })
+	subject := registerAndConfirm(t, s)
+	signIn(t, s, subject)
+
+	realNow := time.Now().UTC()
+	until := realNow.Add(moment.Sub(realNow) / 2)
+
+	// entitlement.Service: запрос к lesson-03 — первый для субъекта, и снимок
+	// грузится на нём же, так что TTL снимка не спасает ни одну сторону.
+	require.NoError(t, entitlementpg.New(s.pool(t)).Grant(t.Context(), subject,
+		entitlement.Grant{ItemID: "lesson-03", ExpiresAt: &until}, realNow))
+	status, body := s.get(t, "/lesson/lesson-03")
+	require.Equal(t, http.StatusForbidden, status, "entitlement.Service: выдача lesson-03 до %s на часах %s не истекла: %s",
+		until.Format(time.RFC3339), moment.Format(time.RFC3339Nano), raw(body))
+	require.Equal(t, "item-not-open", body["slug"], "отказ по предмету, а не по праву")
+
+	// authzpg.Store: Assign переписывает срок бессрочной роли стенда, и
+	// покупатель до until — единственная роль субъекта.
+	require.NoError(t, authzpg.New(s.pool(t)).Assign(t.Context(), authzpg.Assignment{
+		Subject: authz.Subject{Realm: "shop", ID: subject.String()}, Role: "customer",
+		GrantedBy: "test", GrantedAt: realNow, ExpiresAt: &until,
+	}))
+	status, body = s.upload(t, "clock.png", pngBody())
+	require.Equal(t, http.StatusForbidden, status, "authzpg.Store: роль customer до %s на часах %s не истекла: %s",
+		until.Format(time.RFC3339), moment.Format(time.RFC3339Nano), raw(body))
+	require.Equal(t, "forbidden", body["slug"], "отказ по праву")
 }
 
 // inUTC — пояс сверяется указателем, а не именем: time.Local при TZ=UTC тоже
