@@ -41,7 +41,10 @@ func ApplyUp(tb testing.TB, pool *pgxpool.Pool, fsys fs.FS) {
 // идемпотентным (ADR-0011, уточнение 1), и повторный вызов обязан пройти.
 func ApplyDown(tb testing.TB, pool *pgxpool.Pool, fsys fs.FS) {
 	tb.Helper()
-	for _, m := range slices.Backward(catalog(tb, fsys)) {
+	files := catalog(tb, fsys)
+	// Не range slices.Backward: тело range-over-func — замыкание мимо Helper, и падение указало бы сюда, а не на строку теста.
+	slices.Reverse(files)
+	for _, m := range files {
 		execSection(tb, pool, m.name, GooseDownMarker, m.down)
 	}
 }
