@@ -44,12 +44,16 @@ func applyUp(t *testing.T, pool *pgxpool.Pool) {
 	}
 }
 
-// applyDown — секции Down по убыванию номера.
+// applyDown — секции Down по убыванию номера. Цикл по срезу, а не по
+// slices.Backward: тело range-over-func — замыкание без t.Helper, и падение
+// указывало бы сюда, а не на строку теста.
 //
 // TODO(ADR-0011): pgtest.ApplyDown после тега postgres.
 func applyDown(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
-	for _, name := range slices.Backward(catalog(t)) {
+	names := catalog(t)
+	slices.Reverse(names)
+	for _, name := range names {
 		pgtest.Apply(t, pool, gooseDown(t, name))
 	}
 }
