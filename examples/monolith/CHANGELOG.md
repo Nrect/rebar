@@ -8,6 +8,15 @@
 
 ### Changed
 
+- `App.SetClock` отдаёт те же часы каждому блоку со своими часами — `session`,
+  `mail`, `outbox` (Producer и Worker), `audit`, `entitlement`, `authzpg`,
+  `payment`, `objectstore.Collector`, `scheduler` (docs/CONSUMER.md, §8, п. 1);
+  после `Start` — паника. `TestClock_HandlersTakeAppClock` сверяет и моменты
+  блоков: токен и сессию, письмо, журнал, намерение, событие, книгу и выдачи,
+  outbox, штамп планировщика, сироту по `MinAge`. `TestClock_ExpiryByAppClock`
+  сверяет сроки: выдача `lesson-03` и роль покупателя со сроком посередине
+  между настоящим временем и часами приложения по часам приложения истекли —
+  403 `item-not-open` у `entitlement` и `forbidden` у `authzpg`.
 - **Схемы блоков — их `Migrations()` (ADR-0011).** Копии `00001_auth.sql` …
   `00007_entitlement.sql` удалены. В каталоге монолита только его таблицы:
   `00001_shop_init.sql` — `shop_users`, `shop_orders`, `shop_uploads`. Таблицы
@@ -128,6 +137,9 @@
 
 ### Added
 
+- `TestOpen_PinsUTC` сторожит `postgres.WithUTC` в `shoppg.Open`: DSN просит
+  `timezone=Asia/Kathmandu`, а пул отвечает `SHOW TimeZone` = UTC; тот же DSN
+  мимо `Open` — контроль, Asia/Kathmandu.
 - `TestSettlerCommitFailure_RollsBackGrants` и
   `TestRefundCommitFailure_KeepsGrants`: отложенный триггер на `outbox_messages`
   роняет COMMIT после всех шагов хука — выдача (и отзыв) прав, заказ и событие

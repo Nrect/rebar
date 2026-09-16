@@ -58,6 +58,7 @@ type App struct {
 	sessions *session.Service
 	cookies  authhttp.CookieConfig
 	guard    *authz.Authorizer
+	roles    *authzpg.Store
 	rights   *entitlement.Service
 	journal  *audit.Recorder
 
@@ -128,13 +129,29 @@ func New(ctx context.Context, cfg Config, log *slog.Logger, migrations fs.FS) (*
 	return a, nil
 }
 
-// SetClock подменяет часы приложения; только для тестов, до первого запроса.
-// nil — паника здесь, а не разыменование nil в ручке.
+// SetClock подменяет часы приложения и отдаёт ту же функцию каждому блоку со
+// своими часами (docs/CONSUMER.md, §8, п. 1); адаптеры берут момент параметром.
+// Только для тестов: до Start и до первого запроса. nil и вызов после Start —
+// паника здесь, а не гонка с задачами.
 func (a *App) SetClock(now func() time.Time) {
 	if now == nil {
 		panic("monolith.App.SetClock: now must not be nil")
 	}
+	// Порты заводит Start, и задачи после него уже читают часы.
+	if a.public != nil {
+		panic("monolith.App.SetClock: called after Start")
+	}
 	a.now = now
+	a.sessions.SetClock(now)
+	a.letters.SetClock(now)
+	a.producer.SetClock(now)
+	a.worker.SetClock(now)
+	a.journal.SetClock(now)
+	a.rights.SetClock(now)
+	a.roles.SetClock(now)
+	a.pay.SetClock(now)
+	a.collector.SetClock(now)
+	a.jobs.SetClock(now)
 }
 
 // startInfra — наблюдаемость, трекер и postgres: то, на чём стоит всё
@@ -334,8 +351,8 @@ func (a *App) startIdentity() {
 	// не по имени операции. Пустой — это NewRegistry(cfg, nil), а не nil:
 	// nil-реестр это забытая проводка, и New на нём паникует.
 	rights := authzConfig()
-	a.guard = authz.New(authzpg.New(a.db.Pool), rights, a.entitlementPolicy(),
-		authz.NewRegistry(rights, nil))
+	a.roles = authzpg.New(a.db.Pool)
+	a.guard = authz.New(a.roles, rights, a.entitlementPolicy(), authz.NewRegistry(rights, nil))
 }
 
 // entitlementPolicy — штатная точка подключения второй оси: роль даёт
