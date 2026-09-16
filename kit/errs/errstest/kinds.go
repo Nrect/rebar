@@ -21,6 +21,14 @@ var errsImportPath = reflect.TypeFor[errs.KindError]().PkgPath()
 // noKindDirective — отказ от класса с доводом, строкой над объявлением.
 const noKindDirective = "//errs:nokind"
 
+// Имена конструкторов, по которым узнаётся форма объявления. fnNew носят и
+// errors.New, и errs.New: разводит их пакет, а не имя.
+const (
+	fnNew    = "New"
+	fnErrorf = "Errorf"
+	fnKinded = "Kinded"
+)
+
 // Находки EveryErrorHasKind.
 const (
 	msgNoValue        = "объявлена без значения — класса нет"
@@ -41,34 +49,46 @@ type importNames struct {
 }
 
 func everyErrorHasKind(rep reporter, root string, allow []string) {
+	walkSentinelSpecs(rep, root, allow, func(file *ast.File) sentinelVisitor {
+		imports := importNamesOf(file)
+		return func(fset *token.FileSet, rel string, gen *ast.GenDecl, spec *ast.ValueSpec) {
+			imports.reportSpec(rep, fset, rel, gen, spec)
+		}
+	})
+}
+
+// sentinelVisitor — вердикт стража об одном объявлении var.
+type sentinelVisitor func(fset *token.FileSet, rel string, gen *ast.GenDecl, spec *ast.ValueSpec)
+
+// walkSentinelSpecs — package-level var под root: обход, разбор и цикл по
+// объявлениям общие у стражей sentinel'ов, свой у каждого только вердикт. Две
+// копии этого цикла были бы двумя способами разойтись в том, что считается
+// объявлением sentinel. newVisitor зовётся раз на файл: имя пакета и имена
+// импортов вердикт получает до того, как увидит первое объявление.
+func walkSentinelSpecs(rep reporter, root string, allow []string, newVisitor func(file *ast.File) sentinelVisitor) {
 	walkErr := walkGoFiles(root, allow, func(name, rel string) error {
-		return checkFileKinds(rep, name, rel)
+		fset := token.NewFileSet()
+		file, err := parser.ParseFile(fset, name, nil, parser.ParseComments|parser.SkipObjectResolution)
+		if err != nil {
+			return err
+		}
+		visit := newVisitor(file)
+		for _, decl := range file.Decls {
+			gen, ok := decl.(*ast.GenDecl)
+			if !ok || gen.Tok != token.VAR {
+				continue
+			}
+			for _, spec := range gen.Specs {
+				if values, isValue := spec.(*ast.ValueSpec); isValue {
+					visit(fset, rel, gen, values)
+				}
+			}
+		}
+		return nil
 	})
 	if walkErr != nil {
 		rep.Fatalf("errstest: обход %s: %v", root, walkErr)
 	}
-}
-
-// checkFileKinds — экспортируемые package-level var одного файла.
-func checkFileKinds(rep reporter, name, rel string) error {
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, name, nil, parser.ParseComments|parser.SkipObjectResolution)
-	if err != nil {
-		return err
-	}
-	imports := importNamesOf(file)
-	for _, decl := range file.Decls {
-		gen, ok := decl.(*ast.GenDecl)
-		if !ok || gen.Tok != token.VAR {
-			continue
-		}
-		for _, spec := range gen.Specs {
-			if values, isValue := spec.(*ast.ValueSpec); isValue {
-				imports.reportSpec(rep, fset, rel, gen, values)
-			}
-		}
-	}
-	return nil
 }
 
 // reportSpec — sentinel'ы одного объявления: ErrA, ErrB = a, b делится по
@@ -158,10 +178,10 @@ func (im importNames) callVerdict(call *ast.CallExpr) (problem string, known boo
 	if !ok {
 		return msgUnknownForm, false
 	}
-	if pkg == im.errorsPkg && fn == "New" {
+	if pkg == im.errorsPkg && fn == fnNew {
 		return msgErrorsNew, true
 	}
-	if pkg == im.fmtPkg && fn == "Errorf" {
+	if pkg == im.fmtPkg && fn == fnErrorf {
 		return errorfVerdict(call)
 	}
 	if pkg == im.errsPkg {
@@ -173,27 +193,56 @@ func (im importNames) callVerdict(call *ast.CallExpr) (problem string, known boo
 // errorfVerdict — fmt.Errorf с %w — обёртка: класс у обёрнутой ошибки, её
 // сторожит собственный пакет. Без %w класса нет.
 func errorfVerdict(call *ast.CallExpr) (problem string, known bool) {
-	if len(call.Args) == 0 {
-		return msgUnknownForm, false
-	}
-	format, ok := call.Args[0].(*ast.BasicLit)
+	format, ok := argAt(call, 0)
 	if !ok {
 		return msgUnknownForm, false
 	}
-	text, err := strconv.Unquote(format.Value)
-	if err != nil {
+	text, isLiteral := literalText(format)
+	if !isLiteral {
 		return msgUnknownForm, false
 	}
-	if strings.Contains(strings.ReplaceAll(text, "%%", ""), "%w") {
+	if wrapsCause(text) {
 		return "", true
 	}
 	return msgErrorfNoWrap, true
 }
 
+// wrapsCause — формат fmt.Errorf оборачивает причину: %w, а не экранированный
+// %%w. Одно определение на оба стража: класс такой ошибки берётся у обёрнутой,
+// и текст её Error() тоже начинается с текста обёрнутой.
+func wrapsCause(format string) bool {
+	return strings.Contains(strings.ReplaceAll(format, "%%", ""), "%w")
+}
+
+// argAt — i-й аргумент вызова; false — аргументов меньше. Страж читает
+// исходник без проверки типов, поэтому короткий вызов не обязан существовать.
+func argAt(call *ast.CallExpr, i int) (ast.Expr, bool) {
+	if i >= len(call.Args) {
+		return nil, false
+	}
+	return call.Args[i], true
+}
+
+// literalText — текст строкового литерала; false — выражение собрано не
+// литералом (константа, склейка, вызов). Отдельной проверки token.STRING нет:
+// Unquote отвергает все прочие литералы, кроме рунного, а рунным сообщение
+// объявить нельзя — такой файл не соберётся, и гейт покраснеет до стража.
+func literalText(expr ast.Expr) (text string, ok bool) {
+	lit, isLit := ast.Unparen(expr).(*ast.BasicLit)
+	if !isLit {
+		return "", false
+	}
+	unquoted, err := strconv.Unquote(lit.Value)
+	if err != nil {
+		return "", false
+	}
+	return unquoted, true
+}
+
 // errsVerdict — Kinded и New несут класс первым аргументом, конструкторы-удобства
 // — своим именем.
 func errsVerdict(call *ast.CallExpr, fn, errsPkg string) (problem string, known bool) {
-	if fn == "Kinded" || fn == "New" {
+	if fn == fnKinded || fn == fnNew {
 		return kindArgVerdict(call, errsPkg), true
 	}
 	kind, ok := constructorKind(fn)
