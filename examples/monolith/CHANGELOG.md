@@ -197,6 +197,9 @@
   `scripts/timeguard.allow`. Держат `TestClock_HandlersTakeAppClock` (часы в
   2031 году, моменты в базе — `Equal` до микросекунд),
   `TestApp_SetClockPanicsOnNil` и `TestNew_TimeInUTC`.
+- `occurred_at` из тела вебхука приводится к UTC там, где разобран
+  (docs/CORRECTNESS.md, §8, п. 2); в окно его по-прежнему зажимает `payment`.
+  Держит `TestProviderEvent_MomentInUTC`.
 - SIGTERM отменял контекст фоновых задач: прогон обрывался посреди работы — у
   `mail` письмо посреди отправки оставалось в `sending`, а после `Lease` его
   цену выбирал `Uncertain`. HTTP гасился одновременно с отменой задач, а `Stop`

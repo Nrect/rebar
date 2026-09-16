@@ -146,7 +146,9 @@ func (e providerEvent) event(received time.Time) payment.Event {
 		// uuid.Nil означает орфана: событие всё равно будет записано.
 		intent = uuid.Nil
 	}
-	at := e.At
+	// Чужой момент — в UTC там, где разобран; в окно его зажимает payment
+	// (docs/CORRECTNESS.md, §8).
+	at := e.At.UTC()
 	if at.IsZero() {
 		at = received
 	}
