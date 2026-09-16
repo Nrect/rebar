@@ -1,6 +1,7 @@
 package authtest
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -63,6 +64,49 @@ var sessionScenarios = []sessionScenario{
 	{name: "Delete идемпотентен", run: suiteSessionDeleteIsIdempotent},
 	{name: "DeleteOfSubject гасит все сессии субъекта и только их", run: suiteSessionDeleteOfSubject},
 	{name: "DeleteExpired считает оба срока", run: suiteSessionDeleteExpired},
+	{name: "отменённый контекст — ErrUnavailable", run: suiteSessionCanceledContext},
+}
+
+// ОТМЕНЁННЫЙ КОНТЕКСТ — ОТКАЗ, А НЕ ТИХИЙ УСПЕХ. У authpg отмена не доезжает
+// до базы: запрос не уходит, и наружу идёт auth.ErrUnavailable с
+// context.Canceled в цепочке. Реализация, не глядящая на контекст, зеленила бы
+// у потребителя отмену запроса — «сессия выдана» там, где в проде строки нет.
+func suiteSessionCanceledContext(t *testing.T, store session.Sessions) {
+	t.Helper()
+	alive := SuiteSession(suiteNow())
+	mustInsert(t, store, alive)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	checkCanceled(t, "Insert", store.Insert(ctx, SuiteSession(suiteNow(), func(s *session.Session) {
+		s.TokenHash = suiteHash("canceled")
+	})))
+	_, err := store.ByHash(ctx, SuiteRealm, alive.TokenHash)
+	checkCanceled(t, "ByHash", err)
+	checkCanceled(t, "Touch", store.Touch(ctx, SuiteRealm, alive.TokenHash, suiteNow(), suiteNow()))
+	checkCanceled(t, "Delete", store.Delete(ctx, SuiteRealm, alive.TokenHash))
+	_, err = store.DeleteOfSubject(ctx, SuiteRealm, alive.SubjectID)
+	checkCanceled(t, "DeleteOfSubject", err)
+	_, err = store.DeleteExpired(ctx, SuiteRealm, suiteNow().Add(time.Hour))
+	checkCanceled(t, "DeleteExpired", err)
+
+	// Отмена ничего не записала и ничего не погасила.
+	if _, err = store.ByHash(t.Context(), SuiteRealm, alive.TokenHash); err != nil {
+		t.Errorf("сессия обязана уцелеть после отменённых вызовов: %v", err)
+	}
+}
+
+// checkCanceled — обе стороны сразу: класс отказа и причина. Без причины сошёл
+// бы любой отказ, без класса потребитель получил бы 500 вместо 503.
+func checkCanceled(t *testing.T, op string, err error) {
+	t.Helper()
+	if !errors.Is(err, auth.ErrUnavailable) {
+		t.Errorf("%s на отменённом контексте: %v, ожидалась auth.ErrUnavailable", op, err)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("%s на отменённом контексте: %v, ожидался context.Canceled в цепочке", op, err)
+	}
 }
 
 func suiteSessionRoundTrip(t *testing.T, store session.Sessions) {
@@ -236,6 +280,30 @@ var attemptScenarios = []attemptScenario{
 	{name: "окно считается включительно по since", run: suiteAttemptWindow},
 	{name: "чужой ключ и чужой реалм в счёт не идут", run: suiteAttemptIsolation},
 	{name: "Purge убирает старое и возвращает число", run: suiteAttemptPurge},
+	{name: "отменённый контекст — ErrUnavailable", run: suiteAttemptCanceledContext},
+}
+
+// То же у счётчика попыток: отменённый Record не считает попытку, отменённый
+// Count не отвечает нулём. Ноль на отмене означал бы «попыток не было», то
+// есть снятую блокировку перебора.
+func suiteAttemptCanceledContext(t *testing.T, store session.Attempts) {
+	t.Helper()
+	now := suiteNow()
+	const key = "canceled@example.invalid"
+	mustRecord(t, store, SuiteAttempt(key, now))
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	_, err := store.Count(ctx, SuiteRealm, key, now.Add(-time.Hour))
+	checkCanceled(t, "Count", err)
+	checkCanceled(t, "Record", store.Record(ctx, SuiteAttempt(key, now)))
+	_, err = store.Purge(ctx, SuiteRealm, now.Add(time.Hour))
+	checkCanceled(t, "Purge", err)
+
+	if got := mustCount(t, store, SuiteRealm, key, now.Add(-time.Hour)); got != 1 {
+		t.Errorf("после отменённых вызовов попыток %d, ожидалась 1", got)
+	}
 }
 
 func suiteAttemptUnknownLogin(t *testing.T, store session.Attempts) {

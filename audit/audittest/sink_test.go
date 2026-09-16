@@ -1,6 +1,7 @@
 package audittest_test
 
 import (
+	"context"
 	"sync"
 	"testing"
 	"time"
@@ -78,6 +79,24 @@ func TestSink_InjectedErrorIsUnavailable(t *testing.T) {
 	assert.Equal(t, errs.KindUnavailable, errs.KindOf(err), "класс ошибки: %v", err)
 	require.ErrorIs(t, err, audit.ErrUnavailable)
 	require.ErrorIs(t, err, audittest.ErrSinkFailed, "поломку стенда отличает своя sentinel")
+	assert.Zero(t, sink.Count())
+}
+
+// Отменённый контекст двойник замечает так же, как auditpg: класс 503,
+// audit.ErrUnavailable и context.Canceled в цепочке, — и записи не оставляет.
+// Двойник, не глядящий на контекст, зеленил бы у потребителя запись журнала
+// «после остановки», которой в проде не случится.
+func TestSink_CancelledContextIsUnavailable(t *testing.T) {
+	t.Parallel()
+
+	sink := audittest.NewSink()
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	err := sink.Write(ctx, event("a", audit.OutcomeSuccess))
+	assert.Equal(t, errs.KindUnavailable, errs.KindOf(err), "класс ошибки: %v", err)
+	require.ErrorIs(t, err, audit.ErrUnavailable)
+	require.ErrorIs(t, err, context.Canceled, "причина — отмена вызывающего")
 	assert.Zero(t, sink.Count())
 }
 

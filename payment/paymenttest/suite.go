@@ -1,6 +1,7 @@
 package paymenttest
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"slices"
@@ -80,6 +81,7 @@ func RunStoreSuite(t *testing.T, newStore NewStore) {
 		{"возвраты складываются до нетто", suiteRefunds},
 		{"очередь сверки идёт по курсору", suiteQueue},
 		{"непозитивная пачка — ошибка программиста", suiteLimits},
+		{"отменённый контекст — ErrUnavailable", suiteCanceledContext},
 	}
 	for _, sc := range scenarios {
 		t.Run(sc.name, func(t *testing.T) {
@@ -454,4 +456,57 @@ func suiteLimits(t *testing.T, store payment.Store, _ *Hook) {
 		_, err = store.Drift(t.Context(), now, limit)
 		errIs(t, err, payment.ErrBadTransition, fmt.Sprintf("Drift с лимитом %d", limit))
 	}
+}
+
+// ОТМЕНЁННЫЙ КОНТЕКСТ — ОТКАЗ, А НЕ ТИХИЙ УСПЕХ. У paymentpg отмена не
+// доезжает до базы: запрос не уходит, и наружу идёт payment.ErrUnavailable с
+// context.Canceled в цепочке. Реализация, не глядящая на контекст, зеленила бы
+// у потребителя отменённый вебхук — то есть «деньги учтены» там, где в проде
+// не записано ничего.
+func suiteCanceledContext(t *testing.T, store payment.Store, _ *Hook) {
+	t.Helper()
+
+	in := suiteIntent()
+	noErr(t, store.CreateIntent(t.Context(), in), "создание намерения")
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	canceled(t, "CreateIntent", store.CreateIntent(ctx, suiteIntent()))
+	_, _, err := store.IntentByKey(ctx, in.PayerID, in.IdempotencyKey)
+	canceled(t, "IntentByKey", err)
+	_, _, err = store.IntentByID(ctx, in.ID)
+	canceled(t, "IntentByID", err)
+	_, err = store.Transition(ctx, payment.TransitionRequest{
+		IntentID: in.ID, ExpectFrom: suiteExpectFrom(payment.StatusCanceled),
+		To: payment.StatusCanceled, Now: suiteNow(),
+	})
+	canceled(t, "Transition", err)
+	_, err = store.ApplyEvent(ctx, payment.ApplyEventRequest{
+		IntentID: in.ID, ExpectFrom: suiteExpectFrom(payment.StatusPending),
+		To: payment.StatusPending, Now: suiteNow(),
+	})
+	canceled(t, "ApplyEvent", err)
+	_, err = store.Ledger(ctx, in.ID)
+	canceled(t, "Ledger", err)
+	_, err = store.StalePending(ctx, suiteNow(), payment.IntentCursor{}, 10)
+	canceled(t, "StalePending", err)
+	_, err = store.CountStuckPending(ctx, suiteNow())
+	canceled(t, "CountStuckPending", err)
+	_, err = store.Drift(ctx, suiteNow(), 10)
+	canceled(t, "Drift", err)
+
+	// Отмена ничего не записала: намерение осталось в исходном статусе.
+	stored, found, err := store.IntentByID(t.Context(), in.ID)
+	noErr(t, err, "чтение после отмены")
+	isTrue(t, found, "намерение пропало после отменённых вызовов")
+	equal(t, stored.Status, in.Status, "статус после отменённых вызовов")
+}
+
+// canceled — обе стороны сразу: класс отказа и причина. Без причины сошёл бы
+// любой отказ, без класса потребитель получил бы 500 вместо 503.
+func canceled(t *testing.T, op string, err error) {
+	t.Helper()
+	errIs(t, err, payment.ErrUnavailable, op+" на отменённом контексте")
+	errIs(t, err, context.Canceled, op+" на отменённом контексте: причина")
 }

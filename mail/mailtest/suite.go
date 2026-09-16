@@ -2,6 +2,8 @@ package mailtest
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"slices"
 	"testing"
 	"time"
@@ -43,6 +45,43 @@ var storeScenarios = []storeScenario{
 	{name: "Purge сравнивает по микросекундам timestamptz", run: suitePurgeInMicroseconds},
 	{name: "часы позади строк: возраст ноль, а не отрицательный", run: suiteStatsClockBehindRows},
 	{name: "Purge при равных updated_at удаляет первые по id", run: suitePurgeTiesByID},
+	{name: "отменённый контекст — ErrUnavailable", run: suiteCanceledContext},
+}
+
+// ОТМЕНЁННЫЙ КОНТЕКСТ — ОШИБКА, А НЕ ТИХИЙ УСПЕХ. У mailpg отмена не доезжает
+// до базы: запрос не уходит, и наружу идёт mail.ErrUnavailable с
+// context.Canceled в цепочке. Реализация, не глядящая на контекст, зеленила бы
+// у потребителя отмену запроса, которая в проде красная.
+func suiteCanceledContext(t *testing.T, store mail.Store) {
+	t.Helper()
+	env := mustEnqueue(t, store, suiteEnvelope(suiteMoment(0)))
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	_, err := store.Enqueue(ctx, suiteEnvelope(suiteMoment(0)))
+	checkCanceled(t, "Enqueue", err)
+	_, err = store.Claim(ctx, suiteMoment(0), suiteLease, 10)
+	checkCanceled(t, "Claim", err)
+	checkCanceled(t, "Finish", store.Finish(ctx, mail.FinishRequest{
+		ID: env.ID, Outcome: mail.FinishSent, Now: suiteMoment(0), Transport: suiteTransport,
+	}))
+	_, err = store.Stats(ctx, suiteMoment(0))
+	checkCanceled(t, "Stats", err)
+	_, err = store.Purge(ctx, suiteMoment(time.Hour), 10)
+	checkCanceled(t, "Purge", err)
+}
+
+// checkCanceled — обе стороны сразу: класс отказа и причина. Без причины сошёл
+// бы любой отказ, без класса потребитель получил бы 500 вместо 503.
+func checkCanceled(t *testing.T, op string, err error) {
+	t.Helper()
+	if !errors.Is(err, mail.ErrUnavailable) {
+		t.Errorf("%s на отменённом контексте: %v, ожидалась mail.ErrUnavailable", op, err)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("%s на отменённом контексте: %v, ожидался context.Canceled в цепочке", op, err)
+	}
 }
 
 // PURGE ПРИ РАВНЫХ updated_at УДАЛЯЕТ ПЕРВЫЕ ПО id. Лимит меньше группы равных:
@@ -60,7 +99,7 @@ func suitePurgeTiesByID(t *testing.T, store mail.Store) {
 	mustClaim(t, store, sentAt)
 	slices.SortFunc(rows, func(a, b mail.Envelope) int { return bytes.Compare(b.ID[:], a.ID[:]) })
 	for _, row := range rows {
-		mustFinish(t, store, mail.FinishRequest{ID: row.ID, Outcome: mail.FinishSent, Now: sentAt, Transport: "suite"})
+		mustFinish(t, store, mail.FinishRequest{ID: row.ID, Outcome: mail.FinishSent, Now: sentAt, Transport: suiteTransport})
 	}
 
 	deleted, err := store.Purge(t.Context(), sentAt.Add(time.Microsecond), 3)
@@ -178,7 +217,7 @@ func suitePurgeInMicroseconds(t *testing.T, store mail.Store) {
 	sentAt := suiteMoment(0)
 	env := mustEnqueue(t, store, suiteEnvelope(sentAt))
 	mustClaim(t, store, sentAt)
-	mustFinish(t, store, mail.FinishRequest{ID: env.ID, Outcome: mail.FinishSent, Now: sentAt, Transport: "suite"})
+	mustFinish(t, store, mail.FinishRequest{ID: env.ID, Outcome: mail.FinishSent, Now: sentAt, Transport: suiteTransport})
 
 	for _, tt := range []struct {
 		before time.Time
@@ -200,6 +239,9 @@ func suitePurgeInMicroseconds(t *testing.T, store mail.Store) {
 
 // suiteLease — аренда набора.
 const suiteLease = time.Minute
+
+// suiteTransport — имя транспорта в исходах набора.
+const suiteTransport = "suite"
 
 // suiteEnvelope — конверт в том виде, в каком его отдаёт mail.Service.Prepare.
 func suiteEnvelope(now time.Time, mods ...func(*mail.Envelope)) mail.Envelope {

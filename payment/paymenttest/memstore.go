@@ -162,6 +162,30 @@ func storeError(op string, err error) error {
 	return fmt.Errorf("%w: paymenttest: %s: %w", payment.ErrUnavailable, op, err)
 }
 
+// fail — общий отказ методов порта; зовётся под захваченным мьютексом. Оба
+// отказа приходят в payment.ErrUnavailable, как у paymentpg.
+func (m *MemStore) fail(ctx context.Context, op string) error {
+	if err := m.canceled(ctx, op); err != nil {
+		return err
+	}
+	if m.err != nil {
+		return storeError(op, m.err)
+	}
+	return nil
+}
+
+// canceled — отменённый контекст так, как его отдаёт paymentpg: транзакция не
+// начинается, и наружу идёт payment.ErrUnavailable с причиной в цепочке
+// (ADR-0007, «Двойники», «Отменённый контекст — как у адаптера»). Стоит там,
+// где у адаптера первый поход в базу: то, что paymentpg решает до запроса
+// (форма возврата, размер пачки), отмена не перебивает.
+func (m *MemStore) canceled(ctx context.Context, op string) error {
+	if err := ctx.Err(); err != nil {
+		return storeError(op, err)
+	}
+	return nil
+}
+
 func (m *MemStore) put(in payment.Intent) {
 	in.Items = slices.Clone(in.Items)
 	m.intents[in.ID] = in
@@ -175,12 +199,12 @@ func (m *MemStore) put(in payment.Intent) {
 
 // CreateIntent вставляет намерение вместе с составом и держит оба ограничения
 // схемы, различая их: уникальность ключа — это повтор, занятая ссылка — отказ.
-func (m *MemStore) CreateIntent(_ context.Context, in payment.Intent) error {
+func (m *MemStore) CreateIntent(ctx context.Context, in payment.Intent) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.calls["CreateIntent"]++
-	if m.err != nil {
-		return storeError("create intent", m.err)
+	if err := m.fail(ctx, "create intent"); err != nil {
+		return err
 	}
 	key := keyOf(in.PayerID, in.IdempotencyKey)
 	if m.raceOnce {
@@ -205,13 +229,13 @@ func (m *MemStore) CreateIntent(_ context.Context, in payment.Intent) error {
 // IntentByKey — проба идемпотентности. Ключ уже нормализован сервисом; двойник
 // его намеренно НЕ трогает, иначе тест на единственную точку нормализации
 // проходил бы за счёт второй такой точки.
-func (m *MemStore) IntentByKey(_ context.Context, payerID uuid.UUID, key string,
+func (m *MemStore) IntentByKey(ctx context.Context, payerID uuid.UUID, key string,
 ) (payment.Intent, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.calls["IntentByKey"]++
-	if m.err != nil {
-		return payment.Intent{}, false, storeError("intent by key", m.err)
+	if err := m.fail(ctx, "intent by key"); err != nil {
+		return payment.Intent{}, false, err
 	}
 	id, ok := m.byKey[keyOf(payerID, key)]
 	if !ok {
@@ -227,12 +251,12 @@ func (m *MemStore) IntentByKey(_ context.Context, payerID uuid.UUID, key string,
 }
 
 // IntentByID — чтение по id.
-func (m *MemStore) IntentByID(_ context.Context, id uuid.UUID) (payment.Intent, bool, error) {
+func (m *MemStore) IntentByID(ctx context.Context, id uuid.UUID) (payment.Intent, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.calls["IntentByID"]++
-	if m.err != nil {
-		return payment.Intent{}, false, storeError("intent by id", m.err)
+	if err := m.fail(ctx, "intent by id"); err != nil {
+		return payment.Intent{}, false, err
 	}
 	if _, ok := m.intents[id]; !ok {
 		return payment.Intent{}, false, nil
@@ -249,13 +273,13 @@ func (m *MemStore) snapshot(id uuid.UUID) payment.Intent {
 }
 
 // Transition — CAS смены статуса без движения денег.
-func (m *MemStore) Transition(_ context.Context, req payment.TransitionRequest,
+func (m *MemStore) Transition(ctx context.Context, req payment.TransitionRequest,
 ) (payment.TransitionResult, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.calls["Transition"]++
-	if m.err != nil {
-		return payment.TransitionResult{}, storeError("transition", m.err)
+	if err := m.fail(ctx, "transition"); err != nil {
+		return payment.TransitionResult{}, err
 	}
 	in, ok := m.intents[req.IntentID]
 	if !ok {
@@ -282,13 +306,13 @@ func (m *MemStore) Transition(_ context.Context, req payment.TransitionRequest,
 
 // ApplyEvent — дедуп, предикат, книга и хук: тот же порядок, что обязан быть в
 // одной транзакции адаптера.
-func (m *MemStore) ApplyEvent(_ context.Context, req payment.ApplyEventRequest,
+func (m *MemStore) ApplyEvent(ctx context.Context, req payment.ApplyEventRequest,
 ) (payment.ApplyEventResult, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.calls["ApplyEvent"]++
-	if m.err != nil {
-		return payment.ApplyEventResult{}, storeError("apply event", m.err)
+	if err := m.fail(ctx, "apply event"); err != nil {
+		return payment.ApplyEventResult{}, err
 	}
 
 	ek := eventKey(req.Event)
@@ -346,7 +370,7 @@ func (m *MemStore) ApplyEvent(_ context.Context, req payment.ApplyEventRequest,
 }
 
 // ApplyRefund — компенсирующая запись с потолком Σrefund ≤ capture.
-func (m *MemStore) ApplyRefund(_ context.Context, req payment.ApplyRefundRequest,
+func (m *MemStore) ApplyRefund(ctx context.Context, req payment.ApplyRefundRequest,
 ) (payment.ApplyRefundResult, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -354,7 +378,11 @@ func (m *MemStore) ApplyRefund(_ context.Context, req payment.ApplyRefundRequest
 	if m.err != nil {
 		return payment.ApplyRefundResult{}, storeError("apply refund", m.err)
 	}
+	// Форма запроса — раньше отмены: paymentpg проверяет её до транзакции.
 	if err := checkRefundShape(req); err != nil {
+		return payment.ApplyRefundResult{}, err
+	}
+	if err := m.canceled(ctx, "apply refund"); err != nil {
 		return payment.ApplyRefundResult{}, err
 	}
 	if m.refundTooLargeOnce {
@@ -394,12 +422,12 @@ func (m *MemStore) ApplyRefund(_ context.Context, req payment.ApplyRefundRequest
 }
 
 // Ledger — записи намерения в порядке вставки.
-func (m *MemStore) Ledger(_ context.Context, intentID uuid.UUID) ([]payment.LedgerEntry, error) {
+func (m *MemStore) Ledger(ctx context.Context, intentID uuid.UUID) ([]payment.LedgerEntry, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.calls["Ledger"]++
-	if m.err != nil {
-		return nil, storeError("ledger", m.err)
+	if err := m.fail(ctx, "ledger"); err != nil {
+		return nil, err
 	}
 	return m.ledgerOf(intentID), nil
 }
@@ -421,7 +449,7 @@ func (m *MemStore) ledgerOf(intentID uuid.UUID) []payment.LedgerEntry {
 // прямо в обходе карты, отдавал бы случайное подмножество очереди в правильном
 // порядке — то есть изображал бы справедливость обхода, которой у SQL-очереди
 // нет, и скрывал бы голодание хвоста, ради проверки которого он и нужен.
-func (m *MemStore) StalePending(_ context.Context, olderThan time.Time,
+func (m *MemStore) StalePending(ctx context.Context, olderThan time.Time,
 	after payment.IntentCursor, limit int,
 ) ([]payment.Intent, error) {
 	m.mu.Lock()
@@ -430,7 +458,12 @@ func (m *MemStore) StalePending(_ context.Context, olderThan time.Time,
 	if m.err != nil {
 		return nil, storeError("stale pending", m.err)
 	}
+	// Размер пачки — раньше отмены: paymentpg отвергает непозитивную пачку до
+	// запроса, то есть отмены на ней не видит.
 	if err := checkLimit("stale pending", limit); err != nil {
+		return nil, err
+	}
+	if err := m.canceled(ctx, "stale pending"); err != nil {
 		return nil, err
 	}
 	queue := make([]payment.Intent, 0, len(m.intents))
@@ -448,12 +481,12 @@ func (m *MemStore) StalePending(_ context.Context, olderThan time.Time,
 // Считает НЕ через StalePending: у той есть потолок пачки, и двойник,
 // делегировавший счёт ей, скрыл бы ровно ту ошибку, ради которой в порту заведён
 // отдельный метод — gauge, упирающийся в размер пачки.
-func (m *MemStore) CountStuckPending(_ context.Context, olderThan time.Time) (int64, error) {
+func (m *MemStore) CountStuckPending(ctx context.Context, olderThan time.Time) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.calls["CountStuckPending"]++
-	if m.err != nil {
-		return 0, storeError("count stuck pending", m.err)
+	if err := m.fail(ctx, "count stuck pending"); err != nil {
+		return 0, err
 	}
 	var n int64
 	for _, in := range m.intents {
@@ -465,14 +498,18 @@ func (m *MemStore) CountStuckPending(_ context.Context, olderThan time.Time) (in
 }
 
 // Drift — то, что положил тест (SetDriftRecords).
-func (m *MemStore) Drift(_ context.Context, _ time.Time, limit int) ([]payment.DriftRecord, error) {
+func (m *MemStore) Drift(ctx context.Context, _ time.Time, limit int) ([]payment.DriftRecord, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.calls["Drift"]++
 	if m.err != nil {
 		return nil, storeError("drift", m.err)
 	}
+	// Размер пачки — раньше отмены, как у paymentpg (см. StalePending).
 	if err := checkLimit("drift", limit); err != nil {
+		return nil, err
+	}
+	if err := m.canceled(ctx, "drift"); err != nil {
 		return nil, err
 	}
 	return slices.Clone(m.drift[:min(limit, len(m.drift))]), nil

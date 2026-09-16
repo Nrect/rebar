@@ -28,6 +28,17 @@ func storeError(op string, err error) error {
 	return fmt.Errorf("%w: authtest: %s: %w", auth.ErrUnavailable, op, err)
 }
 
+// canceled — отменённый контекст так, как его отдаёт authpg: запрос не уходит,
+// и наружу идёт auth.ErrUnavailable с причиной в цепочке (ADR-0007,
+// «Двойники», «Отменённый контекст — как у адаптера»). Общая для обоих
+// двойников хранилища: у authpg оба порта ведёт один Store.
+func canceled(ctx context.Context, op string) error {
+	if err := ctx.Err(); err != nil {
+		return storeError(op, err)
+	}
+	return nil
+}
+
 // MemSessions — двойник порта session.Sessions.
 //
 // МОДЕЛИРУЕТ ИНВАРИАНТЫ, А НЕ ЗАПОМИНАЕТ ВЫЗОВЫ: хэш уникален, реалм входит в
@@ -79,12 +90,15 @@ func (m *MemSessions) Len() int {
 }
 
 // Insert кладёт сессию; повтор хэша — ErrSessionExists.
-func (m *MemSessions) Insert(_ context.Context, s session.Session) error {
+func (m *MemSessions) Insert(ctx context.Context, s session.Session) error {
 	m.Hit("Insert")
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
 		return storeError("insert session", m.err)
+	}
+	if err := canceled(ctx, "insert session"); err != nil {
+		return err
 	}
 	key := sessionKey{realm: s.Realm, hash: s.TokenHash}
 	if _, ok := m.rows[key]; ok {
@@ -98,12 +112,15 @@ func (m *MemSessions) Insert(_ context.Context, s session.Session) error {
 }
 
 // ByHash — сессия по хэшу; session.ErrNoSession, если строки нет.
-func (m *MemSessions) ByHash(_ context.Context, realm auth.Realm, hash string) (session.Session, error) {
+func (m *MemSessions) ByHash(ctx context.Context, realm auth.Realm, hash string) (session.Session, error) {
 	m.Hit("ByHash")
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
 		return session.Session{}, storeError("select session", m.err)
+	}
+	if err := canceled(ctx, "select session"); err != nil {
+		return session.Session{}, err
 	}
 	s, ok := m.rows[sessionKey{realm: realm, hash: hash}]
 	if !ok {
@@ -114,7 +131,7 @@ func (m *MemSessions) ByHash(_ context.Context, realm auth.Realm, hash string) (
 
 // Touch двигает last_seen_at и скользящий срок. Абсолютный не трогается: его
 // продление сделало бы SessionTTL необязательным.
-func (m *MemSessions) Touch(_ context.Context, realm auth.Realm, hash string,
+func (m *MemSessions) Touch(ctx context.Context, realm auth.Realm, hash string,
 	seenAt, idleExpiresAt time.Time,
 ) error {
 	m.Hit("Touch")
@@ -125,6 +142,9 @@ func (m *MemSessions) Touch(_ context.Context, realm auth.Realm, hash string,
 	}
 	if m.touchErr != nil {
 		return storeError("touch session", m.touchErr)
+	}
+	if err := canceled(ctx, "touch session"); err != nil {
+		return err
 	}
 	key := sessionKey{realm: realm, hash: hash}
 	s, ok := m.rows[key]
@@ -137,38 +157,44 @@ func (m *MemSessions) Touch(_ context.Context, realm auth.Realm, hash string,
 }
 
 // Delete гасит сессию; отсутствие строки — не ошибка (выход идемпотентен).
-func (m *MemSessions) Delete(_ context.Context, realm auth.Realm, hash string) error {
+func (m *MemSessions) Delete(ctx context.Context, realm auth.Realm, hash string) error {
 	m.Hit("Delete")
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
 		return storeError("delete session", m.err)
 	}
+	if err := canceled(ctx, "delete session"); err != nil {
+		return err
+	}
 	delete(m.rows, sessionKey{realm: realm, hash: hash})
 	return nil
 }
 
 // DeleteOfSubject гасит все сессии субъекта в реалме.
-func (m *MemSessions) DeleteOfSubject(_ context.Context, realm auth.Realm, subjectID uuid.UUID) (int, error) {
+func (m *MemSessions) DeleteOfSubject(ctx context.Context, realm auth.Realm, subjectID uuid.UUID) (int, error) {
 	m.Hit("DeleteOfSubject")
-	return m.deleteWhere("delete sessions of subject", func(s session.Session) bool {
+	return m.deleteWhere(ctx, "delete sessions of subject", func(s session.Session) bool {
 		return s.Realm == realm && s.SubjectID == subjectID
 	})
 }
 
 // DeleteExpired убирает истёкшие ПО ЛЮБОМУ из двух сроков.
-func (m *MemSessions) DeleteExpired(_ context.Context, realm auth.Realm, now time.Time) (int, error) {
+func (m *MemSessions) DeleteExpired(ctx context.Context, realm auth.Realm, now time.Time) (int, error) {
 	m.Hit("DeleteExpired")
-	return m.deleteWhere("delete expired sessions", func(s session.Session) bool {
+	return m.deleteWhere(ctx, "delete expired sessions", func(s session.Session) bool {
 		return s.Realm == realm && (!now.Before(s.ExpiresAt) || !now.Before(s.IdleExpiresAt))
 	})
 }
 
-func (m *MemSessions) deleteWhere(op string, match func(session.Session) bool) (int, error) {
+func (m *MemSessions) deleteWhere(ctx context.Context, op string, match func(session.Session) bool) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
 		return 0, storeError(op, m.err)
+	}
+	if err := canceled(ctx, op); err != nil {
+		return 0, err
 	}
 	var doomed []sessionKey
 	for key, s := range m.rows {

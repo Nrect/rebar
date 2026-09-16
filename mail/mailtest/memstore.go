@@ -59,13 +59,37 @@ func storeError(op string, err error) error {
 	return fmt.Errorf("%w: mailtest: %s: %w", mail.ErrUnavailable, op, err)
 }
 
+// fail — общий отказ методов порта; зовётся под захваченным мьютексом. Оба
+// отказа приходят в mail.ErrUnavailable, как у mailpg.
+func (m *MemStore) fail(ctx context.Context, op string) error {
+	if err := m.canceled(ctx, op); err != nil {
+		return err
+	}
+	if m.err != nil {
+		return storeError(op, m.err)
+	}
+	return nil
+}
+
+// canceled — отменённый контекст так, как его отдаёт mailpg: запрос не уходит,
+// и наружу идёт mail.ErrUnavailable с причиной в цепочке (ADR-0007,
+// «Двойники», «Отменённый контекст — как у адаптера»). Стоит там, где у
+// адаптера первый поход в базу: то, что mailpg решает до запроса, отмена не
+// перебивает.
+func (m *MemStore) canceled(ctx context.Context, op string) error {
+	if err := ctx.Err(); err != nil {
+		return storeError(op, err)
+	}
+	return nil
+}
+
 // Enqueue вставляет строку в pending; повтор ключа возвращает существующую
 // строку с её отпечатком байт в байт — на нём домен решает, законен ли повтор.
-func (m *MemStore) Enqueue(_ context.Context, env mail.Envelope) (mail.EnqueueResult, error) {
+func (m *MemStore) Enqueue(ctx context.Context, env mail.Envelope) (mail.EnqueueResult, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.err != nil {
-		return mail.EnqueueResult{}, storeError("enqueue", m.err)
+	if err := m.fail(ctx, "enqueue"); err != nil {
+		return mail.EnqueueResult{}, err
 	}
 	if id, dup := m.keys[env.DedupKey]; dup {
 		return mail.EnqueueResult{Outcome: mail.OutcomeDuplicate, Envelope: copyEnvelope(m.rows[id])}, nil
@@ -84,14 +108,19 @@ func (m *MemStore) Enqueue(_ context.Context, env mail.Envelope) (mail.EnqueueRe
 // sending с арендой до now+lease. Строка из sending возвращается с Reclaimed:
 // исход её прошлой попытки неизвестен. Непозитивный limit (здесь и в Purge) —
 // пустая выборка без ошибки, как у mailpg: ошибка Claim остановила бы прогон.
-func (m *MemStore) Claim(_ context.Context, now time.Time, lease time.Duration, limit int) ([]mail.Envelope, error) {
+func (m *MemStore) Claim(ctx context.Context, now time.Time, lease time.Duration, limit int) ([]mail.Envelope, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
 		return nil, storeError("claim", m.err)
 	}
+	// Непозитивный лимит решается ДО контекста: mailpg на нём в базу не ходит
+	// вовсе, а значит и отмены не видит.
 	if limit <= 0 {
 		return []mail.Envelope{}, nil
+	}
+	if err := m.canceled(ctx, "claim"); err != nil {
+		return nil, err
 	}
 	due := m.dueIDs(now)
 	if len(due) > limit {
@@ -148,11 +177,11 @@ func claimable(row mail.Envelope, now time.Time) bool {
 
 // Finish записывает исход. Строка не в sending — ноль обновлённых строк, то
 // есть ErrUnavailable: контракт mail.Store.
-func (m *MemStore) Finish(_ context.Context, req mail.FinishRequest) error {
+func (m *MemStore) Finish(ctx context.Context, req mail.FinishRequest) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.err != nil {
-		return storeError("finish", m.err)
+	if err := m.fail(ctx, "finish"); err != nil {
+		return err
 	}
 	if m.finishErr != nil {
 		return storeError("finish", m.finishErr)
@@ -208,11 +237,11 @@ func terminalStatus(outcome mail.FinishOutcome) mail.Status {
 }
 
 // Stats — Pending считает и sending: строка в отправке из очереди не ушла.
-func (m *MemStore) Stats(_ context.Context, now time.Time) (mail.Stats, error) {
+func (m *MemStore) Stats(ctx context.Context, now time.Time) (mail.Stats, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.err != nil {
-		return mail.Stats{}, storeError("stats", m.err)
+	if err := m.fail(ctx, "stats"); err != nil {
+		return mail.Stats{}, err
 	}
 	var (
 		stats  mail.Stats
@@ -238,11 +267,13 @@ func (m *MemStore) Stats(_ context.Context, now time.Time) (mail.Stats, error) {
 }
 
 // Purge удаляет терминальные строки с UpdatedAt < before, самые старые первыми.
-func (m *MemStore) Purge(_ context.Context, before time.Time, limit int) (int, error) {
+func (m *MemStore) Purge(ctx context.Context, before time.Time, limit int) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.err != nil {
-		return 0, storeError("purge", m.err)
+	// Отмена проверяется до лимита: mailpg отдаёт непозитивный лимит запросом
+	// (LIMIT 0), то есть отмену видит и на нём.
+	if err := m.fail(ctx, "purge"); err != nil {
+		return 0, err
 	}
 	if limit <= 0 {
 		return 0, nil

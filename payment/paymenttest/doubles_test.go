@@ -211,13 +211,71 @@ func TestMemStore_InjectedErrorIsUnavailable(t *testing.T) {
 	requireUnavailable(t, err, "Drift")
 }
 
+// Отменённый контекст двойник замечает так же, как paymentpg: класс 503,
+// payment.ErrUnavailable и context.Canceled в цепочке. Двойник, не глядящий на
+// контекст, зеленил бы у потребителя отмену вебхука, которая в проде красная.
+func TestMemStore_CancelledContextIsUnavailable(t *testing.T) {
+	t.Parallel()
+
+	store := paymenttest.NewMemStore()
+	in := intent("order:1", "buy-1")
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	requireUnavailableCause(t, store.CreateIntent(ctx, in), context.Canceled, "CreateIntent")
+	_, _, err := store.IntentByKey(ctx, in.PayerID, in.IdempotencyKey)
+	requireUnavailableCause(t, err, context.Canceled, "IntentByKey")
+	_, _, err = store.IntentByID(ctx, in.ID)
+	requireUnavailableCause(t, err, context.Canceled, "IntentByID")
+	_, err = store.Transition(ctx, payment.TransitionRequest{IntentID: in.ID, To: payment.StatusPending, Now: now})
+	requireUnavailableCause(t, err, context.Canceled, "Transition")
+	_, err = store.ApplyEvent(ctx, payment.ApplyEventRequest{IntentID: in.ID, Now: now})
+	requireUnavailableCause(t, err, context.Canceled, "ApplyEvent")
+	// Форма возврата — целая: paymentpg проверяет её ДО транзакции, и на
+	// сломанной форме отмена до двойника не дойдёт (ниже это проверено).
+	capture := uuid.New()
+	_, err = store.ApplyRefund(ctx, payment.ApplyRefundRequest{
+		IntentID: in.ID, CaptureEntryID: capture, Now: now,
+		Refund: payment.LedgerEntry{
+			ID: uuid.New(), IntentID: in.ID, Kind: payment.LedgerRefund,
+			AmountMinor: 100, Currency: in.Currency, ReversesEntryID: &capture,
+			IdempotencyKey: "refund-1", CreatedAt: now,
+		},
+	})
+	requireUnavailableCause(t, err, context.Canceled, "ApplyRefund")
+	_, err = store.Ledger(ctx, in.ID)
+	requireUnavailableCause(t, err, context.Canceled, "Ledger")
+	_, err = store.StalePending(ctx, now, payment.IntentCursor{}, 10)
+	requireUnavailableCause(t, err, context.Canceled, "StalePending")
+	_, err = store.CountStuckPending(ctx, now)
+	requireUnavailableCause(t, err, context.Canceled, "CountStuckPending")
+	_, err = store.Drift(ctx, now, 10)
+	requireUnavailableCause(t, err, context.Canceled, "Drift")
+
+	// Непозитивную пачку и сломанную форму возврата paymentpg отвергает ДО
+	// запроса, то есть отмены на них не видит: у двойника тот же порядок.
+	_, err = store.StalePending(ctx, now, payment.IntentCursor{}, 0)
+	require.ErrorIs(t, err, payment.ErrBadTransition, "непозитивная пачка — дефект вызывающего, а не отмена")
+	require.NotErrorIs(t, err, context.Canceled)
+	_, err = store.ApplyRefund(ctx, payment.ApplyRefundRequest{IntentID: in.ID, Now: now})
+	require.ErrorIs(t, err, payment.ErrBadTransition, "сломанная форма возврата — дефект вызывающего, а не отмена")
+	require.NotErrorIs(t, err, context.Canceled)
+}
+
 // requireUnavailable — все три стороны сразу: класс, sentinel модуля и
 // причина. Проверка одной чинила бы её ценой другой.
 func requireUnavailable(t *testing.T, err error, site string) {
 	t.Helper()
+	requireUnavailableCause(t, err, paymenttest.ErrStore, site)
+}
+
+// requireUnavailableCause — то же для причины, которую двойник не выдумывает:
+// отмена приходит от вызывающего, а не из ручки.
+func requireUnavailableCause(t *testing.T, err, cause error, site string) {
+	t.Helper()
 	assert.Equalf(t, errs.KindUnavailable, errs.KindOf(err), "класс ошибки на %s: %v", site, err)
 	require.ErrorIsf(t, err, payment.ErrUnavailable, "payment.ErrUnavailable на %s", site)
-	require.ErrorIsf(t, err, paymenttest.ErrStore, "причина на %s", site)
+	require.ErrorIsf(t, err, cause, "причина на %s", site)
 }
 
 // Идемпотентность провайдера смоделирована по-настоящему: повтор с тем же
