@@ -62,11 +62,8 @@ func TestPackageImportsAreWhitelisted(t *testing.T) {
 }
 
 // allowedByDir — белый список внешних импортов по каталогу. Новый подпакет
-// добавляется сюда тем же коммитом, что и каталог.
-//
-// Каталоги адаптеров описаны ЗАРАНЕЕ: их пишут следующие шаги модуля по портам
-// этого пакета, и белый список — часть задания. Страж падает на каталоге БЕЗ
-// записи, а лишняя запись без каталога безвредна.
+// добавляется сюда тем же коммитом, что и каталог: страж падает на каталоге БЕЗ
+// записи.
 var allowedByDir = map[string][]string{
 	// kit — класс у sentinel (errs.Kinded, ADR-0007); зависимость на kit
 	// разрешена отовсюду (ADR-0005).
@@ -76,7 +73,8 @@ var allowedByDir = map[string][]string{
 	"inboxhttp": {"github.com/nrect/rebar/kit"},
 	// postgres — граница ошибки Postgres, разрешённая адаптерам хранилища
 	// (ADR-0005); ядру она запрещена.
-	"inboxpg":   {"github.com/jackc/pgx/v5", "github.com/nrect/rebar/postgres", "github.com/nrect/rebar/kit"},
+	"inboxpg": {"github.com/jackc/pgx/v5", "github.com/nrect/rebar/postgres", "github.com/nrect/rebar/kit"},
+	// metric API и метки; sdk и экспортёр выбирает потребитель (CONVENTIONS §6).
 	"inboxotel": {"go.opentelemetry.io/otel/metric", "go.opentelemetry.io/otel/attribute"},
 }
 

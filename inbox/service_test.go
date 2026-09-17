@@ -373,16 +373,53 @@ func TestPurge_CancelDuringStoreCallIsNotUnavailable(t *testing.T) {
 	require.NotErrorIs(t, err, inbox.ErrUnavailable)
 }
 
-// purgeStore — хранилище, которое запоминает аргументы уборки; cancel, если
-// задан, отменяет контекст прогона посреди вызова, как остановка процесса.
+// Часы по умолчанию — в UTC: моменты уходят в хранилище не в поясе процесса
+// (CONVENTIONS §11). Тесты идут под TZ не UTC, а пояс сверяется указателем.
+func TestNewService_DefaultClockIsUTC(t *testing.T) {
+	t.Parallel()
+
+	store := &purgeStore{}
+	svc := inbox.NewService(store, inboxtest.NewObserver(), testConfig(verifierFunc(
+		func(context.Context, inbox.Request) (inbox.Event, error) {
+			return inbox.Event{Source: billing, ID: "evt_utc", Type: typePaid}, nil
+		})))
+
+	_, err := svc.Receive(t.Context(), billing, inbox.Request{Raw: []byte("{}")})
+	require.NoError(t, err)
+	_, err = svc.Purge(t.Context())
+	require.NoError(t, err)
+
+	for _, m := range []struct {
+		what   string
+		moment time.Time
+	}{
+		{"момент приёма", store.acceptedAt},
+		{"момент события по умолчанию", store.occurredAt},
+		{"граница отметок", store.eventsBefore},
+		{"граница тел", store.payloadsBefore},
+	} {
+		assert.False(t, m.moment.IsZero(), "%s не дошёл до хранилища", m.what)
+		assert.True(t, inUTC(m.moment), "%s в поясе %q, а не в UTC", m.what, m.moment.Location())
+	}
+}
+
+// inUTC — момент в UTC по указателю пояса: по имени не сверить, при TZ=UTC
+// time.Local тоже зовётся «UTC».
+func inUTC(moment time.Time) bool { return moment.Location() == time.UTC }
+
+// purgeStore — хранилище, которое запоминает моменты приёма и аргументы
+// уборки; cancel, если задан, отменяет контекст прогона посреди вызова, как
+// остановка процесса.
 type purgeStore struct {
+	acceptedAt, occurredAt       time.Time
 	eventsBefore, payloadsBefore time.Time
 	limit, deleted               int
 	err                          error
 	cancel                       context.CancelFunc
 }
 
-func (s *purgeStore) Accept(context.Context, inbox.Event, time.Time) (inbox.Outcome, error) {
+func (s *purgeStore) Accept(_ context.Context, ev inbox.Event, now time.Time) (inbox.Outcome, error) {
+	s.acceptedAt, s.occurredAt = now, ev.OccurredAt
 	return inbox.OutcomeAccepted, nil
 }
 
