@@ -24,7 +24,9 @@ for f in .github/workflows/*.yml .github/workflows/*.yaml; do
       ./*) continue ;;
       docker://*@sha256:*) continue ;;
     esac
-    if ! printf '%s' "$ref" | grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+@[0-9a-f]{40}$'; then
+    # Сравнение средствами bash, а не grep -q в конвейере: ранний выход grep под
+    # pipefail даёт SIGPIPE и ложный отказ.
+    if ! [[ "$ref" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+@[0-9a-f]{40}$ ]]; then
       echo "ciguard: ${f}:${n}: действие не закреплено SHA коммита: ${ref}" >&2
       fail=1
     fi
@@ -33,7 +35,7 @@ for f in .github/workflows/*.yml .github/workflows/*.yaml; do
   # Образ в `docker run` — по digest: тег образа перевешивается так же, как тег действия.
   while IFS= read -r line; do
     n="${line%%:*}"
-    if ! printf '%s' "${line#*:}" | grep -Eq '@sha256:[0-9a-f]{64}'; then
+    if ! [[ "${line#*:}" =~ @sha256:[0-9a-f]{64} ]]; then
       echo "ciguard: ${f}:${n}: образ docker run не закреплён digest" >&2
       fail=1
     fi

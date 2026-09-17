@@ -20,7 +20,9 @@ status=0
 for directive in go toolchain; do
 	table=""
 	for f in $files; do
-		value=$(awk -f "$awk_script" "$f" | awk -v d="$directive" '$1 == d { print $2; exit }')
+		# БЕЗ exit в читающем awk: ранний выход рвёт канал пишущему, SIGPIPE при
+		# pipefail — код 141 и красный CI на Linux, хотя на macOS гонка не видна.
+		value=$(awk -f "$awk_script" "$f" | awk -v d="$directive" '$1 == d && !seen { print $2; seen = 1 }')
 		[ -n "$value" ] || value="(нет директивы)"
 		table="$table$value $f
 "
