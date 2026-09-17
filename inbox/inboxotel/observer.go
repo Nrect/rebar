@@ -57,7 +57,8 @@ func NewObserver(meter metric.Meter) (inbox.Observer, error) {
 }
 
 // Watch заводит ряды источника нулём по всем исходам (doc.go, п. 2);
-// гистограмму — нет (п. 3).
+// гистограмму — нет (п. 3). Повторный Watch рядов не удваивает: у двух
+// сервисов бывает один наблюдатель.
 func (o *observer) Watch(source inbox.SourceName) {
 	for _, outcome := range inbox.AllOutcomes {
 		o.received.Add(context.Background(), 0, series(source, outcome))
