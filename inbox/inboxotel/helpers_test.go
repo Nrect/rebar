@@ -87,16 +87,21 @@ func signed(id string, typ inbox.EventType, data any) inbox.Request {
 	return inboxtest.SignHMAC(secret, start, inboxtest.EventBody(id, typ, data))
 }
 
-// collect — метрики одного scrape.
+// collect — метрики одного scrape. Пустой scrape — nil, а не отказ помощника:
+// нет рядов — называет утверждение теста.
 func collect(t *testing.T, reader *sdkmetric.ManualReader) []metricdata.Metrics {
 	t.Helper()
 	var rm metricdata.ResourceMetrics
 	require.NoError(t, reader.Collect(context.Background(), &rm))
+	if len(rm.ScopeMetrics) == 0 {
+		return nil
+	}
 	require.Len(t, rm.ScopeMetrics, 1)
 	return rm.ScopeMetrics[0].Metrics
 }
 
-// receivedPoints — точки счётчика доставок; имя, единица и монотонность — контракт.
+// receivedPoints — точки счётчика доставок; nil — рядов нет. Имя, единица и
+// монотонность — контракт.
 func receivedPoints(t *testing.T, ms []metricdata.Metrics) []metricdata.DataPoint[int64] {
 	t.Helper()
 	for _, m := range ms {
@@ -109,7 +114,6 @@ func receivedPoints(t *testing.T, ms []metricdata.Metrics) []metricdata.DataPoin
 		require.True(t, sum.IsMonotonic, "%s обязан быть счётчиком, а не UpDown", receivedName)
 		return sum.DataPoints
 	}
-	require.Fail(t, "инструмента нет в scrape", receivedName)
 	return nil
 }
 
