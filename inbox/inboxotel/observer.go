@@ -34,6 +34,7 @@ type observer struct {
 var _ inbox.Observer = (*observer)(nil)
 
 // NewObserver паникует на nil-метре и возвращает ошибку создания инструмента.
+// Ряды заводит сервис: inbox.NewService зовёт Watch по источникам Config.
 func NewObserver(meter metric.Meter) (inbox.Observer, error) {
 	if meter == nil {
 		panic("inboxotel.NewObserver: nil meter")
@@ -57,8 +58,7 @@ func NewObserver(meter metric.Meter) (inbox.Observer, error) {
 }
 
 // Watch заводит ряды источника нулём по всем исходам (doc.go, п. 2);
-// гистограмму — нет (п. 3). Повторный Watch рядов не удваивает: у двух
-// сервисов бывает один наблюдатель.
+// гистограмму — нет (п. 4). Повторный Watch рядов не удваивает.
 func (o *observer) Watch(source inbox.SourceName) {
 	for _, outcome := range inbox.AllOutcomes {
 		o.received.Add(context.Background(), 0, series(source, outcome))
