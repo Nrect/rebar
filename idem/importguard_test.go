@@ -57,10 +57,6 @@ func TestPackageImportsAreWhitelisted(t *testing.T) {
 
 // allowedByDir — белый список внешних импортов по каталогу. Новый подпакет
 // добавляется сюда тем же коммитом, что и каталог.
-//
-// Каталоги idempg и idemotel описаны ЗАРАНЕЕ: их пишут следующие чипы
-// ADR-0012, и белый список — часть задания. Страж падает на каталоге БЕЗ
-// записи, а лишняя запись без каталога безвредна.
 var allowedByDir = map[string][]string{
 	// kit — класс у sentinel (errs.Kinded, ADR-0007); зависимость на kit
 	// разрешена отовсюду (ADR-0005). Ни auth, ни pgx: область приходит строками.
@@ -69,7 +65,8 @@ var allowedByDir = map[string][]string{
 	"idemhttp": {},
 	// postgres — граница ошибки Postgres, разрешённая адаптерам хранилища
 	// (ADR-0005); ядру она запрещена.
-	"idempg":   {"github.com/jackc/pgx/v5", "github.com/nrect/rebar/postgres", "github.com/nrect/rebar/kit"},
+	"idempg": {"github.com/jackc/pgx/v5", "github.com/nrect/rebar/postgres", "github.com/nrect/rebar/kit"},
+	// otel — только здесь: ядро метрик не пишет (CONVENTIONS §6).
 	"idemotel": {"go.opentelemetry.io/otel/metric", "go.opentelemetry.io/otel/attribute"},
 }
 

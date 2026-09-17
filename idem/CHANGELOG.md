@@ -6,6 +6,41 @@
 ## Unreleased
 
 ### Added
+- **Метрики `idemotel` — третий из трёх шагов модуля
+  ([ADR-0012](../docs/adr/0012-inbox-idempotency.md), решение 16, уточнение
+  11).** Зависимость модуля на `go.opentelemetry.io/otel` и `otel/metric`
+  v1.44.0 — только в `idemotel`, `otel/sdk/metric` v1.44.0 — в его тестах.
+  - `idemotel.NewObserver(meter)` — `idem.Observer` со счётчиком
+    `idem_requests{operation,outcome}` (в Prometheus `idem_requests_total`):
+    метки — только операция из `Config.Operations` и исход из
+    `idem.AllOutcomes`. Паника на nil-метре, ошибка создания инструмента
+    возвращается. Таблица и три алерта с PromQL — в `idemotel/doc.go`: «ответ
+    не записывается» (`not_recordable|too_large`, порог 1), «ключи
+    переиспользуют» (`reused`, предупреждение), «уборка умерла»
+    (`cron_last_success_timestamp_seconds{job="idem_purge"}` старше двух
+    интервалов).
+  - **Порт `Observer` получил `Watch(op)`:** `idempg.New` и
+    `idemtest.NewMemStore` зовут его по каждой операции `Config` до первого
+    `Do`, и все пары операции и исхода рождаются нулём при сборке хранилища —
+    ряд, родившийся единицей, `increase()` не видит. Операции приходят из того
+    же `Config`, что у хранилища, а не отдельным списком в конструкторе
+    метрики, — форма `ledger.Observer.Watch`. `LogObserver.Watch` — пустой
+    ход, `idemtest.Observer.Watched()` — операции в порядке `Watch`.
+  - Тесты `idemotel`: каждый ряд заведён нулём сборкой хранилища, каждая точка
+    — из закрытых наборов, исход под отменённым контекстом считается, и
+    `TestObserver_LabelMatchesDoResult` — одиннадцать шагов через
+    `idemtest.MemStore` по всем восьми исходам и неверному запросу: после
+    каждого шага каждый ряд равен числу результатов, которые `Do` вернул
+    вызывающим.
+  - Часы по умолчанию — в UTC у `idem.Purger` и `idemtest.MemStore`; две
+    строки исключений в `scripts/timeguard.allow` вычеркнуты. Стражи
+    `TestNewPurger_DefaultClockIsUTC` и `TestMemStore_DefaultClockIsUTC`
+    сверяют пояс указателем.
+  - `idemtest.RunDoSuite`: `Subject.Reader` обязателен — окно набора в
+    хранилище мимо порта (`CreatedAt`: у двойника `MemStore.CreatedAt`, у
+    `idempg` — запрос теста). Новые сценарии: сборка зовёт `Watch` по каждой
+    операции `Config`; часы в чужом поясе с наносекундами — момент записи
+    читается в UTC и усечённым до микросекунд, как из `timestamptz`.
 - **Хранилище Postgres `idempg` — второй из трёх шагов модуля
   ([ADR-0012](../docs/adr/0012-inbox-idempotency.md), решения 2, 13–15, 17).**
   Зависимости `pgx/v5` v5.10.0 и `postgres` v0.2.0 — граница ошибки,
@@ -58,8 +93,8 @@
     ещё не выпущены тегом: их копия — `pgtestcopy_test.go` (`TODO(ADR-0011)`).
 - **Ядро ответа на повтор запроса по ключу `Idempotency-Key`
   ([ADR-0012](../docs/adr/0012-inbox-idempotency.md), решения 9–12), первый из
-  трёх шагов модуля.** Адаптер Postgres `idempg` — второй шаг (выше), метрики
-  `idemotel` — третий.
+  трёх шагов модуля.** Адаптер Postgres `idempg` — второй шаг, метрики
+  `idemotel` — третий (оба выше).
   - `ParseKey(fieldLines ...string)` — ключ из строк поля: строка Structured
     Fields и голое значение — один ключ; 1–255 байт видимого ASCII без кавычки
     и обратной косой черты; нет строк — `ErrKeyMissing`; несколько строк,
@@ -109,7 +144,7 @@
     контекст и `SetErr` в `ErrUnavailable` с причиной, `SetClock`; паника op
     снимает пометку «в работе». `idemtest.Observer`, `idemtest.Clock`.
   - `idemtest.RunDoSuite(t, factory)` — контрактный набор на голом `testing`,
-    один на двойник и `idempg`: 17 сценариев, включая детерминированный
+    один на двойник и `idempg`: 19 сценариев, включая детерминированный
     `in_flight` во время op, гонку одного ключа, отмену до и во время op,
     границу уборки внутри микросекунды и копирование `Config`.
   - `idemhttp`: `Key(r)`, `NewRequest(r, scope, op, body)`, `JSON(status, v)`,

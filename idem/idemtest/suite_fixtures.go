@@ -57,8 +57,8 @@ func newFixture(t *testing.T, newSubject Factory) *fixture {
 	t.Helper()
 	f := &fixture{cfg: suiteConfig(), obs: NewObserver(), clock: NewClock(suiteNow)}
 	f.sub = newSubject(t, f.cfg, f.obs, f.clock.Now)
-	if f.sub.Do == nil || f.sub.Pruner == nil {
-		t.Fatal("фабрика набора вернула Subject без Do или Pruner")
+	if f.sub.Do == nil || f.sub.Pruner == nil || f.sub.Reader == nil {
+		t.Fatal("фабрика набора вернула Subject без Do, Pruner или Reader")
 	}
 	f.scope = idem.Scope{Realm: suiteRealm, Subject: randomSubject(t)}
 	return f
@@ -183,6 +183,13 @@ func sameResponse(t *testing.T, got, want idem.Response, what string) {
 		t.Fatalf("%s: получено %d %q %q %q, ожидалось %d %q %q %q", what,
 			got.Status, got.ContentType, got.Location, got.Body, want.Status, want.ContentType, want.Location, want.Body)
 	}
+}
+
+// sameMoment — got равен want так, как want вернётся из timestamptz: в UTC и до
+// микросекунд. Пояс сверяется указателем: time.Local при TZ=UTC тоже зовётся
+// «UTC», а голый Equal пояса не видит.
+func sameMoment(got, want time.Time) bool {
+	return got.Location() == time.UTC && got.Equal(want.Truncate(time.Microsecond))
 }
 
 // Проверки набора на голом testing: idemtest собирается у потребителя без

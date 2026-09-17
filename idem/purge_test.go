@@ -160,6 +160,23 @@ func TestPurger_BoundaryFollowsClock(t *testing.T) {
 		[]time.Time{pruner.calls[0].before, pruner.calls[1].before})
 }
 
+// Часы по умолчанию — в UTC (CONVENTIONS §11): граница уборки уходит в
+// хранилище моментом в UTC, а не в поясе процесса.
+func TestNewPurger_DefaultClockIsUTC(t *testing.T) {
+	t.Parallel()
+
+	pruner := &countingPruner{}
+	_, err := idem.NewPurger(pruner, testConfig()).Run(t.Context())
+	require.NoError(t, err)
+	require.Len(t, pruner.calls, 1)
+	before := pruner.calls[0].before
+	assert.True(t, inUTC(before), "граница уборки в поясе %q, а не time.UTC", before.Location())
+}
+
+// inUTC — пояс сверяется указателем, а не именем: time.Local при TZ=UTC тоже
+// зовётся «UTC».
+func inUTC(moment time.Time) bool { return moment.Location() == time.UTC }
+
 func TestPurger_Panics(t *testing.T) {
 	t.Parallel()
 

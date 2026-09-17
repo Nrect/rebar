@@ -32,7 +32,7 @@ func NewPurger(pruner Pruner, cfg Config) *Purger {
 	if err := cfg.Validate(); err != nil {
 		panic("idem.NewPurger: " + err.Error())
 	}
-	return &Purger{pruner: pruner, retention: cfg.Retention, now: time.Now}
+	return &Purger{pruner: pruner, retention: cfg.Retention, now: func() time.Time { return time.Now().UTC() }}
 }
 
 // SetClock подменяет источник времени; только для тестов и до начала работы.

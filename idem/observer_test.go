@@ -45,3 +45,14 @@ func TestLogObserver_NilLoggerIsDefault(t *testing.T) {
 	require.NotNil(t, obs)
 	assert.NotPanics(t, func() { obs.Outcome(t.Context(), opCreate, idem.OutcomeExecuted) })
 }
+
+// Watch у лога — пустой ход: заводить нулём нечего, а строка на сборку
+// хранилища была бы шумом.
+func TestLogObserver_WatchWritesNothing(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	idem.LogObserver(logger).Watch(opCreate)
+	assert.Empty(t, buf.String())
+}

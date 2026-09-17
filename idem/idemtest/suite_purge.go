@@ -83,3 +83,21 @@ func suiteMoments(t *testing.T, f *fixture) {
 	equal(t, f.purge(t, nextMicrosecond, 10), 1, "граница в следующей микросекунде")
 	f.executed(t, req, &e, created(2))
 }
+
+// suiteZonedClock — часы потребителя в чужом поясе с наносекундами: момент
+// записи читается обратно так, как его отдаёт timestamptz (CONVENTIONS §11).
+// 789 нс сверх микросекунды отличают усечение от округления.
+func suiteZonedClock(t *testing.T, f *fixture) {
+	t.Helper()
+	var e effect
+	at := time.Date(2026, 9, 16, 15, 4, 5, 123456789, time.FixedZone("UTC+3", 3*60*60))
+	f.clock.Set(at)
+	req := f.request(t, "zoned-clock")
+	f.executed(t, req, &e, created(1))
+
+	got, ok, err := f.sub.Reader.CreatedAt(t.Context(), req.Scope, req.Key)
+	noErr(t, err, "чтение момента записи")
+	isTrue(t, ok, "записи нет после исполнения")
+	isTrue(t, sameMoment(got, at), fmt.Sprintf("момент записи %s в поясе %q, ожидался %s в UTC: не как из timestamptz",
+		got.Format(time.RFC3339Nano), got.Location(), at.Truncate(time.Microsecond).UTC().Format(time.RFC3339Nano)))
+}

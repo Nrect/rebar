@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -17,16 +18,25 @@ import (
 // op в свою функцию с pgx.Tx.
 type DoFunc func(ctx context.Context, req idem.Request, op func(context.Context) (idem.Response, error)) (idem.Result, error)
 
-// Subject — реализация под набором: Do в пуле, не в транзакции потребителя, и
-// уборка.
+// Subject — реализация под набором: Do в пуле, не в транзакции потребителя,
+// уборка и окно в хранилище.
 type Subject struct {
 	Do     DoFunc
 	Pruner idem.Pruner
+	Reader Reader
 }
 
-// Factory — ПУСТОЕ хранилище, своё на сценарий, с Config и наблюдателем
-// набора; now — источник момента записи (SetClock). Каждый Do — своя
-// транзакция из пула: иначе параллельные сценарии не параллельны.
+// Reader — окно набора в хранилище мимо порта: у двойника — его метод, у
+// адаптера — запрос теста к базе.
+type Reader interface {
+	// CreatedAt — момент записи под ключом области так, как его отдаёт
+	// хранилище; false — записи нет.
+	CreatedAt(ctx context.Context, scope idem.Scope, key idem.Key) (time.Time, bool, error)
+}
+
+// Factory — ПУСТОЕ хранилище, своё на сценарий, собранное с Config и
+// наблюдателем набора; now — источник момента записи (SetClock). Каждый Do —
+// своя транзакция из пула: иначе параллельные сценарии не параллельны.
 type Factory func(t *testing.T, cfg idem.Config, obs idem.Observer, now func() time.Time) Subject
 
 // RunDoSuite — контрактный набор Do и idem.Pruner.
@@ -54,6 +64,7 @@ type doScenario struct {
 }
 
 var doScenarios = []doScenario{
+	{name: "сборка зовёт Watch по каждой операции Config до первого Do", run: suiteWatch},
 	{name: "первое исполнение записывает ответ и отдаёт его без пометки повтора", run: suiteFirstRun},
 	{name: "повтор после коммита — записанный ответ байт в байт, op не зовётся", run: suiteReplay},
 	{name: "тот же ключ, другой запрос — ErrKeyReused без Retry-After, запись цела", run: suiteKeyReused},
@@ -66,11 +77,23 @@ var doScenarios = []doScenario{
 	{name: "уборка удаляет только старше границы и не больше limit", run: suitePurge},
 	{name: "срок: запись живёт до уборки, Purger убирает старше Retention", run: suiteRetention},
 	{name: "моменты — как timestamptz: граница внутри микросекунды не удаляет", run: suiteMoments},
+	{name: "часы в чужом поясе с наносекундами — момент записи читается в UTC и до микросекунд", run: suiteZonedClock},
 	{name: "отменённый контекст — ErrUnavailable с причиной, записи нет", run: suiteCancelled},
 	{name: "ответ записывается и отдаётся копией", run: suiteCopies},
 	{name: "паника op не оставляет ключ занятым", run: suitePanic},
 	{name: "запрос, собранный неверно, отвергается до хранилища и наблюдателя", run: suiteInvalidRequests},
 	{name: "Config копируется при сборке", run: suiteConfigCopied},
+}
+
+// suiteWatch — ряды метрики заводит сборка хранилища, а не первый Do: ряд,
+// родившийся сразу единицей, increase() не видит (ADR-0012, решение 16).
+func suiteWatch(t *testing.T, f *fixture) {
+	t.Helper()
+	want := suiteConfig().Operations
+	got := f.obs.Watched()
+	slices.Sort(want)
+	slices.Sort(got)
+	isTrue(t, slices.Equal(got, want), fmt.Sprintf("Watch при сборке: получено %q, ожидалась каждая операция Config ровно раз %q", got, want))
 }
 
 func suiteFirstRun(t *testing.T, f *fixture) {

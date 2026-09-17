@@ -11,8 +11,8 @@
 // example_test.go, рецепт — README.md.
 //
 // Ядро — stdlib и kit; двойник и контрактный набор — idemtest; HTTP — idemhttp;
-// хранилище Postgres — idempg. Метрики (idemotel) — следующий шаг ADR-0012.
-// Метрика idem_requests{operation,outcome} и алерты — там же, решение 16.
+// хранилище Postgres — idempg; метрика idem_requests{operation,outcome} и
+// алерты решения 16 — idemotel.
 //
 // Безопасность:
 //
