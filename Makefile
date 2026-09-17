@@ -14,13 +14,13 @@ MUTANTS_EXCLUDE ?=
 # (docs/CORRECTNESS.md, §8). Тот же пояс — в CI.
 TEST_TZ := America/St_Johns
 
-.PHONY: ci lint test test-unit govulncheck modules hooks fmt lockstep timeguard chip-check mutants
+.PHONY: ci lint test test-unit govulncheck modules hooks fmt lockstep guards timeguard sqlguard codeguard ciguard secrets chip-check mutants
 
 modules:
 	@for m in $(MODULES); do echo $$m; done
 
 # Полный гейт — то же, что блокирует CI.
-ci: lint govulncheck timeguard
+ci: lint govulncheck guards
 	@for m in $(MODULES); do \
 		echo "== race tests: $$m"; \
 		(cd $$m && TZ=$(TEST_TZ) CGO_ENABLED=1 go test -race -count=1 -timeout=600s ./...) || exit 1; \
@@ -63,10 +63,34 @@ lockstep:
 	@scripts/toolchain-lockstep.sh
 	@scripts/deps-lockstep.sh
 
-# Всё время — UTC и параметром: миграции и код прода всех модулей. Тот же джоб
-# в CI; исключения с причиной — scripts/timeguard.allow.
+# Стражи правил репозитория — тот же джоб в CI; у каждого исключения с причиной
+# в scripts/<страж>.allow, устаревшая запись роняет стража.
+guards: timeguard sqlguard codeguard ciguard
+
+# Всё время — UTC и параметром: миграции и код прода (CORRECTNESS §8).
 timeguard:
 	@scripts/timeguard.sh
+
+# Миграции: COLLATE "C" у текста, lock_timeout, схема меняется на живой базе
+# (CORRECTNESS §12 и §13).
+sqlguard:
+	@scripts/sqlguard.sh
+
+# Код прода: таймауты клиента и сервера, потолок тела, горутины с владельцем
+# (CORRECTNESS §14).
+codeguard:
+	@scripts/codeguard.sh
+
+# CI и дерево: действия по SHA, permissions у джобов, пути без двойников по
+# регистру (SECURITY.md, «Цепочка поставки»).
+ciguard:
+	@scripts/ciguard.sh
+
+# Секреты в дереве — тот же образ и конфиг, что у джоба CI secrets. Нужен
+# Docker; каталог должен быть виден демону (у colima — внутри $HOME).
+GITLEAKS_IMAGE := ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
+secrets:
+	@docker run --rm -v "$(CURDIR):/repo" $(GITLEAKS_IMAGE) dir /repo --config /repo/.gitleaks.toml --redact --no-banner
 
 # Гейт чипа перед сдачей: один модуль так, как его увидит потребитель
 # (GOWORK=off — соседний модуль через workspace не подтянется).
@@ -77,8 +101,11 @@ chip-check:
 	@cd $(MODULE) && GOWORK=off golangci-lint run ./...
 	@echo "== go vet: $(MODULE)"
 	@cd $(MODULE) && GOWORK=off go vet ./...
-	@echo "== timeguard"
+	@echo "== guards"
 	@scripts/timeguard.sh
+	@scripts/sqlguard.sh
+	@scripts/codeguard.sh
+	@scripts/ciguard.sh
 	@echo "== race tests: $(MODULE) (TZ=$(TEST_TZ))"
 	@cd $(MODULE) && GOWORK=off TZ=$(TEST_TZ) CGO_ENABLED=1 go test -race -count=1 -timeout=600s ./...
 	@echo "== govulncheck: $(MODULE)"

@@ -1,0 +1,18 @@
+# Исключения стража миграций (scripts/sqlguard.sh): путь<TAB>строка кода, * (все нарушения файла) или маркер раздела<TAB>причина.
+# Починил — вычеркни: запись, которой нет в коде, роняет стража.
+#
+# Выпущенные первые миграции модулей в заморозке 7c1a927: файл не правится (ADR-0011, решение 6).
+# COLLATE "C" и lock_timeout приедут новой миграцией после тегов (ROADMAP, «Признанные долги»).
+audit/auditpg/migrations/00001_audit_init.sql	*	выпущена, модуль в заморозке 7c1a927 — миграция 00002 после тегов (ROADMAP)
+auth/authpg/migrations/00001_auth_init.sql	*	выпущена, модуль в заморозке 7c1a927 — миграция 00002 после тегов (ROADMAP)
+authz/authzpg/migrations/00001_authz_init.sql	*	выпущена, модуль в заморозке 7c1a927 — миграция 00002 после тегов (ROADMAP)
+entitlement/entitlementpg/migrations/00001_entitlement_init.sql	*	выпущена, модуль в заморозке 7c1a927 — миграция 00002 после тегов (ROADMAP)
+mail/mailpg/migrations/00001_mail_init.sql	*	выпущена, модуль в заморозке 7c1a927 — миграция 00002 после тегов (ROADMAP)
+outbox/outboxpg/migrations/00001_outbox_init.sql	*	выпущена, модуль в заморозке 7c1a927 — миграция 00002 после тегов (ROADMAP)
+payment/paymentpg/migrations/00001_payment_init.sql	*	выпущена, модуль в заморозке 7c1a927 — миграция 00002 после тегов (ROADMAP)
+#
+# Модули без тегов: первая миграция ещё не выпущена и правится на месте — чипами, выданными 2026-09-17.
+idem/idempg/migrations/00001_idem_init.sql	*	не выпущена — правка на месте чипом «миграции idem, inbox, ledger» (2026-09-17)
+inbox/inboxpg/migrations/00001_inbox_init.sql	*	не выпущена — правка на месте чипом «миграции idem, inbox, ledger» (2026-09-17)
+ledger/ledgerpg/migrations/00001_ledger_init.sql	*	не выпущена — правка на месте чипом «миграции idem, inbox, ledger» (2026-09-17)
+examples/monolith/migrations/00001_shop_init.sql	*	пример, тегов не получает — правка чипом монолита (2026-09-17)

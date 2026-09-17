@@ -2,13 +2,13 @@
 
 [CONVENTIONS.md](../CONVENTIONS.md) говорит, как пишется блок. Здесь — как
 пишется проект, который блоки собирает: логи, окружение, служебные ручки,
-старт, остановка, миграции, корреляция, время. У блока нет `main`, сигнала, порта и
+старт, остановка, миграции, корреляция, время, сеть и ввод. У блока нет `main`, сигнала, порта и
 окружения, поэтому этот остаток принадлежит проекту; всё, что можно закрыть в
 самом блоке, закрывается в блоке ([ADR-0010](adr/0010-block-owns-guarantees.md)).
 
 Каждое правило записано одинаково: **правило**, почему, образец. Образец — файл
 [`examples/monolith`](../examples/monolith) там, где пример уже делает так; где
-не делает, приведён код. Код сверен с API блоков на 2026-09-16 и собирается;
+не делает, приведён код. Код сверен с API блоков на 2026-09-17 и собирается;
 `load`, `openPool` и `assemble` с его результатом `app` — код самого проекта.
 Примеры собраны в один файл ради чтения: проект, взявший `.golangci.yml`
 тулкита, держит pgx в каталоге `*pg`, а otel — в `*otel`, как монолит
@@ -24,6 +24,7 @@
 | 6 | [Миграции](#6-миграции) | ручной `ALTER` в каждом проекте |
 | 7 | [Трассировка и корреляция](#7-трассировка-и-корреляция) | ответ об ошибке, по которому не найти причину |
 | 8 | [Время и окружение](#8-время-и-окружение) | лог и отчёт, которые врут на три часа в контейнере с чужим поясом; сутки в 23 часа на переводе часов |
+| 9 | [Сеть, база и JSON](#9-сеть-база-и-json) | зависший провайдер или медленный клиент, выбравший пул; 500 на мусорном вводе; выкат, который стоит за чужой блокировкой; действие CI, подменённое по тегу |
 
 ## 1. Логи
 
@@ -295,7 +296,8 @@ func checkAll(ctx context.Context, checks []func(context.Context) error) error {
    сборке (`mailotel.Wrap`, `schedulerotel.NewObserver`). `otelboot.Start`
    проверяет свой конфиг сам и отказывает на старте, а не оставляет трейсинг
    живым с виду и отправляющим в никуда ([otelboot/doc.go](../otelboot/doc.go), п. 6).
-4. **Пул** — `postgres.WithUTC`, `pgxpool.New`, `Ping`. UTC-пин отвязывает даты
+4. **Пул** — `postgres.WithUTC`, имя сервиса и срок забытой транзакции
+   (раздел 9), `pgxpool.New`, `Ping`. UTC-пин отвязывает даты
    на сервере от образа базы ([postgres/doc.go](../postgres/doc.go), п. 5), а
    недоступная база становится отказом старта, а не первого запроса. Текст DSN
    в ошибку не попадает: в нём пароль. Образец — `Open` в
@@ -362,9 +364,8 @@ func run() error {
 		return err
 	}
 
-	p.public = &http.Server{Addr: cfg.Addr, Handler: app.handler, ReadHeaderTimeout: 5 * time.Second}
-	p.internal = &http.Server{Addr: cfg.InternalAddr, ReadHeaderTimeout: 5 * time.Second,
-		Handler: probes(p.obs.Metrics, app.schemaChecks, p.ready)}
+	p.public = newServer(cfg.Addr, app.handler) // четыре срока — раздел 9
+	p.internal = newServer(cfg.InternalAddr, probes(p.obs.Metrics, app.schemaChecks, p.ready))
 	lns, err := listen(ctx, p.public, p.internal)
 	if err != nil {
 		return err
@@ -372,8 +373,8 @@ func run() error {
 
 	p.jobs.Start(context.WithoutCancel(ctx)) // гасит Stop между прогонами, а не сигнал
 	served := make(chan error, 2)
-	go func() { served <- p.public.Serve(lns[0]) }()
-	go func() { served <- p.internal.Serve(lns[1]) }()
+	go serve(served, p.public, lns[0]) // горутина с владельцем — раздел 9
+	go serve(served, p.internal, lns[1])
 	p.ready.Store(true)
 	slog.Info("started", slog.String("op", "start"))
 
@@ -569,6 +570,15 @@ func within(stop func(), budget time.Duration) bool {
 **`Down` в проде не запускают.** Откат выпущенной схемы — новая миграция вперёд;
 `Down` на живой базе — потеря данных под видом операции (ADR-0011, «Чего НЕТ»).
 
+**Свои миграции проект пишет по законам блоков.** Ключи, коды и слаги —
+`COLLATE "C"`, человеческий текст для сортировки и поиска — в явной сортировке
+языка ([CORRECTNESS §12](CORRECTNESS.md#12-текст--побайтно-и-без-мусора)).
+Первый оператор раздела — `SET LOCAL lock_timeout = '5s'`; изменение совместимо
+с предыдущей версией кода: расширить → перевести код → сузить, индекс
+`CONCURRENTLY`, ограничение `NOT VALID`
+([CORRECTNESS §13](CORRECTNESS.md#13-схема-меняется-на-живой-базе)). Страж
+тулкита `scripts/sqlguard.sh` проверяет и миграции проекта — раздел 9.
+
 ## 7. Трассировка и корреляция
 
 **`request_id` ставит `reqid.Middleware` — первым в цепочке публичного
@@ -708,6 +718,126 @@ func hasKey(r slog.Record, key string) bool {
 [`logotel/logger.go`](../examples/monolith/logotel/logger.go); `TZ: UTC` у
 Postgres — [`compose.yaml`](../examples/monolith/compose.yaml).
 
+## 9. Сеть, база и JSON
+
+**У всего, что ждёт, — срок; у всего, что читается, — потолок; у горутины —
+владелец.** Законы и причины — [CORRECTNESS §12–14](CORRECTNESS.md#14-ожидание-и-объём--с-потолком);
+здесь — то, что делает проект вокруг блоков.
+
+1. **Сервер — все четыре срока.** `ReadHeaderTimeout`, `ReadTimeout`,
+   `WriteTimeout`, `IdleTimeout`. Ручке, которой нужно дольше (загрузка файла,
+   выгрузка отчёта), срок продлевает `http.ResponseController` в самой ручке,
+   а не сервер целиком.
+
+   ```go
+   // newServer — медленный клиент не держит соединение ни заголовками, ни
+   // телом, ни простоем.
+   func newServer(addr string, h http.Handler) *http.Server {
+   	return &http.Server{
+   		Addr:              addr,
+   		Handler:           h,
+   		ReadHeaderTimeout: 5 * time.Second,
+   		ReadTimeout:       30 * time.Second,
+   		WriteTimeout:      30 * time.Second,
+   		IdleTimeout:       2 * time.Minute,
+   	}
+   }
+   ```
+
+2. **Горутина проекта — с владельцем.** `recover` в теле, выход по `ctx` или
+   остановке, ожидание тем, кто запустил. Фоновое — задача планировщика.
+   Горутина сервера отдаёт владельцу и ошибку, и панику:
+
+   ```go
+   // serve — ошибка и паника сервера уходят в served, их ждёт run.
+   func serve(served chan<- error, srv *http.Server, ln net.Listener) {
+   	defer func() {
+   		if r := recover(); r != nil {
+   			served <- fmt.Errorf("serve %s: panic: %v", srv.Addr, r)
+   		}
+   	}()
+   	served <- srv.Serve(ln)
+   }
+   ```
+
+3. **Пул — UTC, имя сервиса и срок забытой транзакции.** `application_name`
+   показывает в `pg_stat_activity`, чей запрос держит блокировку;
+   `idle_in_transaction_session_timeout` закрывает транзакцию, которую код
+   открыл и забыл, — иначе она держит блокировки и не даёт `VACUUM` убрать
+   строки. Сроки запросов в DSN не кладутся: их ставит `postgres.Runner`
+   внутри транзакции, а DSN достался бы и законно длинным миграциям
+   ([postgres/doc.go](../postgres/doc.go), п. 2).
+
+   ```go
+   // poolDSN — DSN пула проекта.
+   func poolDSN(dsn, service string) (string, error) {
+   	out, err := postgres.WithUTC(dsn)
+   	if err != nil {
+   		return "", err
+   	}
+   	if out, err = postgres.WithRuntimeParam(out, "application_name", service); err != nil {
+   		return "", err
+   	}
+   	return postgres.WithRuntimeParam(out, "idle_in_transaction_session_timeout", "60s")
+   }
+   ```
+
+4. **Свой ввод — строго, одной функцией.** Тело — через `http.MaxBytesReader`;
+   лишнее поле — отказ; после значения — ничего, кроме пробелов; превышение
+   потолка — 413, а не 400. Деньги в JSON — целые минорные единицы, время —
+   RFC 3339 с `Z` (раздел 8). Чужие тела — вебхуки и ответы провайдеров —
+   разбирают блоки, и там разбор терпимый
+   ([CONVENTIONS §12](../CONVENTIONS.md#12-границы-процесса-и-чужие-данные)).
+
+   ```go
+   // decodeJSON — единственный разбор тела ручки проекта.
+   func decodeJSON(w http.ResponseWriter, r *http.Request, maxBytes int64, dst any) error {
+   	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBytes))
+   	dec.DisallowUnknownFields()
+   	if err := dec.Decode(dst); err != nil {
+   		if tooLarge := new(http.MaxBytesError); errors.As(err, &tooLarge) {
+   			return errs.PayloadTooLarge("body-too-large").WithCause(err)
+   		}
+   		return errs.IncorrectInput("body-invalid").WithCause(err)
+   	}
+   	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+   		return errs.IncorrectInput("body-invalid")
+   	}
+   	return nil
+   }
+   ```
+
+5. **Ответ API — `nosniff` и `no-store`.** `X-Content-Type-Options: nosniff`
+   не даёт браузеру прочитать JSON как HTML, `Cache-Control: no-store` не даёт
+   посреднику сохранить ответ с персональными данными или токеном. Ответ,
+   который кэшировать можно, ставит свой заголовок сам.
+
+   ```go
+   // apiHeaders — заголовки каждого ответа API.
+   func apiHeaders(next http.Handler) http.Handler {
+   	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+   		h := w.Header()
+   		h.Set("X-Content-Type-Options", "nosniff")
+   		h.Set("Cache-Control", "no-store")
+   		next.ServeHTTP(w, r)
+   	})
+   }
+   ```
+
+6. **CI проекта — как у тулкита.** Действия закреплены полным SHA коммита с
+   версией в комментарии (`actions/checkout@<sha> # v4.4.0`), Dependabot
+   обновляет их вместе с модулями Go; у каждого джоба `permissions:` не шире
+   `contents: read`; `govulncheck`; тесты под `TZ` не UTC. Стражи тулкита
+   `scripts/timeguard.sh`, `sqlguard.sh`, `codeguard.sh` и `ciguard.sh`
+   копируются в проект вместе с пустыми `scripts/*.allow`: они обходят любой
+   репозиторий с `go.mod` и `*/migrations/*.sql`
+   ([SECURITY.md](../SECURITY.md), «Цепочка поставки»).
+
+Образец — монолит: сервер, горутины, пул и разбор тела — `app.go`,
+`shoppg/db.go` и `handlers_money.go` в
+[`examples/monolith`](../examples/monolith) (правка — чипом монолита
+2026-09-17; до неё монолит держит только срок заголовков, код выше).
+
 ## Короткая форма
 
 - [ ] `slog.SetDefault` на JSON в stdout первой строкой; обработчик контекста снаружи `errtrack.WrapLogger`
@@ -721,6 +851,10 @@ Postgres — [`compose.yaml`](../examples/monolith/compose.yaml).
 - [ ] миграции блоков применяет раннер проекта; после волны ADR-0011 — своя таблица версий на блок
 - [ ] время: часы приложения в UTC, `timestamptz` без `now()`, `.UTC()` после `Scan`; лог пишет UTC через `ReplaceAttr`; бизнес-пояс — из окружения с `time/tzdata`; `TZ=UTC` в контейнерах; тесты под `TZ` не UTC
 - [ ] `reqid.Middleware` первым; `httperr.Config.RequestID` — `reqid.From`
+- [ ] сервер — четыре срока; горутины — с `recover` и ожиданием; пул — `application_name` и `idle_in_transaction_session_timeout`, сроки запросов — `postgres.Runner`
+- [ ] ввод — одна функция: `MaxBytesReader`, `DisallowUnknownFields`, одно значение, 413 на превышение; ответ API — `nosniff` и `no-store`
+- [ ] миграции проекта — `COLLATE "C"` у ключей, `SET LOCAL lock_timeout`, расширить → сузить; стражи тулкита в CI проекта
+- [ ] CI — действия по SHA, `permissions:` у каждого джоба, Dependabot для actions и gomod
 
 ## Чего в контракте нет
 

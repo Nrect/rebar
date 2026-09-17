@@ -1,8 +1,9 @@
 #!/bin/sh
 # Секреты не должны попасть даже в приватный репозиторий: тулкит копируется в
-# чужие проекты, и ключ уедет вместе с каталогом.
+# чужие проекты, и ключ уедет вместе с каталогом. Тот же скан с тем же
+# .gitleaks.toml — джоб CI secrets; хук ловит раньше, до коммита.
 if command -v gitleaks >/dev/null 2>&1; then
-    gitleaks protect --staged --redact -v
+    gitleaks git --staged --config .gitleaks.toml --redact --no-banner
 else
-    echo "WARNING: gitleaks not installed, skipping secret scan"
+    echo "WARNING: gitleaks not installed, skipping secret scan (CI job secrets still runs)"
 fi

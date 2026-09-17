@@ -26,7 +26,7 @@ jobs:
       list: ${{ steps.find.outputs.list }}
     steps:
       # fetch-depth: 0 — иначе не с чем сравнивать PR: origin/<base> недоступен.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
       # На PR гоняются только тронутые модули: одиннадцать модулей × три джоба —
@@ -71,11 +71,11 @@ jobs:
       matrix:
         module: ${{ fromJson(needs.modules.outputs.list) }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: ${{ matrix.module }}/go.mod
-      - uses: golangci/golangci-lint-action@v9
+      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: v2.12.2
           working-directory: ${{ matrix.module }}
@@ -93,8 +93,8 @@ jobs:
       matrix:
         module: ${{ fromJson(needs.modules.outputs.list) }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: ${{ matrix.module }}/go.mod
       # Интеграционные тесты (testcontainers: Mailpit, Postgres) идут здесь же:
@@ -120,8 +120,8 @@ jobs:
       matrix:
         module: ${{ fromJson(needs.modules.outputs.list) }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: ${{ matrix.module }}/go.mod
       - name: govulncheck
@@ -134,21 +134,41 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: go и toolchain одинаковые во всех go.mod
         run: ./scripts/toolchain-lockstep.sh
       - name: общие зависимости одной версии
         run: ./scripts/deps-lockstep.sh
 
-  timeguard:
-    name: Время — UTC и параметром
+  # Стражи правил репозитория: время, текст и живая схема, границы процесса,
+  # цепочка поставки CI. Исключения каждого — scripts/<страж>.allow с причиной.
+  guards:
+    name: Стражи правил (время, миграции, границы процесса, CI)
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
-      - name: миграции и код прода без времени мимо UTC
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: время — UTC и параметром
         run: ./scripts/timeguard.sh
+      - name: миграции — COLLATE "C", lock_timeout, схема на живой базе
+        run: ./scripts/sqlguard.sh
+      - name: границы процесса — таймауты, потолки, горутины
+        run: ./scripts/codeguard.sh
+      - name: CI — действия по SHA, permissions, регистр путей
+        run: ./scripts/ciguard.sh
+
+  # Секреты в дереве: pre-commit хук стоит не у всех, а репозиторий публичный.
+  # Исключения — точные тестовые значения в .gitleaks.toml.
+  secrets:
+    name: Секреты в дереве (gitleaks)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: gitleaks по рабочему дереву
+        run: docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f dir /repo --config /repo/.gitleaks.toml --redact --no-banner
 
   # Пример — гейт тегов: модуль, который не собирается вместе с соседями,
   # тега не получает. На PR не гоняется (каталог трогают редко), на main и по
@@ -161,8 +181,8 @@ jobs:
       contents: read
     continue-on-error: false
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.work
       - name: go build examples

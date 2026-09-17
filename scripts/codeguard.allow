@@ -1,0 +1,23 @@
+# Исключения стража границ процесса (scripts/codeguard.sh): путь<TAB>строка кода<TAB>причина.
+# Починил — вычеркни: запись, которой нет в коде, роняет стража.
+#
+# Горутины, у которых владелец, recover и ожидание есть, — постоянные записи с указанием, где они.
+scheduler/scheduler.go	go s.loop(ctx, j)	recover — safeRun на каждом прогоне; ожидание — Stop (wg)
+idem/idemtest/suite_race.go	go func() { done <- call() }()	набор тестов: паника роняет тест, и это нужно; ожидание — канал done
+inbox/inboxtest/suite_store_fixtures.go	go func() {	набор тестов: паника роняет тест, и это нужно; ожидание — канал результата
+objectstore/objectstoretest/memstore.go	body, err := io.ReadAll(req.Body)	двойник хранилища: тело пишет тест, потолок размера держит Uploader ядра
+mail/cmd/sesfake/main.go	srv := &http.Server{	стенд разработки, не прод: WriteTimeout не нужен ручкам фейка
+mail/cmd/sesfake/main.go	go func() {	стенд разработки: ListenAndServe и ожидание relay.wait; ожидание — select в main
+mail/cmd/sesfake/relay.go	go func() {	стенд разработки: доставка в Mailpit; ожидание — wg в wait
+#
+# Модули в заморозке 7c1a927 — правка после тегов (ROADMAP, «Признанные долги»).
+entitlement/service.go	go s.load(ctx, subjectID, w)	паника Store.Open роняет процесс: recover в load — после тегов (ROADMAP)
+mail/smtp/smtp.go	go func() { done <- t.client.DialAndSendWithContext(ctx, msg) }()	паника go-mail роняет процесс: recover — после тегов (ROADMAP)
+objectstore/s3/config.go	return http.DefaultClient	клиент без Timeout по умолчанию: свой клиент со сроком — после тегов (ROADMAP)
+#
+# Пример-монолит — правка чипом монолита (2026-09-17).
+examples/monolith/app.go	public := &http.Server{Addr: a.cfg.Addr, Handler: a.handler, ReadHeaderTimeout: readHeaderTimeout}	чип монолита: четыре таймаута сервера (2026-09-17)
+examples/monolith/app.go	internal := &http.Server{Addr: a.cfg.InternalAddr, Handler: a.probes, ReadHeaderTimeout: readHeaderTimeout}	чип монолита: четыре таймаута сервера (2026-09-17)
+examples/monolith/app.go	go func() { a.served <- public.Serve(lns[0]) }()	чип монолита: владелец и recover горутин Serve (2026-09-17)
+examples/monolith/app.go	go func() { a.served <- internal.Serve(lns[1]) }()	чип монолита: владелец и recover горутин Serve (2026-09-17)
+examples/monolith/process.go	go func() {	чип монолита: владелец и recover горутины остановки (2026-09-17)
