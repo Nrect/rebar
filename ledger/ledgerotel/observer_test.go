@@ -104,7 +104,8 @@ func TestObserver_CountsUnderCanceledContext(t *testing.T) {
 
 	obs.Found(ctx, ledger.Finding{Book: "wallet", Mismatches: []ledger.Mismatch{{Seq: 1, Check: ledger.CheckSignature}}})
 
-	assert.Equal(t, int64(1), mismatchCount(t, mismatchPoints(t, collect(t, reader)), "wallet", ledger.CheckSignature))
+	assert.Equal(t, int64(1), mismatchCount(t, mismatchPoints(t, collect(t, reader)), "wallet", ledger.CheckSignature),
+		"счётчик под отменённым контекстом")
 }
 
 // Классификация метрики совпадает с тем, что нашла настоящая сверка (PATTERNS
@@ -179,18 +180,26 @@ func newMeter(t *testing.T) (*sdkmetric.ManualReader, metric.Meter) {
 	return reader, mp.Meter("rebar.ledger")
 }
 
-// collect — метрики одного scrape.
+// collect — метрики одного scrape. Пустой scrape — nil, а не отказ помощника:
+// нет рядов — называет утверждение теста.
 func collect(t *testing.T, reader *sdkmetric.ManualReader) []metricdata.Metrics {
 	t.Helper()
 	var rm metricdata.ResourceMetrics
 	require.NoError(t, reader.Collect(context.Background(), &rm))
+	if len(rm.ScopeMetrics) == 0 {
+		return nil
+	}
 	require.Len(t, rm.ScopeMetrics, 1)
 	return rm.ScopeMetrics[0].Metrics
 }
 
-// mismatchPoints — точки счётчика расхождений; имя, единица и монотонность — контракт.
+// mismatchPoints — точки счётчика расхождений; nil — scrape пуст. Scrape без
+// инструмента — отказ: имя, единица и монотонность — контракт.
 func mismatchPoints(t *testing.T, ms []metricdata.Metrics) []metricdata.DataPoint[int64] {
 	t.Helper()
+	if len(ms) == 0 {
+		return nil
+	}
 	for _, m := range ms {
 		if m.Name != mismatchName {
 			continue
