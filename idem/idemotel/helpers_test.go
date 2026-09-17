@@ -44,12 +44,16 @@ func newMeter(t *testing.T) (*sdkmetric.ManualReader, metric.Meter) {
 	return reader, mp.Meter("rebar.idem")
 }
 
-// requestPoints — точки счётчика одного scrape; имя, единица и монотонность —
-// контракт.
+// requestPoints — точки счётчика одного scrape. Пустой scrape — nil, а не отказ
+// помощника: нет рядов — называет утверждение теста. Scrape без инструмента —
+// отказ: имя, единица и монотонность — контракт.
 func requestPoints(t *testing.T, reader *sdkmetric.ManualReader) []metricdata.DataPoint[int64] {
 	t.Helper()
 	var rm metricdata.ResourceMetrics
 	require.NoError(t, reader.Collect(context.Background(), &rm))
+	if len(rm.ScopeMetrics) == 0 {
+		return nil
+	}
 	require.Len(t, rm.ScopeMetrics, 1)
 	for _, m := range rm.ScopeMetrics[0].Metrics {
 		if m.Name != requestsName {
