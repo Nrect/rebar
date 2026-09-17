@@ -98,5 +98,5 @@ func TestObserver_CountsUnderCanceledContext(t *testing.T) {
 	obs.Outcome(ctx, opCreate, idem.OutcomeError)
 
 	value, _ := requestCount(requestPoints(t, reader), opCreate, idem.OutcomeError)
-	assert.Equal(t, int64(1), value)
+	assert.Equal(t, int64(1), value, "счётчик под отменённым контекстом")
 }
