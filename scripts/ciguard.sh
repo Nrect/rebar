@@ -57,7 +57,8 @@ for f in .github/workflows/*.yml .github/workflows/*.yaml; do
   ' "$f" || fail=1
 done
 
-dups="$(git ls-files | tr '[:upper:]' '[:lower:]' | sort | uniq -d)"
+# sort -u: при конфликте слияния ls-files печатает путь по разу на каждую версию.
+dups="$(git ls-files | sort -u | tr '[:upper:]' '[:lower:]' | sort | uniq -d)"
 if [ -n "$dups" ]; then
   printf 'ciguard: пути различаются только регистром: %s\n' $dups >&2
   fail=1
