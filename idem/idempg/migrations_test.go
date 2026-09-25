@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -17,6 +18,12 @@ import (
 
 // initMigration — первая миграция: схема целиком.
 const initMigration = "00001_idem_init.sql"
+
+// lockTimeout — первый оператор обоих разделов (CORRECTNESS §13).
+const lockTimeout = "SET LOCAL lock_timeout = '5s';"
+
+// textColumn — строка колонки текстового типа в CREATE TABLE: имя и хвост после типа.
+var textColumn = regexp.MustCompile(`(?m)^ {4}([a-z_]+)\s+(?i:text|varchar|char)(?:\(\d+\))?(.*)$`)
 
 // Стражи каталога и его поставка: Migrations() отдаёт ровно файлы каталога.
 // Файл, который шаблон embed не взял (00002_x.SQL), молча не уехал бы
@@ -56,8 +63,8 @@ func TestInitMigration_HoldsContract(t *testing.T) {
 		"CONSTRAINT idem_records_fingerprint_chk",
 		"CONSTRAINT idem_records_status_chk",
 		"CONSTRAINT idem_records_body_chk",
-		"content_type TEXT NOT NULL DEFAULT ''",
-		"location     TEXT NOT NULL DEFAULT ''",
+		`content_type TEXT COLLATE "C" NOT NULL DEFAULT ''`,
+		`location     TEXT COLLATE "C" NOT NULL DEFAULT ''`,
 	} {
 		assert.Contains(t, up, want)
 	}
@@ -71,9 +78,23 @@ func TestInitMigration_HoldsContract(t *testing.T) {
 	assert.NotContains(t, up, "public.")
 	// Идемпотентность через DROP TABLE стёрла бы записи у базы со старой копией.
 	assert.NotContains(t, up, "DROP TABLE")
+	assert.Equal(t, recordText, collatedText(t, up), "текстовые колонки миграции")
+	assert.Equal(t, lockTimeout, statements(up)[0], "Up: первый оператор")
 
 	// Down снимает ровно свою таблицу: индекс уходит вместе с ней, CASCADE нет.
-	assert.Equal(t, []string{"DROP TABLE IF EXISTS idem_records;"}, statements(down))
+	assert.Equal(t, []string{lockTimeout, "DROP TABLE IF EXISTS idem_records;"}, statements(down))
+}
+
+// collatedText — имена текстовых колонок; у каждой COLLATE "C" сразу за типом.
+func collatedText(t *testing.T, up string) []string {
+	t.Helper()
+	matches := textColumn.FindAllStringSubmatch(up, -1)
+	names := make([]string, 0, len(matches))
+	for _, m := range matches {
+		assert.True(t, strings.HasPrefix(m[2], ` COLLATE "C" `), "колонка %s: нет COLLATE \"C\" за типом", m[1])
+		names = append(names, m[1])
+	}
+	return names
 }
 
 // Накат на пустую схему, откат и снова накат (ADR-0011, стражи 4 и 6): после

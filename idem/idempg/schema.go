@@ -36,6 +36,10 @@ const (
 	typeTimestamptz = "timestamp with time zone"
 )
 
+// collationC — сортировка текстовых колонок: порядок и индекс побайтно, как у
+// двойника, и не меняются с обновлением ОС сервера (CORRECTNESS §12).
+const collationC = "C"
+
 // expectedColumns — колонки и их data_type; меняется только вместе с
 // миграциями (страж — TestExpectedSchema_MatchesMigrations).
 var expectedColumns = map[string]string{
@@ -63,15 +67,20 @@ WHERE c.oid = to_regclass('idem_records')`
 const columnsSQL = `SELECT column_name, data_type FROM information_schema.columns
 WHERE table_schema = $1 AND table_name = $2`
 
+// У нетекстовой колонки attcollation = 0: строки нет.
+const collationsSQL = `SELECT a.attname, c.collname
+FROM pg_attribute a JOIN pg_collation c ON c.oid = a.attcollation
+WHERE a.attrelid = $1 AND a.attnum > 0 AND NOT a.attisdropped`
+
 const constraintsSQL = `SELECT conname FROM pg_constraint WHERE conrelid = $1 AND contype IN ('c', 'p')`
 
 const indexesSQL = `SELECT indexname, indexdef LIKE 'CREATE UNIQUE INDEX %'
 FROM pg_indexes WHERE schemaname = $1 AND tablename = $2`
 
 // CheckSchema сверяет таблицу с миграциями Migrations(), ничего не меняя:
-// колонки и их типы, первичный ключ и CHECK по именам, индексы. Зовут старт и
-// /readyz потребителя (CONSUMER §3). Лишние колонки и индексы потребителя
-// расхождением не считаются.
+// колонки, их типы и сортировку "C" у текстовых, первичный ключ и CHECK по
+// именам, индексы. Зовут старт и /readyz потребителя (CONSUMER §3). Лишние
+// колонки и индексы потребителя расхождением не считаются.
 //
 // Все расхождения — в одной ошибке, первая строка — что делать. Сбой запроса к
 // каталогу — idem.ErrUnavailable. Данных таблицы в ошибке нет.
@@ -91,6 +100,7 @@ func (s *Store) CheckSchema(ctx context.Context) error {
 	var problems []string
 	for _, check := range []func(context.Context) ([]string, error){
 		func(ctx context.Context) ([]string, error) { return s.checkColumns(ctx, schema) },
+		func(ctx context.Context) ([]string, error) { return s.checkCollations(ctx, oid) },
 		func(ctx context.Context) ([]string, error) { return s.checkConstraints(ctx, oid) },
 		func(ctx context.Context) ([]string, error) { return s.checkIndexes(ctx, schema) },
 	} {
@@ -123,6 +133,20 @@ func (s *Store) checkColumns(ctx context.Context, schema string) ([]string, erro
 			problems = append(problems, "колонки "+name+" нет")
 		case got != expectedColumns[name]:
 			problems = append(problems, fmt.Sprintf("колонка %s: тип %s, ожидается %s", name, got, expectedColumns[name]))
+		}
+	}
+	return problems, nil
+}
+
+func (s *Store) checkCollations(ctx context.Context, oid uint32) ([]string, error) {
+	actual, err := queryPairs[string](ctx, s.db(), collationsSQL, oid)
+	if err != nil {
+		return nil, storeError("check schema: collations", err)
+	}
+	var problems []string
+	for _, name := range slices.Sorted(maps.Keys(expectedColumns)) {
+		if got, ok := actual[name]; ok && expectedColumns[name] == typeText && got != collationC {
+			problems = append(problems, fmt.Sprintf("колонка %s: сортировка %s, ожидается %s", name, got, collationC))
 		}
 	}
 	return problems, nil
