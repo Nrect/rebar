@@ -8,20 +8,24 @@
 --
 -- Внешние ключи на subject_id таблиц блоков стоят ЗДЕСЬ: блоки имени этой
 -- таблицы не знают и знать не должны (CONVENTIONS §9).
+--
+-- Текст — COLLATE "C" (docs/CORRECTNESS.md, §12), первый оператор раздела —
+-- lock_timeout (§13): накат в очереди за блокировкой не держит прод.
 
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 
 -- Пользователи за портом auth.Identities. Логин лежит УЖЕ нормализованным
 -- (loginid.Normalize), и уникальный индекс построен на сохранённой колонке, а
 -- не на выражении: вторая точка нормализации разъехалась бы с первой.
 CREATE TABLE IF NOT EXISTS shop_users (
-    id            uuid        PRIMARY KEY,
-    login         text        NOT NULL,
-    password_hash text        NOT NULL,
-    verified      boolean     NOT NULL DEFAULT false,
-    disabled      boolean     NOT NULL DEFAULT false,
-    created_at    timestamptz NOT NULL,
-    updated_at    timestamptz NOT NULL,
+    id            uuid             PRIMARY KEY,
+    login         text COLLATE "C" NOT NULL,
+    password_hash text COLLATE "C" NOT NULL,
+    verified      boolean          NOT NULL DEFAULT false,
+    disabled      boolean          NOT NULL DEFAULT false,
+    created_at    timestamptz      NOT NULL,
+    updated_at    timestamptz      NOT NULL,
     CONSTRAINT ux_shop_users_login UNIQUE (login)
 );
 
@@ -29,13 +33,13 @@ CREATE TABLE IF NOT EXISTS shop_users (
 -- приходит хуком зачисления: строка помечается оплаченной ТОЙ ЖЕ транзакцией,
 -- что и книга платежей.
 CREATE TABLE IF NOT EXISTS shop_orders (
-    id           uuid        PRIMARY KEY,
-    subject_id   uuid        NOT NULL REFERENCES shop_users (id),
-    product_code text        NOT NULL,
-    amount_minor bigint      NOT NULL,
-    currency     char(3)     NOT NULL,
+    id           uuid                PRIMARY KEY,
+    subject_id   uuid                NOT NULL REFERENCES shop_users (id),
+    product_code text COLLATE "C"    NOT NULL,
+    amount_minor bigint              NOT NULL,
+    currency     char(3) COLLATE "C" NOT NULL,
     paid_at      timestamptz,
-    created_at   timestamptz NOT NULL,
+    created_at   timestamptz         NOT NULL,
     CONSTRAINT shop_orders_amount_chk CHECK (amount_minor > 0)
 );
 
@@ -45,12 +49,12 @@ CREATE INDEX IF NOT EXISTS ix_shop_orders_subject ON shop_orders (subject_id, cr
 -- отдельной колонкой и в ключ не попадает никогда (ADR-0006, инвариант 5).
 -- По этой же таблице отвечает objectstore.Owned: есть строка — объект чей-то.
 CREATE TABLE IF NOT EXISTS shop_uploads (
-    object_key    text        PRIMARY KEY,
-    subject_id    uuid        NOT NULL REFERENCES shop_users (id),
-    original_name text        NOT NULL,
-    content_type  text        NOT NULL,
-    size_bytes    bigint      NOT NULL,
-    created_at    timestamptz NOT NULL
+    object_key    text COLLATE "C" PRIMARY KEY,
+    subject_id    uuid             NOT NULL REFERENCES shop_users (id),
+    original_name text COLLATE "C" NOT NULL,
+    content_type  text COLLATE "C" NOT NULL,
+    size_bytes    bigint           NOT NULL,
+    created_at    timestamptz      NOT NULL
 );
 
 -- ADD CONSTRAINT IF NOT EXISTS в Postgres нет: повторный накат снимает ключ и
@@ -66,6 +70,7 @@ ALTER TABLE entitlement_grants
     ADD CONSTRAINT fk_entitlement_grants_subject FOREIGN KEY (subject_id) REFERENCES shop_users (id);
 
 -- +goose Down
+SET LOCAL lock_timeout = '5s';
 -- Таблиц блоков на повторном откате уже нет: ALTER TABLE IF EXISTS.
 ALTER TABLE IF EXISTS entitlement_grants DROP CONSTRAINT IF EXISTS fk_entitlement_grants_subject;
 ALTER TABLE IF EXISTS auth_tokens DROP CONSTRAINT IF EXISTS fk_auth_tokens_subject;

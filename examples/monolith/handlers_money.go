@@ -2,6 +2,8 @@ package monolith
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"time"
 
@@ -177,9 +179,16 @@ func (a *App) upload(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Срок продлевается только вместе с потолком тела: иначе клиент пишет во
+	// временные файлы без меры все две минуты.
+	if err := extendDeadlines(w, uploadTimeout); err != nil {
+		a.respond.Write(r.Context(), w, err)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes)
 	file, header, err := r.FormFile("file")
 	if err != nil {
-		a.respond.Write(r.Context(), w, errs.IncorrectInput("file-missing").WithCause(err))
+		a.respond.Write(r.Context(), w, bodyError(err, "file-missing"))
 		return
 	}
 	defer func() { _ = file.Close() }()
@@ -235,16 +244,49 @@ func (a *App) allowed(w http.ResponseWriter, r *http.Request, p authz.Permission
 	return principal.SubjectID, true
 }
 
+// wallClock — настоящее время для сроков соединения: net сверяет их с ним, а
+// часы приложения тесты переводят.
+var wallClock = func() time.Time { return time.Now().UTC() }
+
+// extendDeadlines продлевает сроки чтения и записи соединения на d от
+// текущего момента.
+func extendDeadlines(w http.ResponseWriter, d time.Duration) error {
+	rc := http.NewResponseController(w)
+	at := wallClock().Add(d)
+	return errors.Join(rc.SetReadDeadline(at), rc.SetWriteDeadline(at))
+}
+
 // decodeJSON читает тело запроса; ошибку пишет переданный ответчик. Возвращает
 // false, если ответ уже написан.
 func decodeJSON(respond *httperr.Responder, w http.ResponseWriter, r *http.Request, dst any) bool {
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxJSONBytes))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(dst); err != nil {
-		respond.Write(r.Context(), w, errs.IncorrectInput("body-invalid").WithCause(err))
+	if err := readJSON(w, r, dst); err != nil {
+		respond.Write(r.Context(), w, err)
 		return false
 	}
 	return true
+}
+
+// readJSON — единственный разбор тела ручки: одно значение без лишних полей,
+// после него только пробелы (docs/CONSUMER.md, §9, п. 4).
+func readJSON(w http.ResponseWriter, r *http.Request, dst any) error {
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxJSONBytes))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(dst); err != nil {
+		return bodyError(err, "body-invalid")
+	}
+	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return bodyError(err, "body-invalid")
+	}
+	return nil
+}
+
+// bodyError — отказ по телу: превышение потолка — 413, остальное — 400 со
+// слагом ручки.
+func bodyError(err error, slug string) error {
+	if tooLarge := new(http.MaxBytesError); errors.As(err, &tooLarge) {
+		return errs.PayloadTooLarge("body-too-large").WithCause(err)
+	}
+	return errs.IncorrectInput(slug).WithCause(err)
 }
 
 // writeJSON — единственная точка успешного ответа. Ошибки пишет только

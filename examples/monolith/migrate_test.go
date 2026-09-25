@@ -14,7 +14,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/nrect/rebar/entitlement/entitlementpg"
-	"github.com/nrect/rebar/postgres"
 	"github.com/nrect/rebar/postgres/pgtest"
 
 	"github.com/nrect/rebar/examples/monolith"
@@ -107,13 +106,7 @@ func TestMigrate_DownTwiceThenUp(t *testing.T) {
 func migrationDB(t *testing.T) *shoppg.DB {
 	t.Helper()
 	pgtest.Short(t)
-	sdb, err := shoppg.Open(t.Context(), pgtest.SchemaDSN(t, db), postgres.Config{
-		LockTimeout: 3 * time.Second, StatementTimeout: 10 * time.Second,
-		MaxAttempts: 1, RetryBase: 20 * time.Millisecond,
-	})
-	require.NoError(t, err)
-	t.Cleanup(sdb.Close)
-	return sdb
+	return openShop(t, pgtest.SchemaDSN(t, db))
 }
 
 // requireSchemaGreen — сверка каждого блока списком сборки, а entitlementpg ещё

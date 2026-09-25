@@ -15,4 +15,3 @@ payment/paymentpg/migrations/00001_payment_init.sql	*	выпущена, моду
 idem/idempg/migrations/00001_idem_init.sql	*	не выпущена — правка на месте чипом «миграции idem, inbox, ledger» (2026-09-17)
 inbox/inboxpg/migrations/00001_inbox_init.sql	*	не выпущена — правка на месте чипом «миграции idem, inbox, ledger» (2026-09-17)
 ledger/ledgerpg/migrations/00001_ledger_init.sql	*	не выпущена — правка на месте чипом «миграции idem, inbox, ledger» (2026-09-17)
-examples/monolith/migrations/00001_shop_init.sql	*	пример, тегов не получает — правка чипом монолита (2026-09-17)

@@ -73,6 +73,12 @@
 //  11. СИГНАЛ НЕ РЕЖЕТ ПРОГОН. Задачи гасит Stop между прогонами, а не отмена
 //     контекста посреди отправки письма; порядок и бюджеты остановки —
 //     docs/CONSUMER.md, §5. Держит TestStop_RunningJobWritesOutcome.
+//  12. МЕДЛЕННЫЙ КЛИЕНТ НЕ ДЕРЖИТ СОЕДИНЕНИЕ. Четыре срока у обоих серверов;
+//     загрузка продлевает их только вместе с потолком тела. Держат
+//     TestStart_ServersHaveAllTimeouts и TestUpload_SlowBodyOutlivesReadTimeout.
+//  13. ВВОД СТРОГИЙ, ОТВЕТ НЕ КЭШИРУЕТСЯ. Одно значение JSON под потолком (выше —
+//     413), nosniff и no-store на каждом ответе. Держат
+//     TestJSON_OneValueUnderCeiling и TestAPIHeaders_OnEveryResponse.
 //
 // # Наблюдаемость
 //

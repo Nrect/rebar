@@ -12,7 +12,7 @@ set -a; . ./stand.env; set +a
 AUTH_SECRET="$(openssl rand -base64 48)" GOWORK=off go run ./cmd/monolith
 ```
 
-База стенда, поднятого до миграций внутри блоков (ADR-0011), пересоздаётся: `docker compose down -v`.
+База стенда, поднятого до миграций внутри блоков (ADR-0011) или до правки `00001_shop_init.sql` на месте (`COLLATE "C"`, `lock_timeout`), пересоздаётся: `docker compose down -v` снимает контейнер вместе с анонимным томом Postgres. goose сверяет номер файла, а не текст: накатанный `00001` правку не получит.
 
 Время процесса — UTC из кода (часы приложения, логи, пул с `postgres.WithUTC`), от пояса машины оно не зависит; `TZ: UTC` у Postgres в `compose.yaml` — второй рубеж.
 

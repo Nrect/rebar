@@ -16,6 +16,12 @@ import (
 // ProviderName — имя провайдера, события которого принимает ручка вебхука.
 const ProviderName = providerName
 
+// Потолки тела запроса: JSON-ручек и загрузки файла.
+const (
+	MaxJSONBytes   = maxJSONBytes
+	MaxUploadBytes = maxUploadBytes
+)
+
 // PaymentConfig — политика оплаты сборки.
 func PaymentConfig() payment.Config { return paymentConfig() }
 
@@ -42,6 +48,11 @@ func (a *App) Refund(ctx context.Context, req payment.RefundRequest) (payment.Re
 // система.
 func (a *App) Addrs() (public, internal string) {
 	return a.public.Addr, a.internal.Addr
+}
+
+// Servers — серверы, собранные Start: тест сверяет их сроки.
+func (a *App) Servers() (public, internal *http.Server) {
+	return a.public, a.internal
 }
 
 // Catalogs — каталоги миграций сборки в порядке наката, как их берёт New.
