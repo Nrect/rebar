@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -19,6 +20,16 @@ import (
 
 // initMigration — первая миграция: схема целиком.
 const initMigration = "00001_ledger_init.sql"
+
+// lockTimeout — первый оператор обоих разделов (CORRECTNESS §13).
+const lockTimeout = "SET LOCAL lock_timeout = '5s';"
+
+var (
+	// createTable — CREATE TABLE: имя таблицы и тело до закрывающей скобки.
+	createTable = regexp.MustCompile(`(?s)CREATE TABLE IF NOT EXISTS ([a-z_]+) \((.*?)\n\);`)
+	// textColumn — строка колонки текстового типа: имя и хвост после типа.
+	textColumn = regexp.MustCompile(`(?m)^ {4}([a-z_]+)\s+(?i:text|varchar|char)(?:\(\d+\))?(.*)$`)
+)
 
 // ledgerTriggers — триггеры схемы: на журнале и на счетах.
 var ledgerTriggers = []string{
@@ -96,6 +107,9 @@ func TestInitMigration_HoldsContract(t *testing.T) {
 	// Идемпотентность через DROP TABLE стёрла бы журнал у базы со старой копией.
 	assert.NotContains(t, up, "DROP TABLE")
 	assert.NotContains(t, up, "CREATE OR REPLACE TRIGGER", "сбрасывает режим в ORIGIN")
+	assert.Equal(t, textColumns, collatedText(t, up), "текстовые колонки миграции")
+	assert.Equal(t, lockTimeout, firstStatement(up), "Up: первый оператор")
+	assert.Equal(t, lockTimeout, firstStatement(down), "Down: первый оператор")
 
 	for _, want := range []string{
 		"DROP TABLE IF EXISTS ledger_entries",
@@ -110,6 +124,30 @@ func TestInitMigration_HoldsContract(t *testing.T) {
 		assert.Contains(t, down, want)
 	}
 	assert.NotContains(t, down, "CREATE TABLE")
+}
+
+// collatedText — текстовые колонки «таблица.колонка»; у каждой COLLATE "C"
+// сразу за типом. Только тела CREATE TABLE: переменные DO-блока — не колонки.
+func collatedText(t *testing.T, up string) []string {
+	t.Helper()
+	var names []string
+	for _, table := range createTable.FindAllStringSubmatch(up, -1) {
+		for _, m := range textColumn.FindAllStringSubmatch(table[2], -1) {
+			assert.True(t, strings.HasPrefix(m[2], ` COLLATE "C" `), "%s.%s: нет COLLATE \"C\" за типом", table[1], m[1])
+			names = append(names, table[1]+"."+m[1])
+		}
+	}
+	return names
+}
+
+// firstStatement — первая строка SQL, не комментарий и не пустая.
+func firstStatement(sql string) string {
+	for line := range strings.SplitSeq(sql, "\n") {
+		if line = strings.TrimSpace(line); line != "" && !strings.HasPrefix(line, "--") {
+			return line
+		}
+	}
+	return ""
 }
 
 // Накат на пустую схему, откат и снова накат (ADR-0011, стражи 4 и 6): после

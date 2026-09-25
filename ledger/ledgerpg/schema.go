@@ -72,6 +72,10 @@ const (
 	typeTimestamptz = "timestamp with time zone"
 )
 
+// collationC — сортировка текстовых колонок: порядок и индекс побайтно, как у
+// двойника, и не меняются с обновлением ОС сервера (CORRECTNESS §12).
+const collationC = "C"
+
 // tableSpec — что обязано быть у таблицы. Меняется только вместе с миграцией;
 // страж расхождения — TestExpectedSchema_MatchesMigrations.
 type tableSpec struct {
@@ -156,6 +160,11 @@ WHERE c.oid = to_regclass($1)`
 const columnsSQL = `SELECT column_name, data_type FROM information_schema.columns
 WHERE table_schema = $1 AND table_name = $2`
 
+// У нетекстовой колонки attcollation = 0: строки нет.
+const collationsSQL = `SELECT a.attname, c.collname
+FROM pg_attribute a JOIN pg_collation c ON c.oid = a.attcollation
+WHERE a.attrelid = $1 AND a.attnum > 0 AND NOT a.attisdropped`
+
 const constraintsSQL = `SELECT conname FROM pg_constraint WHERE conrelid = $1 AND contype IN ('c', 'f')`
 
 const indexesSQL = `SELECT indexname, indexdef LIKE 'CREATE UNIQUE INDEX %'
@@ -173,9 +182,10 @@ const (
 )
 
 // CheckSchema сверяет таблицы ledger_* с миграциями, а справочники книг и родов —
-// с книгами из New, ничего не меняя: колонки и типы, CHECK и внешние ключи,
-// индексы, режим ENABLE ALWAYS у триггеров, права и search_path их функций.
-// Зовётся на старте потребителя; все расхождения — в одной ошибке, по именам.
+// с книгами из New, ничего не меняя: колонки, типы и сортировку "C" у
+// текстовых, CHECK и внешние ключи, индексы, режим ENABLE ALWAYS у триггеров,
+// права и search_path их функций. Зовётся на старте потребителя; все
+// расхождения — в одной ошибке, по именам.
 //
 // Лишние колонки и индексы потребителя расхождением не считаются. Лишний род в
 // справочнике — считается: база приняла бы движение, которого нет в реестре.
@@ -222,6 +232,7 @@ func (s *Store) checkTable(ctx context.Context, table string) ([]error, error) {
 	var problems []error
 	for _, check := range []func() ([]error, error){
 		func() ([]error, error) { return s.checkColumns(ctx, table, schema, spec) },
+		func() ([]error, error) { return s.checkCollations(ctx, table, oid, spec) },
 		func() ([]error, error) { return s.checkConstraints(ctx, table, oid, spec) },
 		func() ([]error, error) { return s.checkIndexes(ctx, table, schema, spec) },
 		func() ([]error, error) { return s.checkTriggers(ctx, table, oid, spec) },
@@ -250,6 +261,21 @@ func (s *Store) checkColumns(ctx context.Context, table, schema string, spec tab
 		if got != spec.columns[name] {
 			problems = append(problems, fmt.Errorf("%s: колонка %s имеет тип %s, ожидается %s",
 				table, name, got, spec.columns[name]))
+		}
+	}
+	return problems, nil
+}
+
+func (s *Store) checkCollations(ctx context.Context, table string, oid uint32, spec tableSpec) ([]error, error) {
+	actual, err := queryPairs[string](ctx, s.db(), collationsSQL, oid)
+	if err != nil {
+		return nil, storeError("check schema: collations", err)
+	}
+	var problems []error
+	for _, name := range slices.Sorted(maps.Keys(spec.columns)) {
+		if got, ok := actual[name]; ok && spec.columns[name] == typeText && got != collationC {
+			problems = append(problems, fmt.Errorf("%s: колонка %s имеет сортировку %s, ожидается %s",
+				table, name, got, collationC))
 		}
 	}
 	return problems, nil

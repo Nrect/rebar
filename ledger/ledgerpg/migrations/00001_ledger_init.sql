@@ -12,12 +12,14 @@
 -- на таблицы потребителя нет.
 
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
+
 -- Справочник книг: единица и нижняя граница остатка (решение 8). Пишет его
 -- миграция потребителя из Config, CheckSchema сверяет.
 CREATE TABLE IF NOT EXISTS ledger_books (
-    book        TEXT   NOT NULL,
-    unit        TEXT   NOT NULL,
-    floor_minor BIGINT NOT NULL,
+    book        TEXT COLLATE "C" NOT NULL,
+    unit        TEXT COLLATE "C" NOT NULL,
+    floor_minor BIGINT           NOT NULL,
     CONSTRAINT ledger_books_pkey PRIMARY KEY (book),
     CONSTRAINT ledger_books_book_chk CHECK (book ~ '^[a-z0-9_]{1,32}$'),
     CONSTRAINT ledger_books_unit_chk CHECK (unit ~ '^[A-Za-z0-9_]{1,16}$'),
@@ -28,11 +30,11 @@ CREATE TABLE IF NOT EXISTS ledger_books (
 -- Справочник родов — зеркало Book.AllKinds (решение 7): записи ссылаются на
 -- него внешним ключом, знак и обязательные поля сверяет триггер.
 CREATE TABLE IF NOT EXISTS ledger_kinds (
-    book        TEXT NOT NULL,
-    kind        TEXT NOT NULL,
-    sign        TEXT NOT NULL,
-    reference   TEXT NOT NULL,
-    attribution TEXT NOT NULL,
+    book        TEXT COLLATE "C" NOT NULL,
+    kind        TEXT COLLATE "C" NOT NULL,
+    sign        TEXT COLLATE "C" NOT NULL,
+    reference   TEXT COLLATE "C" NOT NULL,
+    attribution TEXT COLLATE "C" NOT NULL,
     CONSTRAINT ledger_kinds_pkey PRIMARY KEY (book, kind),
     CONSTRAINT ledger_kinds_book_fkey FOREIGN KEY (book) REFERENCES ledger_books (book),
     CONSTRAINT ledger_kinds_kind_chk CHECK (kind ~ '^[a-z0-9_]{1,32}$'),
@@ -50,12 +52,12 @@ CREATE TABLE IF NOT EXISTS ledger_kinds (
 -- бы на одну колонку, и роли приложения он выдан только на неё (решение 1).
 -- Значение не меняется: правку отбивает ledger_accounts_guard.
 CREATE TABLE IF NOT EXISTS ledger_accounts (
-    book          TEXT   NOT NULL,
-    account       UUID   NOT NULL,
-    seq           BIGINT NOT NULL DEFAULT 0,
-    balance_minor BIGINT NOT NULL DEFAULT 0,
+    book          TEXT COLLATE "C" NOT NULL,
+    account       UUID             NOT NULL,
+    seq           BIGINT           NOT NULL DEFAULT 0,
+    balance_minor BIGINT           NOT NULL DEFAULT 0,
     last_hash     BYTEA,
-    version       BIGINT NOT NULL DEFAULT 0,
+    version       BIGINT           NOT NULL DEFAULT 0,
     CONSTRAINT ledger_accounts_pkey PRIMARY KEY (book, account),
     CONSTRAINT ledger_accounts_book_fkey FOREIGN KEY (book) REFERENCES ledger_books (book),
     CONSTRAINT ledger_accounts_head_chk CHECK (
@@ -65,22 +67,22 @@ CREATE TABLE IF NOT EXISTS ledger_accounts (
 
 -- Журнал: append-only, номер без дыр, остаток после движения в самой записи.
 CREATE TABLE IF NOT EXISTS ledger_entries (
-    id                  UUID        NOT NULL,
-    book                TEXT        NOT NULL,
-    account             UUID        NOT NULL,
-    seq                 BIGINT      NOT NULL,
-    kind                TEXT        NOT NULL,
-    amount_minor        BIGINT      NOT NULL,
-    balance_after_minor BIGINT      NOT NULL,
-    reference           TEXT        NOT NULL,
+    id                  UUID             NOT NULL,
+    book                TEXT COLLATE "C" NOT NULL,
+    account             UUID             NOT NULL,
+    seq                 BIGINT           NOT NULL,
+    kind                TEXT COLLATE "C" NOT NULL,
+    amount_minor        BIGINT           NOT NULL,
+    balance_after_minor BIGINT           NOT NULL,
+    reference           TEXT COLLATE "C" NOT NULL,
     reverses_id         UUID,
-    reason              TEXT        NOT NULL,
-    actor               TEXT        NOT NULL,
-    idempotency_key     TEXT        NOT NULL,
-    created_at          TIMESTAMPTZ NOT NULL,
-    key_id              INTEGER     NOT NULL,
-    prev_hash           BYTEA       NOT NULL,
-    entry_hash          BYTEA       NOT NULL,
+    reason              TEXT COLLATE "C" NOT NULL,
+    actor               TEXT COLLATE "C" NOT NULL,
+    idempotency_key     TEXT COLLATE "C" NOT NULL,
+    created_at          TIMESTAMPTZ      NOT NULL,
+    key_id              INTEGER          NOT NULL,
+    prev_hash           BYTEA            NOT NULL,
+    entry_hash          BYTEA            NOT NULL,
     CONSTRAINT ledger_entries_pkey PRIMARY KEY (id),
     -- Номер — арбитр гонки (решение 2): индекс и триггер держат его вместе.
     CONSTRAINT ux_ledger_entries_seq UNIQUE (book, account, seq),
@@ -323,6 +325,8 @@ CREATE TRIGGER ledger_accounts_no_truncate_trg
 ALTER TABLE ledger_accounts ENABLE ALWAYS TRIGGER ledger_accounts_no_truncate_trg;
 
 -- +goose Down
+SET LOCAL lock_timeout = '5s';
+
 -- Идемпотентна (ADR-0011, уточнение 1): стенды гоняют Up и Down по кругу.
 -- Индексы и триггеры уходят вместе с таблицами, функции триггеров — нет.
 DROP TABLE IF EXISTS ledger_entries;
