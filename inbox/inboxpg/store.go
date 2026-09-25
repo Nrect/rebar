@@ -164,8 +164,9 @@ func repeated(ctx context.Context, tx pgx.Tx, ev inbox.Event) (inbox.Outcome, er
 	return inbox.OutcomeConflict, nil
 }
 
-// SQL уборки: старые первыми, равные — по ключу, как у двойника. Тела, ушедшие
-// каскадом за отметкой, RowsAffected не считает.
+// SQL уборки: старые первыми, равные — по ключу побайтно, как у двойника:
+// колонки ключа — COLLATE "C". Тела, ушедшие каскадом за отметкой,
+// RowsAffected не считает.
 const (
 	purgePayloadsSQL = `DELETE FROM inbox_payloads WHERE (source, event_id) IN (
 SELECT source, event_id FROM inbox_payloads WHERE received_at < $1

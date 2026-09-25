@@ -32,6 +32,10 @@ const (
 	typeTimestamptz = "timestamp with time zone"
 )
 
+// collationC — сортировка текстовых колонок: порядок и индекс побайтно, как у
+// двойника, и не меняются с обновлением ОС сервера (CORRECTNESS §12).
+const collationC = "C"
+
 // fnAppendOnly — функция обоих триггеров; её имя — оно же имя отказа
 // (RAISE … USING CONSTRAINT).
 const fnAppendOnly = "inbox_append_only"
@@ -85,6 +89,11 @@ WHERE c.oid = to_regclass($1)`
 const columnsSQL = `SELECT column_name, data_type FROM information_schema.columns
 WHERE table_schema = $1 AND table_name = $2`
 
+// У нетекстовой колонки attcollation = 0: строки нет.
+const collationsSQL = `SELECT a.attname, c.collname
+FROM pg_attribute a JOIN pg_collation c ON c.oid = a.attcollation
+WHERE a.attrelid = $1 AND a.attnum > 0 AND NOT a.attisdropped`
+
 // Второе поле — годна ли форма: у внешнего ключа это ON DELETE CASCADE, без него
 // тело пережило бы отметку.
 const constraintsSQL = `SELECT conname, contype <> 'f' OR confdeltype = 'c'
@@ -98,10 +107,11 @@ const triggersSQL = `SELECT t.tgname, t.tgenabled = 'A', p.proname
 FROM pg_trigger t JOIN pg_proc p ON p.oid = t.tgfoid
 WHERE t.tgrelid = $1 AND NOT t.tgisinternal`
 
-// CheckSchema сверяет таблицы inbox_* с миграциями, ничего не меняя: колонки и
-// типы, ключи, CHECK и каскад внешнего ключа, индексы, триггеры с режимом ENABLE
-// ALWAYS и их функцию. Зовётся на старте потребителя; все расхождения — в одной
-// ошибке, по именам. Сбой запроса к каталогу — inbox.ErrUnavailable.
+// CheckSchema сверяет таблицы inbox_* с миграциями, ничего не меняя: колонки,
+// типы и сортировку "C" у текстовых, ключи, CHECK и каскад внешнего ключа,
+// индексы, триггеры с режимом ENABLE ALWAYS и их функцию. Зовётся на старте
+// потребителя; все расхождения — в одной ошибке, по именам. Сбой запроса к
+// каталогу — inbox.ErrUnavailable.
 //
 // Лишние колонки и индексы потребителя расхождением не считаются.
 func (s *Store) CheckSchema(ctx context.Context) error {
@@ -136,6 +146,7 @@ func (s *Store) checkTable(ctx context.Context, table string) ([]error, error) {
 	var problems []error
 	for _, check := range []func() ([]error, error){
 		func() ([]error, error) { return s.checkColumns(ctx, table, schema, spec) },
+		func() ([]error, error) { return s.checkCollations(ctx, table, oid, spec) },
 		func() ([]error, error) { return s.checkConstraints(ctx, table, oid, spec) },
 		func() ([]error, error) { return s.checkIndexes(ctx, table, schema, spec) },
 		func() ([]error, error) { return s.checkTriggers(ctx, table, oid, spec) },
@@ -164,6 +175,21 @@ func (s *Store) checkColumns(ctx context.Context, table, schema string, spec tab
 		if got != spec.columns[name] {
 			problems = append(problems, fmt.Errorf("%s: колонка %s имеет тип %s, ожидается %s",
 				table, name, got, spec.columns[name]))
+		}
+	}
+	return problems, nil
+}
+
+func (s *Store) checkCollations(ctx context.Context, table string, oid uint32, spec tableSpec) ([]error, error) {
+	actual, err := queryPairs[string](ctx, s.db(), collationsSQL, oid)
+	if err != nil {
+		return nil, storeError("check schema: collations", err)
+	}
+	var problems []error
+	for _, name := range slices.Sorted(maps.Keys(spec.columns)) {
+		if got, ok := actual[name]; ok && spec.columns[name] == typeText && got != collationC {
+			problems = append(problems, fmt.Errorf("%s: колонка %s имеет сортировку %s, ожидается %s",
+				table, name, got, collationC))
 		}
 	}
 	return problems, nil
