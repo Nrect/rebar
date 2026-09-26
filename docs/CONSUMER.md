@@ -464,8 +464,8 @@ func (p process) stop(ctx context.Context) error {
 		_ = p.public.Close() // рвёт соединения: контексты запросов отменяются
 		clean = false
 	}
-	if !within(p.jobs.Stop, jobsGrace) { // 3. новых прогонов нет, текущий дописывает исход
-		slog.Error("jobs outlived shutdown budget", slog.String("op", "shutdown"))
+	if err := within(p.jobs.Stop, jobsGrace); err != nil { // 3. новых прогонов нет, текущий дописывает исход
+		slog.Error("jobs did not stop", slog.String("op", "shutdown"), slog.Any("error", err))
 		clean = false
 	}
 	if clean {
@@ -477,15 +477,29 @@ func (p process) stop(ctx context.Context) error {
 	return errors.Join(p.internal.Shutdown(flushCtx), p.obs.Shutdown(flushCtx), p.flush(flushCtx)) // 4.
 }
 
-// within ждёт stop не дольше budget; false — прогон ещё идёт.
-func within(stop func(), budget time.Duration) bool {
-	done := make(chan struct{})
-	go func() { stop(); close(done) }()
+// errOutlivedBudget — stop не вернулся за бюджет: прогон ещё идёт.
+var errOutlivedBudget = errors.New("outlived shutdown budget")
+
+// within ждёт stop не дольше budget; паника stop — ошибка, а не падение
+// процесса посреди остановки.
+func within(stop func(), budget time.Duration) error {
+	done := make(chan error, 1) // после бюджета горутину никто не ждёт
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				done <- fmt.Errorf("stop: panic: %v", r)
+			}
+		}()
+		stop()
+		done <- nil
+	}()
+	timer := time.NewTimer(budget)
+	defer timer.Stop()
 	select {
-	case <-done:
-		return true
-	case <-time.After(budget):
-		return false
+	case err := <-done:
+		return err
+	case <-timer.C:
+		return errOutlivedBudget
 	}
 }
 ```
@@ -744,6 +758,19 @@ Postgres — [`compose.yaml`](../examples/monolith/compose.yaml).
    }
    ```
 
+   Продление — только вместе с потолком тела, сразу следом: иначе клиент
+   пишет без меры весь продлённый срок.
+
+   ```go
+   // extendDeadlines продлевает сроки чтения и записи соединения на d от
+   // текущего момента.
+   func extendDeadlines(w http.ResponseWriter, d time.Duration) error {
+   	rc := http.NewResponseController(w)
+   	at := time.Now().UTC().Add(d)
+   	return errors.Join(rc.SetReadDeadline(at), rc.SetWriteDeadline(at))
+   }
+   ```
+
 2. **Горутина проекта — с владельцем.** `recover` в теле, выход по `ctx` или
    остановке, ожидание тем, кто запустил. Фоновое — задача планировщика.
    Горутина сервера отдаёт владельцу и ошибку, и панику:
@@ -790,20 +817,27 @@ Postgres — [`compose.yaml`](../examples/monolith/compose.yaml).
    ([CONVENTIONS §12](../CONVENTIONS.md#12-границы-процесса-и-чужие-данные)).
 
    ```go
-   // decodeJSON — единственный разбор тела ручки проекта.
+   // decodeJSON — единственный разбор тела ручки проекта: одно значение без
+   // лишних полей, после него только пробелы.
    func decodeJSON(w http.ResponseWriter, r *http.Request, maxBytes int64, dst any) error {
    	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBytes))
    	dec.DisallowUnknownFields()
    	if err := dec.Decode(dst); err != nil {
-   		if tooLarge := new(http.MaxBytesError); errors.As(err, &tooLarge) {
-   			return errs.PayloadTooLarge("body-too-large").WithCause(err)
-   		}
-   		return errs.IncorrectInput("body-invalid").WithCause(err)
+   		return bodyError(err, "body-invalid")
    	}
    	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-   		return errs.IncorrectInput("body-invalid")
+   		return bodyError(err, "body-invalid")
    	}
    	return nil
+   }
+
+   // bodyError — отказ по телу: потолок превышен на любом из двух Decode — 413,
+   // остальное — 400 со слагом ручки.
+   func bodyError(err error, slug string) error {
+   	if tooLarge := new(http.MaxBytesError); errors.As(err, &tooLarge) {
+   		return errs.PayloadTooLarge("body-too-large").WithCause(err)
+   	}
+   	return errs.IncorrectInput(slug).WithCause(err)
    }
    ```
 
@@ -833,10 +867,11 @@ Postgres — [`compose.yaml`](../examples/monolith/compose.yaml).
    репозиторий с `go.mod` и `*/migrations/*.sql`
    ([SECURITY.md](../SECURITY.md), «Цепочка поставки»).
 
-Образец — монолит: сервер, горутины, пул и разбор тела — `app.go`,
-`shoppg/db.go` и `handlers_money.go` в
-[`examples/monolith`](../examples/monolith) (правка — чипом монолита
-2026-09-17; до неё монолит держит только срок заголовков, код выше).
+Образец — монолит [`examples/monolith`](../examples/monolith): сроки сервера,
+`serve` и `within` — `process.go`; пул — `poolDSN` в `shoppg/db.go`; разбор
+тела и продление срока загрузки — `handlers_money.go`; заголовки —
+`apiHeaders` в `handlers.go`. Каждое правило держит тест: `limits_test.go`,
+`process_internal_test.go`, `pool_test.go`.
 
 ## Короткая форма
 
