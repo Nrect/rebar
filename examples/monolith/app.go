@@ -154,11 +154,23 @@ func (a *App) SetClock(now func() time.Time) {
 	a.jobs.SetClock(now)
 }
 
+// serviceName — имя сервиса в телеметрии и application_name пула: по одному
+// имени находятся и трасса, и запрос в pg_stat_activity.
+const serviceName = "monolith"
+
+// poolConfig — сроки транзакций пула; writeTimeout сервера подобран над ними.
+func poolConfig() postgres.Config {
+	return postgres.Config{
+		LockTimeout: 3 * time.Second, StatementTimeout: 10 * time.Second,
+		MaxAttempts: 3, RetryBase: 20 * time.Millisecond,
+	}
+}
+
 // startInfra — наблюдаемость, трекер и postgres: то, на чём стоит всё
 // остальное. Наблюдаемость раньше пула: декораторы берут meter при сборке.
 func (a *App) startInfra(ctx context.Context, migrations fs.FS) error {
 	obs, err := otelboot.Start(ctx, otelboot.Config{
-		ServiceName: "monolith", Version: a.cfg.Version, Commit: a.cfg.Commit,
+		ServiceName: serviceName, Version: a.cfg.Version, Commit: a.cfg.Commit,
 		Environment: a.cfg.Environment, TracesEndpoint: a.cfg.TracesEndpoint, RuntimeMetrics: true,
 	})
 	if err != nil {
@@ -168,10 +180,7 @@ func (a *App) startInfra(ctx context.Context, migrations fs.FS) error {
 	if a.flush, err = errtrack.Init(a.cfg.SentryDSN.Reveal(), a.cfg.Environment, a.cfg.Version); err != nil {
 		return err
 	}
-	db, err := shoppg.Open(ctx, a.cfg.DSN.Reveal(), postgres.Config{
-		LockTimeout: 3 * time.Second, StatementTimeout: 10 * time.Second,
-		MaxAttempts: 3, RetryBase: 20 * time.Millisecond,
-	})
+	db, err := shoppg.Open(ctx, a.cfg.DSN.Reveal(), serviceName, poolConfig())
 	if err != nil {
 		return err
 	}
@@ -212,10 +221,6 @@ func (a *App) CookieNames() (sessionCookie, csrfCookie string) {
 // Unconfigured именно по имени (mail/unconfigured.go).
 func (a *App) Transport() mail.TransportName { return a.letters.Transport() }
 
-// readHeaderTimeout — срок заголовков запроса: медленный клиент не держит
-// соединение бесконечно.
-const readHeaderTimeout = 5 * time.Second
-
 // Start занимает порты, снимает первый снимок гейджей, запускает задачи и
 // объявляет готовность — в этом порядке (docs/CONSUMER.md, §4). Занятый порт —
 // ошибка Start, а не горутины после того, как /readyz ответил 200.
@@ -223,8 +228,7 @@ const readHeaderTimeout = 5 * time.Second
 // ctx — сигнальный: его отмена начинает остановку в Wait, а в задачи не
 // доходит. Остановленный Stop процесс заново не стартует.
 func (a *App) Start(ctx context.Context) error {
-	public := &http.Server{Addr: a.cfg.Addr, Handler: a.handler, ReadHeaderTimeout: readHeaderTimeout}
-	internal := &http.Server{Addr: a.cfg.InternalAddr, Handler: a.probes, ReadHeaderTimeout: readHeaderTimeout}
+	public, internal := newServer(a.cfg.Addr, a.handler), newServer(a.cfg.InternalAddr, a.probes)
 	lns, err := listen(ctx, public, internal)
 	if err != nil {
 		return err
@@ -243,8 +247,8 @@ func (a *App) Start(ctx context.Context) error {
 	a.jobs.Start(jobsCtx)
 
 	a.served = make(chan error, len(lns))
-	go func() { a.served <- public.Serve(lns[0]) }()
-	go func() { a.served <- internal.Serve(lns[1]) }()
+	go serve(a.served, public, lns[0])
+	go serve(a.served, internal, lns[1])
 	a.ready.Store(true)
 	a.log.InfoContext(ctx, "started", slog.String("op", "start"))
 	return nil
@@ -396,8 +400,8 @@ func (a *App) routes() {
 	mux := http.NewServeMux()
 	a.mount(mux)
 	// reqid снаружи всего: идентификатор запроса нужен и ответчику ошибок, и
-	// журналу.
-	a.handler = reqid.Middleware(mux)
+	// журналу. apiHeaders — до mux: заголовки получает и его 404.
+	a.handler = reqid.Middleware(apiHeaders(mux))
 	a.probes = a.probeMux()
 }
 
@@ -410,7 +414,7 @@ func (a *App) startFiles() error {
 	store := objfs.New(objfs.Config{Root: root, BaseURL: a.cfg.BaseURL + "/files"})
 	a.uploader = objectstore.NewUploader(store, objectstore.UploaderConfig{
 		Prefix:  "uploads",
-		MaxSize: 5 << 20,
+		MaxSize: maxUploadSize,
 		Accept: []objectstore.ContentType{
 			objectstore.ContentTypeJPEG, objectstore.ContentTypePNG, objectstore.ContentTypePDF,
 		},

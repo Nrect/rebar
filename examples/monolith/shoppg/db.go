@@ -24,14 +24,21 @@ type DB struct {
 	Runner *postgres.Runner
 }
 
+// idleInTxTimeout — срок забытой открытой транзакции: она держит блокировки и
+// не даёт VACUUM убрать строки. Транзакции примера не ждут ничего, кроме базы, и
+// простой в минуту — это ручка, открывшая транзакцию и не закрывшая её.
+const idleInTxTimeout = "60s"
+
 // Open поднимает пул и раннер. Зона соединения пинуется в UTC: дата-арифметика
-// на сервере перестаёт зависеть от того, в каком образе он поднят.
-func Open(ctx context.Context, dsn string, cfg postgres.Config) (*DB, error) {
-	utc, err := postgres.WithUTC(dsn)
+// на сервере перестаёт зависеть от того, в каком образе он поднят. service —
+// application_name: в pg_stat_activity видно, чей запрос держит блокировку.
+// Сроки запросов в DSN не кладутся: их ставит Runner (postgres/doc.go, п. 2).
+func Open(ctx context.Context, dsn, service string, cfg postgres.Config) (*DB, error) {
+	pinned, err := poolDSN(dsn, service)
 	if err != nil {
 		return nil, err
 	}
-	pool, err := pgxpool.New(ctx, utc)
+	pool, err := pgxpool.New(ctx, pinned)
 	if err != nil {
 		// Текст DSN в ошибку не попадает: в нём пароль, а ошибка старта почти
 		// всегда оказывается в логе.
@@ -42,6 +49,18 @@ func Open(ctx context.Context, dsn string, cfg postgres.Config) (*DB, error) {
 		return nil, errors.New("shoppg: база не отвечает")
 	}
 	return &DB{Pool: pool, Runner: postgres.New(pool, cfg)}, nil
+}
+
+// poolDSN — DSN пула: UTC, имя сервиса и срок забытой транзакции.
+func poolDSN(dsn, service string) (string, error) {
+	out, err := postgres.WithUTC(dsn)
+	if err != nil {
+		return "", err
+	}
+	if out, err = postgres.WithRuntimeParam(out, "application_name", service); err != nil {
+		return "", err
+	}
+	return postgres.WithRuntimeParam(out, "idle_in_transaction_session_timeout", idleInTxTimeout)
 }
 
 // Close закрывает пул. Идемпотентен на стороне pgxpool.

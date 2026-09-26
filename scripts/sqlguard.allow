@@ -10,6 +10,3 @@ entitlement/entitlementpg/migrations/00001_entitlement_init.sql	*	выпущен
 mail/mailpg/migrations/00001_mail_init.sql	*	выпущена, модуль в заморозке 7c1a927 — миграция 00002 после тегов (ROADMAP)
 outbox/outboxpg/migrations/00001_outbox_init.sql	*	выпущена, модуль в заморозке 7c1a927 — миграция 00002 после тегов (ROADMAP)
 payment/paymentpg/migrations/00001_payment_init.sql	*	выпущена, модуль в заморозке 7c1a927 — миграция 00002 после тегов (ROADMAP)
-#
-# Модули без тегов: первая миграция ещё не выпущена и правится на месте — чипами, выданными 2026-09-17.
-examples/monolith/migrations/00001_shop_init.sql	*	пример, тегов не получает — правка чипом монолита (2026-09-17)

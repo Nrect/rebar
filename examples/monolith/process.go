@@ -3,6 +3,7 @@ package monolith
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -18,6 +19,44 @@ const (
 	jobsGrace  = 15 * time.Second
 	flushGrace = 3 * time.Second
 )
+
+// Сроки соединения (docs/CONSUMER.md, §9, п. 1); держит TestServerTimeouts_FitBudgets.
+const (
+	// readHeaderTimeout — заголовки: медленный клиент не держит соединение.
+	readHeaderTimeout = 5 * time.Second
+	// readTimeout — запрос целиком: тело JSON до maxJSONBytes идёт секунды и на
+	// плохом канале; загрузке файла срок продлевает сама ручка.
+	readTimeout = 30 * time.Second
+	// writeTimeout — ручка и ответ: запас над statement_timeout пула на ручку из
+	// нескольких запросов к базе.
+	writeTimeout = 30 * time.Second
+	// idleTimeout — простой keep-alive: дольше простоя балансировщика (60 с), и
+	// соединение закрывает он, а не сервер под его запросом.
+	idleTimeout = 2 * time.Minute
+)
+
+// newServer — сервер процесса: медленный клиент не держит соединение ни
+// заголовками, ни телом, ни простоем.
+func newServer(addr string, h http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           h,
+		ReadHeaderTimeout: readHeaderTimeout,
+		ReadTimeout:       readTimeout,
+		WriteTimeout:      writeTimeout,
+		IdleTimeout:       idleTimeout,
+	}
+}
+
+// serve — ошибка и паника сервера уходят в served, их ждёт Wait.
+func serve(served chan<- error, srv *http.Server, ln net.Listener) {
+	defer func() {
+		if r := recover(); r != nil {
+			served <- fmt.Errorf("serve %s: panic: %v", srv.Addr, r)
+		}
+	}()
+	served <- srv.Serve(ln)
+}
 
 // Wait ждёт сигнала или падения сервера и останавливает процесс.
 func (a *App) Wait(ctx context.Context) error {
@@ -42,8 +81,8 @@ func (a *App) stop(ctx context.Context) error {
 	a.ready.Store(false)
 
 	clean := a.drainRequests(ctx)
-	if !within(a.jobs.Stop, jobsGrace) {
-		a.log.ErrorContext(ctx, "jobs outlived shutdown budget", slog.String("op", "shutdown"))
+	if err := within(a.jobs.Stop, jobsGrace); err != nil {
+		a.log.ErrorContext(ctx, "jobs did not stop", slog.String("op", "shutdown"), slog.Any("error", err))
 		clean = false
 	}
 	// Пул — после запросов и задач: прогон без пула исход не запишет. Close
@@ -73,20 +112,30 @@ func (a *App) drainRequests(ctx context.Context) bool {
 	return true
 }
 
-// within ждёт stop не дольше budget; false — прогон ещё идёт.
-func within(stop func(), budget time.Duration) bool {
-	done := make(chan struct{})
+// errOutlivedBudget — stop не вернулся за бюджет: прогон ещё идёт.
+var errOutlivedBudget = errors.New("outlived shutdown budget")
+
+// within ждёт stop не дольше budget; паника stop — ошибка, а не падение
+// процесса посреди остановки.
+func within(stop func(), budget time.Duration) error {
+	// Буфер на одно значение: после бюджета горутину никто не ждёт.
+	done := make(chan error, 1)
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				done <- fmt.Errorf("stop: panic: %v", r)
+			}
+		}()
 		stop()
-		close(done)
+		done <- nil
 	}()
 	timer := time.NewTimer(budget)
 	defer timer.Stop()
 	select {
-	case <-done:
-		return true
+	case err := <-done:
+		return err
 	case <-timer.C:
-		return false
+		return errOutlivedBudget
 	}
 }
 

@@ -8,6 +8,27 @@
 
 ### Changed
 
+- Серверы процесса — все четыре срока соединения (`newServer`, docs/CONSUMER.md,
+  §9, п. 1); `/upload` продлевает сроки чтения и записи до `uploadTimeout` и
+  режет тело `maxUploadBytes`. Держат `TestStart_ServersHaveAllTimeouts`,
+  `TestServerTimeouts_FitBudgets`, `TestUpload_SlowBodyOutlivesReadTimeout`,
+  `TestUpload_OverCeilingIs413`.
+- Горутины `Serve` — через `serve` с `recover`: ошибка и паника уходят в
+  `served`, их ждёт `Wait`; `within` отдаёт панику `stop` ошибкой. Записи в
+  `scripts/codeguard.allow` постоянные. Держат `TestServe_PanicBecomesOwnerError`,
+  `TestWithin_PanicIsError`.
+- `shoppg.Open(ctx, dsn, service, cfg)` ставит `application_name` и
+  `idle_in_transaction_session_timeout = 60s`; сроки запросов — у `Runner`.
+  Держит `TestOpen_PinsSessionParams`.
+- JSON ручки — одно значение, после него только пробелы; тело выше потолка —
+  413 `body-too-large`. Держит `TestJSON_OneValueUnderCeiling`.
+- Каждый ответ публичного обработчика, и ошибка, и 404 роутера, несёт
+  `X-Content-Type-Options: nosniff` и `Cache-Control: no-store`. Держит
+  `TestAPIHeaders_OnEveryResponse`.
+- `00001_shop_init.sql` правлен на месте: `COLLATE "C"` у текстовых колонок,
+  `SET LOCAL lock_timeout = '5s'` первым в `Up` и `Down`; запись в
+  `scripts/sqlguard.allow` вычеркнута. Стенд с прежней схемой пересоздаётся
+  (README).
 - `App.SetClock` отдаёт те же часы каждому блоку со своими часами — `session`,
   `mail`, `outbox` (Producer и Worker), `audit`, `entitlement`, `authzpg`,
   `payment`, `objectstore.Collector`, `scheduler` (docs/CONSUMER.md, §8, п. 1);

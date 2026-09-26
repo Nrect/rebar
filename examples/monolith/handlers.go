@@ -2,6 +2,7 @@ package monolith
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/nrect/rebar/auth/authhttp"
 	"github.com/nrect/rebar/auth/session"
@@ -10,6 +11,26 @@ import (
 // maxJSONBytes — потолок тела запроса. Ручка, падающая от мегабайтного JSON, —
 // это отказ в обслуживании одной строкой.
 const maxJSONBytes = 32 << 10
+
+// Загрузка файла: потолок файла, тела с обвязкой multipart и срок тела.
+const (
+	maxUploadSize  = 5 << 20
+	maxUploadBytes = maxUploadSize + 64<<10
+	// uploadTimeout — потолок на медленном мобильном канале идёт дольше
+	// readTimeout; держит TestServerTimeouts_FitBudgets.
+	uploadTimeout = 2 * time.Minute
+)
+
+// apiHeaders — заголовки каждого ответа API: nosniff не даёт браузеру прочитать
+// JSON как HTML, no-store — посреднику сохранить ответ с персональными данными.
+func apiHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("Cache-Control", "no-store")
+		next.ServeHTTP(w, r)
+	})
+}
 
 // mount вешает публичные ручки. Роутера нет намеренно: пример проверяет
 // проводку, а не красоту маршрутов. Служебных здесь нет — они в probeMux.
