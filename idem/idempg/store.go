@@ -264,7 +264,8 @@ func rollback(ctx context.Context, tx pgx.Tx) {
 }
 
 // purgeSQL — самые старые первыми; равные моменты — по ключу побайтно, как у
-// двойника: иначе порядок решала бы локаль базы.
+// двойника. Колонки ключа — "C" по миграции; COLLATE в запросе — второй рубеж
+// для колонки, которую потребитель сменил своей миграцией.
 const purgeSQL = `DELETE FROM idem_records WHERE (realm, subject, idem_key) IN (
 	SELECT realm, subject, idem_key FROM idem_records WHERE created_at < $1
 	ORDER BY created_at, realm COLLATE "C", subject COLLATE "C", idem_key COLLATE "C"

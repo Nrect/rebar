@@ -28,6 +28,8 @@ var (
 		"realm", "subject", "idem_key", "operation", "fingerprint", "status", "content_type", "location", "body",
 		"created_at",
 	}
+	// recordText — текстовые колонки: у каждой сортировка "C" (CORRECTNESS §12).
+	recordText   = []string{"realm", "subject", "idem_key", "operation", "content_type", "location"}
 	recordChecks = []string{
 		"idem_records_realm_chk", "idem_records_subject_chk", "idem_records_key_chk", "idem_records_operation_chk",
 		"idem_records_fingerprint_chk", "idem_records_status_chk", "idem_records_body_chk",
@@ -58,7 +60,7 @@ func TestCheckSchema_ReportsEveryMismatchByName(t *testing.T) {
 	t.Parallel()
 
 	columns := []string{"operation", "fingerprint", "status", "content_type", "location", "body", "created_at"}
-	cases := make([]mismatch, 0, 6+len(recordChecks)+len(columns))
+	cases := make([]mismatch, 0, 6+len(recordChecks)+len(recordText)+len(columns))
 	cases = append(cases, []mismatch{
 		{
 			name: "нет первичного ключа",
@@ -98,6 +100,13 @@ func TestCheckSchema_ReportsEveryMismatchByName(t *testing.T) {
 			name: "нет " + check,
 			ddl:  `ALTER TABLE idem_records DROP CONSTRAINT ` + check,
 			want: []string{"ограничения " + check + " нет"},
+		})
+	}
+	for _, column := range recordText {
+		cases = append(cases, mismatch{
+			name: "сортировка не C у " + column,
+			ddl:  `ALTER TABLE idem_records ALTER COLUMN ` + column + ` TYPE text COLLATE "default"`,
+			want: []string{"колонка " + column + ": сортировка default, ожидается C"},
 		})
 	}
 	for _, column := range columns {

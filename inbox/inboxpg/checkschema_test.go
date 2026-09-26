@@ -2,6 +2,7 @@ package inboxpg_test
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -15,6 +16,19 @@ import (
 // mismatchLine — первая строка расхождения: что делать.
 const mismatchLine = "inboxpg.CheckSchema: схема расходится с миграциями — накатите inboxpg.Migrations() " +
 	"раннером проекта; что осталось после наката, чините своей миграцией"
+
+// textColumns — текстовые колонки «таблица.колонка»: у каждой сортировка "C"
+// (CORRECTNESS §12).
+var textColumns = []string{
+	"inbox_events.source", "inbox_events.event_id", "inbox_events.event_type",
+	"inbox_payloads.source", "inbox_payloads.event_id",
+}
+
+type mismatch struct {
+	name string
+	ddl  []string
+	want []string
+}
 
 // CheckSchema сверяет, но не применяет: на пустой схеме он называет каждую
 // таблицу и говорит, что делать, а таблиц не заводит.
@@ -37,11 +51,7 @@ func TestCheckSchema_ReportsEveryMismatchByName(t *testing.T) {
 	t.Parallel()
 
 	const noAlways = " не ENABLE ALWAYS — он молчит при репликации"
-	tests := []struct {
-		name string
-		ddl  []string
-		want []string
-	}{
+	tests := slices.Concat([]mismatch{
 		{
 			name: "нет индексов уборки",
 			ddl:  []string{`DROP INDEX ix_inbox_events_received`, `DROP INDEX ix_inbox_payloads_received`},
@@ -94,6 +104,8 @@ func TestCheckSchema_ReportsEveryMismatchByName(t *testing.T) {
 				// CHECK момента зависит от колонки и уходит вместе с ней.
 				"inbox_events: ограничения inbox_events_occurred_chk нет",
 				"inbox_events: колонка event_type имеет тип character varying, ожидается text",
+				// ALTER TYPE без COLLATE сбрасывает сортировку к умолчанию базы.
+				"inbox_events: колонка event_type имеет сортировку default, ожидается C",
 			},
 		},
 		{
@@ -143,7 +155,7 @@ func TestCheckSchema_ReportsEveryMismatchByName(t *testing.T) {
 			ddl:  []string{`DROP TABLE inbox_payloads`},
 			want: []string{"inboxpg.CheckSchema: таблицы inbox_payloads нет: накатите inboxpg.Migrations() раннером проекта"},
 		},
-	}
+	}, collationMismatches())
 	for i, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
@@ -165,6 +177,20 @@ func TestCheckSchema_ReportsEveryMismatchByName(t *testing.T) {
 			assert.NotErrorIs(t, err, inbox.ErrUnavailable)
 		})
 	}
+}
+
+// collationMismatches — по случаю на текстовую колонку: сортировка сменена на "default".
+func collationMismatches() []mismatch {
+	cases := make([]mismatch, 0, len(textColumns))
+	for _, qualified := range textColumns {
+		table, column, _ := strings.Cut(qualified, ".")
+		cases = append(cases, mismatch{
+			name: "сортировка не C у " + qualified,
+			ddl:  []string{`ALTER TABLE ` + table + ` ALTER COLUMN ` + column + ` TYPE text COLLATE "default"`},
+			want: []string{table + ": колонка " + column + " имеет сортировку default, ожидается C"},
+		})
+	}
+	return cases
 }
 
 // Полная схема проходит — и в транзакции потребителя тоже.

@@ -1,6 +1,7 @@
 package ledgerpg_test
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -11,6 +12,22 @@ import (
 	"github.com/nrect/rebar/ledger"
 	"github.com/nrect/rebar/ledger/ledgerpg"
 )
+
+// textColumns — текстовые колонки «таблица.колонка»: у каждой сортировка "C"
+// (CORRECTNESS §12).
+var textColumns = []string{
+	"ledger_books.book", "ledger_books.unit",
+	"ledger_kinds.book", "ledger_kinds.kind", "ledger_kinds.sign", "ledger_kinds.reference", "ledger_kinds.attribution",
+	"ledger_accounts.book",
+	"ledger_entries.book", "ledger_entries.kind", "ledger_entries.reference", "ledger_entries.reason",
+	"ledger_entries.actor", "ledger_entries.idempotency_key",
+}
+
+type mismatch struct {
+	name string
+	ddl  []string
+	want []string
+}
 
 // CheckSchema сверяет, но не применяет: на пустой схеме он называет каждую
 // таблицу и говорит, что делать, а таблиц не заводит.
@@ -32,11 +49,7 @@ func TestCheckSchema_MissingTablesTellWhatToDo(t *testing.T) {
 func TestCheckSchema_ReportsEveryMismatchByName(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name string
-		ddl  []string
-		want []string
-	}{
+	tests := slices.Concat([]mismatch{
 		{
 			name: "нет индекса одной отмены",
 			ddl:  []string{`DROP INDEX ux_ledger_entries_reversal`},
@@ -145,7 +158,7 @@ func TestCheckSchema_ReportsEveryMismatchByName(t *testing.T) {
 				"ledger_kinds: рода wallet/reversal нет, в реестре знак any, основание optional, причина и автор required",
 			},
 		},
-	}
+	}, collationMismatches())
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
@@ -164,6 +177,20 @@ func TestCheckSchema_ReportsEveryMismatchByName(t *testing.T) {
 			assert.NotErrorIs(t, err, ledger.ErrUnavailable)
 		})
 	}
+}
+
+// collationMismatches — по случаю на текстовую колонку: сортировка сменена на "default".
+func collationMismatches() []mismatch {
+	cases := make([]mismatch, 0, len(textColumns))
+	for _, qualified := range textColumns {
+		table, column, _ := strings.Cut(qualified, ".")
+		cases = append(cases, mismatch{
+			name: "сортировка не C у " + qualified,
+			ddl:  []string{`ALTER TABLE ` + table + ` ALTER COLUMN ` + column + ` TYPE text COLLATE "default"`},
+			want: []string{table + ": колонка " + column + " имеет сортировку default, ожидается C"},
+		})
+	}
+	return cases
 }
 
 // Потребитель вправе расширять таблицы своими колонками и индексами, а книга,

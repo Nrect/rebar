@@ -12,15 +12,17 @@
 -- потребителя нет.
 
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
+
 -- Отметка: ключ дедупа, тип, отпечаток и моменты. Персональных данных в ней
 -- нет, поэтому живёт она долго — Config.Retention (решение 5).
 CREATE TABLE IF NOT EXISTS inbox_events (
-    source      TEXT        NOT NULL,
-    event_id    TEXT        NOT NULL,
-    event_type  TEXT        NOT NULL,
-    digest      BYTEA       NOT NULL,
-    occurred_at TIMESTAMPTZ NOT NULL,
-    received_at TIMESTAMPTZ NOT NULL,
+    source      TEXT COLLATE "C" NOT NULL,
+    event_id    TEXT COLLATE "C" NOT NULL,
+    event_type  TEXT COLLATE "C" NOT NULL,
+    digest      BYTEA            NOT NULL,
+    occurred_at TIMESTAMPTZ      NOT NULL,
+    received_at TIMESTAMPTZ      NOT NULL,
     -- Имя называет ON CONFLICT ON CONSTRAINT адаптера.
     CONSTRAINT ux_inbox_events_dedup PRIMARY KEY (source, event_id),
     CONSTRAINT inbox_events_source_chk CHECK (source ~ '^[a-z0-9_]{1,32}$'),
@@ -35,10 +37,10 @@ CREATE INDEX IF NOT EXISTS ix_inbox_events_received ON inbox_events (received_at
 -- Тело: в нём персональные данные, срок короткий — Config.PayloadRetention.
 -- Отдельная таблица, а не стираемая колонка: стереть колонку — это UPDATE.
 CREATE TABLE IF NOT EXISTS inbox_payloads (
-    source      TEXT        NOT NULL,
-    event_id    TEXT        NOT NULL,
-    payload     BYTEA       NOT NULL,
-    received_at TIMESTAMPTZ NOT NULL,
+    source      TEXT COLLATE "C" NOT NULL,
+    event_id    TEXT COLLATE "C" NOT NULL,
+    payload     BYTEA            NOT NULL,
+    received_at TIMESTAMPTZ      NOT NULL,
     CONSTRAINT ux_inbox_payloads_event PRIMARY KEY (source, event_id),
     -- Тело не переживает отметку: уборка отметки уносит и его.
     CONSTRAINT inbox_payloads_event_fkey FOREIGN KEY (source, event_id)
@@ -77,6 +79,8 @@ CREATE TRIGGER inbox_payloads_append_only_trg
 ALTER TABLE inbox_payloads ENABLE ALWAYS TRIGGER inbox_payloads_append_only_trg;
 
 -- +goose Down
+SET LOCAL lock_timeout = '5s';
+
 -- Идемпотентна (ADR-0011, уточнение 1): стенды гоняют Up и Down по кругу.
 -- Индексы и триггеры уходят вместе с таблицами, функция триггеров — нет.
 DROP TABLE IF EXISTS inbox_payloads;

@@ -11,15 +11,17 @@
 -- UPDATE в адаптере отсутствует.
 
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
+
 CREATE TABLE IF NOT EXISTS idem_records (
-    realm        TEXT NOT NULL,
-    subject      TEXT NOT NULL,
-    idem_key     TEXT NOT NULL,
-    operation    TEXT NOT NULL,
+    realm        TEXT COLLATE "C" NOT NULL,
+    subject      TEXT COLLATE "C" NOT NULL,
+    idem_key     TEXT COLLATE "C" NOT NULL,
+    operation    TEXT COLLATE "C" NOT NULL,
     fingerprint  BYTEA NOT NULL,
     status       INT NOT NULL,
-    content_type TEXT NOT NULL DEFAULT '',
-    location     TEXT NOT NULL DEFAULT '',
+    content_type TEXT COLLATE "C" NOT NULL DEFAULT '',
+    location     TEXT COLLATE "C" NOT NULL DEFAULT '',
     body         BYTEA NOT NULL,
     created_at   TIMESTAMPTZ NOT NULL,
     -- Ключ уникален в области принципала: угаданный чужой ключ не находит
@@ -46,5 +48,7 @@ CREATE TABLE IF NOT EXISTS idem_records (
 CREATE INDEX IF NOT EXISTS ix_idem_records_created ON idem_records (created_at);
 
 -- +goose Down
+SET LOCAL lock_timeout = '5s';
+
 -- Идемпотентна (ADR-0011, уточнение 1): стенды гоняют Up и Down по кругу.
 DROP TABLE IF EXISTS idem_records;
