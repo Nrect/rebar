@@ -60,7 +60,7 @@ func TestCheckSchema_ReportsEveryMismatchByName(t *testing.T) {
 	t.Parallel()
 
 	columns := []string{"operation", "fingerprint", "status", "content_type", "location", "body", "created_at"}
-	cases := make([]mismatch, 0, 6+len(recordChecks)+len(recordText)+len(columns))
+	cases := make([]mismatch, 0, 7+len(recordChecks)+len(recordText)+len(columns))
 	cases = append(cases, []mismatch{
 		{
 			name: "нет первичного ключа",
@@ -109,6 +109,12 @@ func TestCheckSchema_ReportsEveryMismatchByName(t *testing.T) {
 			want: []string{"колонка " + column + ": сортировка default, ожидается C"},
 		})
 	}
+	// Не только умолчание базы: явная сортировка, отличная от C, — тоже расхождение.
+	cases = append(cases, mismatch{
+		name: "сортировка und-x-icu у idem_key",
+		ddl:  `ALTER TABLE idem_records ALTER COLUMN idem_key TYPE text COLLATE "und-x-icu"`,
+		want: []string{"колонка idem_key: сортировка und-x-icu, ожидается C"},
+	})
 	for _, column := range columns {
 		cases = append(cases, mismatch{
 			name: "нет колонки " + column,

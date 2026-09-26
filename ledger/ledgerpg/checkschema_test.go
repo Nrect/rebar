@@ -179,9 +179,10 @@ func TestCheckSchema_ReportsEveryMismatchByName(t *testing.T) {
 	}
 }
 
-// collationMismatches — по случаю на текстовую колонку: сортировка сменена на "default".
+// collationMismatches — по случаю на текстовую колонку: сортировка сменена на
+// "default"; и один случай явной сортировки, отличной от C.
 func collationMismatches() []mismatch {
-	cases := make([]mismatch, 0, len(textColumns))
+	cases := make([]mismatch, 0, len(textColumns)+1)
 	for _, qualified := range textColumns {
 		table, column, _ := strings.Cut(qualified, ".")
 		cases = append(cases, mismatch{
@@ -190,7 +191,11 @@ func collationMismatches() []mismatch {
 			want: []string{table + ": колонка " + column + " имеет сортировку default, ожидается C"},
 		})
 	}
-	return cases
+	return append(cases, mismatch{
+		name: "сортировка und-x-icu у ledger_entries.idempotency_key",
+		ddl:  []string{`ALTER TABLE ledger_entries ALTER COLUMN idempotency_key TYPE text COLLATE "und-x-icu"`},
+		want: []string{"ledger_entries: колонка idempotency_key имеет сортировку und-x-icu, ожидается C"},
+	})
 }
 
 // Потребитель вправе расширять таблицы своими колонками и индексами, а книга,
